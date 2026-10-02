@@ -339,11 +339,16 @@ async fn remove_session_stops_live_sessions_and_deletes_them() {
 async fn remove_force_kills_stubborn_sessions() {
     let env = setup();
     let task = new_task(&env, "stubborn");
-    let session = start(&env, &task, sh("trap '' HUP TERM INT; echo ready; while true; do sleep 1; done"));
+    let session = start(&env, &task, sh("trap '' HUP TERM INT; echo pid=$$; while true; do sleep 1; done"));
     let read = || env.daemon.read(SessionReadParams { session_id: session.id, lines: 5 }).unwrap().text;
-    assert!(eventually(|| read().contains("ready")).await);
+    assert!(eventually(|| read().contains("pid=")).await);
+    let text = read();
+    let pid = text.split("pid=").nth(1).unwrap().split_whitespace().next().unwrap().to_string();
+    let alive = || std::process::Command::new("kill").args(["-0", &pid]).output().unwrap().status.success();
+    assert!(alive());
     let started = std::time::Instant::now();
     env.daemon.remove_session(session.id).await.unwrap();
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
     assert_eq!(env.daemon.session(session.id).unwrap_err().kind, ErrorKind::NotFound);
+    assert!(eventually(|| !alive()).await, "process {pid} survived remove");
 }

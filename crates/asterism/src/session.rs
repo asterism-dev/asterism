@@ -172,6 +172,13 @@ impl Pty {
     /// SIGKILL for processes that ignore the hangup `kill` sends.
     pub fn force_kill(&self) -> io::Result<()> {
         let Some(pid) = self.pid else { return Ok(()) };
-        std::process::Command::new("kill").args(["-KILL", &pid.to_string()]).status().map(|_| ())
+        let kill = |target: String| {
+            std::process::Command::new("kill").args(["-KILL", &target]).status().is_ok_and(|s| s.success())
+        };
+        // The PTY child is a session leader, so its pgid is its pid; fall back to the pid alone.
+        if !kill(format!("-{pid}")) {
+            kill(pid.to_string());
+        }
+        Ok(())
     }
 }

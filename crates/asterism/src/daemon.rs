@@ -20,8 +20,8 @@ use crate::{git, lock, status};
 
 const DEFAULT_ROWS: u16 = 40;
 const DEFAULT_COLS: u16 = 120;
-// ponytail: fixed pause so TUIs treat Enter as a submit, not part of the paste; make it per-profile if an agent needs more.
 const REMOVE_GRACE: Duration = Duration::from_secs(2);
+// ponytail: fixed pause so TUIs treat Enter as a submit, not part of the paste; make it per-profile if an agent needs more.
 const SUBMIT_DELAY: Duration = Duration::from_millis(100);
 const SLUG_MAX: usize = 40;
 
@@ -268,7 +268,10 @@ impl Daemon {
                     // Stored before leaving `live` so `read` always finds one of the two.
                     let text = last_lines(&pty.history(), SCROLLBACK_LINES);
                     let _ = daemon.store().set_session_last_text(id, &text);
-                    lock(&daemon.live).remove(&id);
+                    // Already taken by `remove_session`, which emits `session.removed`; nothing may follow.
+                    if lock(&daemon.live).remove(&id).is_none() {
+                        break;
+                    }
                 }
                 let _ = daemon.store().set_session_status(id, status);
                 daemon.emit(Event::SessionStatusChanged { session_id: id, status });
@@ -316,10 +319,10 @@ impl Daemon {
             let exited = tokio::time::timeout(REMOVE_GRACE, status.wait_for(|s| *s == SessionStatus::Exited))
                 .await
                 .is_ok_and(|r| r.is_ok());
-            if !exited {
+            if !exited && !*live.pty.exited().borrow() {
                 let _ = live.pty.force_kill();
-                lock(&self.live).remove(&id);
             }
+            lock(&self.live).remove(&id);
         }
         self.store().delete_session(id)?;
         self.emit(Event::SessionRemoved { session_id: id });
