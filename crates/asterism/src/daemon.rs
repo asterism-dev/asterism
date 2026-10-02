@@ -258,10 +258,12 @@ impl Daemon {
         tokio::spawn(async move {
             while status_rx.changed().await.is_ok() {
                 let status = *status_rx.borrow_and_update();
+                if status == SessionStatus::Exited {
+                    lock(&daemon.live).remove(&id);
+                }
                 let _ = daemon.store().set_session_status(id, status);
                 daemon.emit(Event::SessionStatusChanged { session_id: id, status });
                 if status == SessionStatus::Exited {
-                    lock(&daemon.live).remove(&id);
                     break;
                 }
             }

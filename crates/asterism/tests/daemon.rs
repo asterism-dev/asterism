@@ -168,3 +168,13 @@ async fn project_with_active_tasks_cannot_be_removed() {
     env.daemon.archive_task(task.id, true).unwrap();
     env.daemon.remove_project(task.project_id).unwrap();
 }
+
+#[tokio::test]
+async fn task_ids_are_not_reused_after_project_removal() {
+    let env = setup();
+    let first = new_task(&env, "again");
+    env.daemon.archive_task(first.id, true).unwrap();
+    env.daemon.remove_project(first.project_id).unwrap();
+    let second = new_task(&env, "again");
+    assert_ne!(first.branch, second.branch);
+}

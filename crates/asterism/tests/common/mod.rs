@@ -8,6 +8,8 @@ pub fn run_git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .arg("-C")
         .arg(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .args(["-c", "user.name=test", "-c", "user.email=test@example.com"])
         .args(args)
         .output()
