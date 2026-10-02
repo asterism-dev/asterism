@@ -166,12 +166,58 @@ async fn disconnecting_mid_attach_keeps_daemon_and_session_alive() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn home_is_private_and_second_daemon_refuses() {
-    let (home, _socket) = start_daemon().await;
-    let mode = std::fs::metadata(home.path()).unwrap().permissions().mode() & 0o777;
+    let parent = tempfile::tempdir().unwrap();
+    let home = parent.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let paths = Paths { home: home.clone() };
+    let socket = paths.socket();
+    tokio::spawn(asterism_core::run(paths));
+    for _ in 0..100 {
+        if UnixStream::connect(&socket).await.is_ok() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let mode = std::fs::metadata(&home).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o700);
 
-    let err = asterism_core::run(Paths { home: home.path().to_path_buf() }).await.unwrap_err();
+    let err = asterism_core::run(Paths { home: home.clone() }).await.unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
+    client(&socket).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stalled_attached_client_does_not_block_others() {
+    let (_home, socket) = start_daemon().await;
+    let repo = tempfile::tempdir().unwrap();
+    init_repo(repo.path());
+    let good = client(&socket).await;
+    let project: Project =
+        good.call(method::PROJECT_ADD, ProjectAddParams { path: repo.path().display().to_string() }).await.unwrap();
+    let created: TaskCreateResult = good
+        .call(method::TASK_CREATE, TaskCreateParams { project_id: project.id, title: "yes".into(), prompt: None, agent: None })
+        .await
+        .unwrap();
+    let kind = SessionKind::Command { argv: vec!["yes".into()] };
+    let session: Session = good
+        .call(method::SESSION_START, SessionStartParams { task_id: created.task.id, kind, prompt: None })
+        .await
+        .unwrap();
+
+    let mut raw = UnixStream::connect(&socket).await.unwrap();
+    let attach = serde_json::json!({"jsonrpc":"2.0","id":1,"method":method::SESSION_ATTACH,"params":{"session_id":session.id}});
+    raw.write_all(format!("{attach}\n").as_bytes()).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    let sessions: Vec<Session> = tokio::time::timeout(
+        Duration::from_secs(2),
+        good.call(method::SESSION_LIST, SessionListParams { task_id: None }),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(sessions.len(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]

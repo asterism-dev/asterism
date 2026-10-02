@@ -20,19 +20,22 @@ use crate::error::{Error, Result};
 use crate::lock;
 
 const MAX_OUTPUT_FRAME: usize = 64 * 1024;
+// Bounded so a client that stops reading backs up into the broadcast channels, which drop on lag.
+const OUT_QUEUE: usize = 256;
 // Lets the shutdown response reach the client before the server stops.
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(50);
 
 /// One client connection; background forwarders are keyed so re-attaching replaces them.
 struct Conn {
-    out: mpsc::UnboundedSender<String>,
+    out: mpsc::Sender<String>,
     forwarders: Mutex<HashMap<String, JoinHandle<()>>>,
 }
 
 impl Conn {
-    fn send(&self, response: &Response) {
+    // Awaiting (not try_send) so a briefly full queue delays a response instead of losing it.
+    async fn send(&self, response: &Response) {
         if let Ok(line) = serde_json::to_string(response) {
-            let _ = self.out.send(line);
+            let _ = self.out.send(line).await;
         }
     }
 
@@ -68,7 +71,7 @@ pub async fn serve(daemon: Arc<Daemon>, listener: UnixListener) {
 
 async fn handle_conn(daemon: Arc<Daemon>, stream: UnixStream) {
     let (reader, mut writer) = stream.into_split();
-    let (out, mut out_rx) = mpsc::unbounded_channel::<String>();
+    let (out, mut out_rx) = mpsc::channel::<String>(OUT_QUEUE);
     tokio::spawn(async move {
         while let Some(mut line) = out_rx.recv().await {
             line.push('\n');
@@ -85,6 +88,7 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: UnixStream) {
         while requests.try_join_next().is_some() {}
         requests.spawn(handle_line(daemon.clone(), conn.clone(), line));
     }
+    requests.shutdown().await;
     conn.stop_all();
 }
 
@@ -92,24 +96,24 @@ async fn handle_line(daemon: Arc<Daemon>, conn: Arc<Conn>, line: String) {
     let request = match serde_json::from_str::<Request>(&line) {
         Ok(request) => request,
         Err(e) => {
-            conn.send(&Response::err(0, RpcError::new(ErrorKind::ParseError, e.to_string())));
+            conn.send(&Response::err(0, RpcError::new(ErrorKind::ParseError, e.to_string()))).await;
             return;
         }
     };
     let id = request.id;
     if request.method == method::SESSION_ATTACH {
-        attach(&daemon, &conn, id, request.params);
+        attach(&daemon, &conn, id, request.params).await;
         return;
     }
     let response = match dispatch(&daemon, &conn, request).await {
         Ok(result) => Response::ok(id, result),
         Err(e) => Response::err(id, e.into()),
     };
-    conn.send(&response);
+    conn.send(&response).await;
 }
 
 /// The snapshot response is queued before the forwarder starts, so output never overtakes it.
-fn attach(daemon: &Daemon, conn: &Conn, id: u64, raw: Value) {
+async fn attach(daemon: &Daemon, conn: &Conn, id: u64, raw: Value) {
     let result = params::<SessionIdParams>(raw).and_then(|p| {
         let (snapshot, rx) = daemon.attach(p.session_id)?;
         let result = SessionAttachResult { snapshot: BASE64.encode(&snapshot.screen), rows: snapshot.rows, cols: snapshot.cols };
@@ -117,11 +121,11 @@ fn attach(daemon: &Daemon, conn: &Conn, id: u64, raw: Value) {
     });
     match result {
         Ok((session_id, value, rx)) => {
-            conn.send(&Response::ok(id, value));
+            conn.send(&Response::ok(id, value)).await;
             let forwarder = tokio::spawn(forward_output(session_id, rx, conn.out.clone()));
             conn.replace_forwarder(format!("attach:{session_id}"), forwarder);
         }
-        Err(e) => conn.send(&Response::err(id, e.into())),
+        Err(e) => conn.send(&Response::err(id, e.into())).await,
     }
 }
 
@@ -183,12 +187,12 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
     }
 }
 
-async fn forward_events(mut rx: broadcast::Receiver<Event>, out: mpsc::UnboundedSender<String>) {
+async fn forward_events(mut rx: broadcast::Receiver<Event>, out: mpsc::Sender<String>) {
     loop {
         match rx.recv().await {
             Ok(event) => {
                 if let Ok(line) = serde_json::to_string(&event.to_notification()) {
-                    if out.send(line).is_err() {
+                    if out.send(line).await.is_err() {
                         break;
                     }
                 }
@@ -200,7 +204,7 @@ async fn forward_events(mut rx: broadcast::Receiver<Event>, out: mpsc::Unbounded
     }
 }
 
-async fn forward_output(session_id: i64, mut rx: broadcast::Receiver<Vec<u8>>, out: mpsc::UnboundedSender<String>) {
+async fn forward_output(session_id: i64, mut rx: broadcast::Receiver<Vec<u8>>, out: mpsc::Sender<String>) {
     loop {
         let mut frame = match rx.recv().await {
             Ok(chunk) => chunk,
@@ -216,7 +220,7 @@ async fn forward_output(session_id: i64, mut rx: broadcast::Receiver<Vec<u8>>, o
         }
         let event = Event::SessionOutput { session_id, data: BASE64.encode(&frame) };
         let Ok(line) = serde_json::to_string(&event.to_notification()) else { continue };
-        if out.send(line).is_err() {
+        if out.send(line).await.is_err() {
             break;
         }
     }
