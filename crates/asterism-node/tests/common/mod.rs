@@ -40,3 +40,45 @@ pub fn stop_daemon(paths: &Paths) {
     let _ = stream.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"shutdown\",\"params\":null}\n");
     let _ = BufReader::new(stream).read_line(&mut String::new());
 }
+
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use asterism_node::{NodeSink, NodeStatus};
+use asterism_proto::types::Event;
+
+#[derive(Default)]
+pub struct Recorder {
+    pub statuses: Mutex<Vec<NodeStatus>>,
+    pub events: Mutex<Vec<Event>>,
+}
+
+impl NodeSink for Recorder {
+    fn status(&self, status: &NodeStatus) {
+        self.statuses.lock().unwrap().push(status.clone());
+    }
+    fn event(&self, event: &Event) {
+        self.events.lock().unwrap().push(event.clone());
+    }
+}
+
+impl Recorder {
+    /// Waits up to 15 s for a status matching `f` and returns it.
+    pub async fn wait_status(&self, f: impl Fn(&NodeStatus) -> bool) -> NodeStatus {
+        for _ in 0..300 {
+            if let Some(found) = self.statuses.lock().unwrap().iter().rev().find(|s| f(s)).cloned() {
+                return found;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("status not reached; saw {:?}", self.statuses.lock().unwrap());
+    }
+
+    pub fn clear(&self) {
+        self.statuses.lock().unwrap().clear();
+    }
+}
+
+pub fn shared<T>(value: T) -> Arc<Mutex<T>> {
+    Arc::new(Mutex::new(value))
+}
