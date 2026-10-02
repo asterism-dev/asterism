@@ -5,6 +5,7 @@ pub mod error;
 pub mod git;
 pub mod paths;
 pub mod session;
+pub mod status;
 pub mod store;
 
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
