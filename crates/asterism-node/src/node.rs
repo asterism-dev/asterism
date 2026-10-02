@@ -22,6 +22,8 @@ use crate::daemon;
 
 const BACKOFF_START: Duration = Duration::from_millis(250);
 const BACKOFF_MAX: Duration = Duration::from_secs(5);
+const RAW_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+const REPLACE_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub type OutputSink = Box<dyn Fn(String) + Send + Sync>;
 
@@ -148,12 +150,17 @@ impl LocalNode {
     /// Stops whatever daemon owns the socket; the connection loop then starts the bundled one.
     pub async fn restart_daemon(&self) -> Result<(), CallError> {
         let client = lock(&self.client).clone();
-        match client {
-            Some(client) => client.call::<_, ()>(method::SHUTDOWN, ()).await?,
-            None => shutdown_raw(&self.config.paths).await.map_err(|e| CallError::connection(e.to_string()))?,
+        if let Some(client) = client {
+            return Ok(client.call::<_, ()>(method::SHUTDOWN, ()).await?);
         }
+        let stopped = tokio::time::timeout(RAW_SHUTDOWN_TIMEOUT, shutdown_raw(&self.config.paths)).await;
+        // A daemon that is gone or unresponsive is as good as stopped; the loop respawns either way.
+        let result = match stopped {
+            Ok(Err(ShutdownError::Io(e))) => Err(CallError::connection(e.to_string())),
+            _ => Ok(()),
+        };
         self.restart.notify_one();
-        Ok(())
+        result
     }
 
     pub async fn run(self: Arc<Self>) {
@@ -198,21 +205,31 @@ impl LocalNode {
             Err(e) => return retry(e),
         };
 
-        if hello.daemon_version == config.bundled_version {
-            self.set_status(NodeStatus::Connected { hello });
-        } else if !self.restarted_for_update.swap(true, Ordering::SeqCst) && !has_running_sessions(&client).await {
-            let _ = client.call::<_, ()>(method::SHUTDOWN, ()).await;
-            // The connection closes when the old daemon exits, which also releases its lock.
-            while events.recv().await.is_some() {}
-            return Outcome::Replaced;
-        } else {
-            self.set_status(NodeStatus::UpdateAvailable { hello, bundled_version: config.bundled_version.clone() });
+        let matches = hello.daemon_version == config.bundled_version;
+        let silent_restart = !matches
+            && !self.restarted_for_update.load(Ordering::SeqCst)
+            && !has_running_sessions(&client).await;
+        if silent_restart {
+            self.restarted_for_update.store(true, Ordering::SeqCst);
+            if client.call::<_, ()>(method::SHUTDOWN, ()).await.is_ok() {
+                // The connection closes when the old daemon exits, which also releases its lock.
+                let closed = tokio::time::timeout(REPLACE_EXIT_TIMEOUT, async { while events.recv().await.is_some() {} });
+                return match closed.await {
+                    Ok(()) => Outcome::Replaced,
+                    Err(_) => retry("the old daemon did not exit after shutdown"),
+                };
+            }
         }
 
         if let Err(e) = client.call::<_, ()>(method::SUBSCRIBE, ()).await {
             return retry(e);
         }
         *lock(&self.client) = Some(client);
+        self.set_status(if matches {
+            NodeStatus::Connected { hello }
+        } else {
+            NodeStatus::UpdateAvailable { hello, bundled_version: config.bundled_version.clone() }
+        });
         while let Some(event) = events.recv().await {
             match event {
                 Event::SessionOutput { session_id, data } => {
@@ -236,11 +253,16 @@ async fn has_running_sessions(client: &Client) -> bool {
     }
 }
 
+enum ShutdownError {
+    Unreachable,
+    Io(std::io::Error),
+}
+
 /// Raw JSON so a daemon speaking another protocol version still understands it.
-async fn shutdown_raw(paths: &Paths) -> std::io::Result<()> {
-    let stream = UnixStream::connect(paths.socket()).await?;
+async fn shutdown_raw(paths: &Paths) -> Result<(), ShutdownError> {
+    let stream = UnixStream::connect(paths.socket()).await.map_err(|_| ShutdownError::Unreachable)?;
     let (reader, mut writer) = stream.into_split();
-    writer.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"shutdown\",\"params\":null}\n").await?;
-    BufReader::new(reader).read_line(&mut String::new()).await?;
+    writer.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"shutdown\",\"params\":null}\n").await.map_err(ShutdownError::Io)?;
+    BufReader::new(reader).read_line(&mut String::new()).await.map_err(ShutdownError::Io)?;
     Ok(())
 }

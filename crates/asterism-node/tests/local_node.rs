@@ -221,3 +221,73 @@ async fn incompatible_daemon_is_reported_and_replaced_on_restart() {
     tokio::time::timeout(Duration::from_secs(5), fake).await.unwrap().unwrap();
     test.connected_pid().await;
 }
+
+struct CallOnConnected {
+    node: std::sync::OnceLock<Arc<LocalNode>>,
+    result: std::sync::Mutex<Option<Result<Value, asterism_node::CallError>>>,
+}
+
+impl asterism_node::NodeSink for CallOnConnected {
+    fn status(&self, status: &NodeStatus) {
+        let (Some(node), NodeStatus::Connected { .. }) = (self.node.get().cloned(), status) else { return };
+        let handle = tokio::runtime::Handle::current();
+        // A separate thread so the call can run while the connection loop is inside this callback.
+        let result = std::thread::spawn(move || handle.block_on(node.call(method::PROJECT_LIST, Value::Null)))
+            .join()
+            .unwrap();
+        *self.result.lock().unwrap() = Some(result);
+    }
+    fn event(&self, _: &Event) {}
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn connected_status_is_published_only_once_calls_work() {
+    let home = tempfile::tempdir().unwrap();
+    let paths = Paths { home: home.path().join("h") };
+    let sink = Arc::new(CallOnConnected { node: Default::default(), result: Default::default() });
+    let config = LocalNodeConfig { paths: paths.clone(), daemon_bin: daemon_bin(), path_env: None, bundled_version: VERSION.into() };
+    let node = LocalNode::new(config, sink.clone());
+    let _ = sink.node.set(node.clone());
+    let run = tokio::spawn(node.clone().run());
+    for _ in 0..300 {
+        if sink.result.lock().unwrap().is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    run.abort();
+    stop_daemon(&paths);
+    let result = sink.result.lock().unwrap().take();
+    assert!(matches!(result, Some(Ok(_))), "call from the Connected callback failed: {result:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn incompatible_wait_wakes_when_the_daemon_is_already_gone() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let home = tempfile::tempdir().unwrap();
+    let paths = Paths { home: home.path().join("h") };
+    paths.ensure_dirs().unwrap();
+    let listener = tokio::net::UnixListener::bind(paths.socket()).unwrap();
+    let fake = tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (reader, mut writer) = stream.into_split();
+            let mut lines = BufReader::new(reader).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let request: Value = serde_json::from_str(&line).unwrap();
+                let error = json!({"code": -32006, "message": "daemon speaks protocol 0", "data": {"kind": "incompatible_version"}});
+                writer.write_all(format!("{}\n", json!({"jsonrpc": "2.0", "id": request["id"], "error": error})).as_bytes()).await.unwrap();
+            }
+        }
+    });
+
+    let test = TestNode::start(&home, VERSION, None);
+    test.sink.wait_status(|s| matches!(s, NodeStatus::Incompatible { .. })).await;
+    fake.abort();
+    let _ = fake.await;
+    std::fs::remove_file(paths.socket()).unwrap();
+
+    test.node.restart_daemon().await.unwrap();
+    test.connected_pid().await;
+}
