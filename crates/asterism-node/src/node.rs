@@ -209,7 +209,14 @@ impl LocalNode {
             PathEnv::Fixed(path) => Some(path.clone()),
             PathEnv::LoginShell => self
                 .login_path
-                .get_or_init(|| async { tokio::task::spawn_blocking(login_env::login_shell_path).await.ok().flatten() })
+                .get_or_init(|| async {
+                    let login = tokio::task::spawn_blocking(login_env::login_shell_path).await.ok().flatten();
+                    login.or_else(|| {
+                        eprintln!("asterism: could not read PATH from the login shell; using a fallback PATH");
+                        let inherited = std::env::var("PATH").unwrap_or_default();
+                        Some(login_env::fallback_path(&inherited, std::env::var("HOME").ok().as_deref()))
+                    })
+                })
                 .await
                 .clone(),
         }
@@ -239,8 +246,8 @@ impl LocalNode {
             Err(e) => return retry(e),
         };
 
-        let matches = hello.daemon_version == config.bundled_version;
-        let silent_restart = !matches
+        let outdated = daemon_outdated(&hello.daemon_version, &config.bundled_version);
+        let silent_restart = outdated
             && !self.restarted_for_update.load(Ordering::SeqCst)
             && !has_running_sessions(&client).await;
         if silent_restart {
@@ -259,7 +266,7 @@ impl LocalNode {
             return retry(e);
         }
         *lock(&self.client) = Some(client);
-        self.set_status(if matches {
+        self.set_status(if !outdated {
             NodeStatus::Connected { hello }
         } else {
             NodeStatus::UpdateAvailable { hello, bundled_version: config.bundled_version.clone() }
@@ -277,6 +284,18 @@ impl LocalNode {
         *lock(&self.client) = None;
         lock(&self.outputs).clear();
         Outcome::Retry { reason: "connection to the daemon closed".into(), was_connected: true }
+    }
+}
+
+fn version_tuple(version: &str) -> Option<Vec<u64>> {
+    version.split('.').map(|part| part.parse().ok()).collect()
+}
+
+/// A newer daemon is kept; versions that do not parse count as outdated unless identical.
+fn daemon_outdated(daemon: &str, bundled: &str) -> bool {
+    match (version_tuple(daemon), version_tuple(bundled)) {
+        (Some(d), Some(b)) => d < b,
+        _ => daemon != bundled,
     }
 }
 
@@ -299,4 +318,19 @@ async fn shutdown_raw(paths: &Paths) -> Result<(), ShutdownError> {
     writer.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"shutdown\",\"params\":null}\n").await.map_err(ShutdownError::Io)?;
     BufReader::new(reader).read_line(&mut String::new()).await.map_err(ShutdownError::Io)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::daemon_outdated;
+
+    #[test]
+    fn only_an_older_daemon_is_outdated() {
+        assert!(daemon_outdated("0.1.0", "0.2.0"));
+        assert!(daemon_outdated("0.9.0", "0.10.0"));
+        assert!(!daemon_outdated("0.2.0", "0.1.0"));
+        assert!(!daemon_outdated("0.1.0", "0.1.0"));
+        assert!(daemon_outdated("0.1.0-dev", "0.1.0"));
+        assert!(!daemon_outdated("0.1.0-dev", "0.1.0-dev"));
+    }
 }
