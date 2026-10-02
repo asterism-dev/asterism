@@ -2,7 +2,7 @@
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { computed } from 'vue';
 import { api, errorMessage } from '../api';
-import { addSession, moveTab, showMenu, state, taskSessions, toast, type Tab } from '../store';
+import { activeTab, addSession, moveTab, showMenu, state, taskSessions, toast, type Tab } from '../store';
 import type { Session, SessionKind, Task } from '../types';
 import DiffView from './DiffView.vue';
 import TerminalPane from './TerminalPane.vue';
@@ -11,11 +11,7 @@ const props = defineProps<{ task: Task }>();
 
 const sessions = computed(() => taskSessions(state, props.task.id));
 const agents = computed(() => ('hello' in state.node ? state.node.hello.agents.filter((a) => a.available) : []));
-const tab = computed<Tab>(() => {
-  const chosen = state.selectedTab[props.task.id];
-  if (chosen === 'diff' || sessions.value.some((s) => s.id === chosen)) return chosen;
-  return sessions.value.find((s) => s.status !== 'exited')?.id ?? sessions.value[0]?.id ?? 'diff';
-});
+const tab = computed(() => activeTab(state, props.task.id));
 const activeSession = computed(() => sessions.value.find((s) => s.id === tab.value) ?? null);
 const report = (e: unknown) => toast(errorMessage(e));
 let dragged: number | null = null;
@@ -66,7 +62,7 @@ function tabMenu(e: MouseEvent, s: Session) {
         class="tab"
         :class="{ active: tab === s.id, exited: s.status === 'exited' }"
         draggable="true"
-        @dragstart="dragged = s.id"
+        @dragstart="dragged = s.id; $event.dataTransfer?.setData('text/plain', String(s.id))"
         @dragover.prevent
         @drop="drop(s.id)"
         @click="select(s.id)"

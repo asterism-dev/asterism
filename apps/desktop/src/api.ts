@@ -44,6 +44,24 @@ function serialized<T>(sessionId: number, op: () => Promise<T>): Promise<T> {
   return run;
 }
 
+const sendBuffers = new Map<number, string>();
+
+// Each keystroke is its own invoke and the daemon serves requests concurrently, so one send per session is in flight.
+async function send(sessionId: number, text: string): Promise<void> {
+  const buffered = sendBuffers.get(sessionId);
+  if (buffered !== undefined) {
+    sendBuffers.set(sessionId, buffered + text);
+    return;
+  }
+  let next = text;
+  while (next) {
+    sendBuffers.set(sessionId, '');
+    await call<null>('session.send', { session_id: sessionId, text: next, submit: false }).catch(() => {});
+    next = sendBuffers.get(sessionId) ?? '';
+  }
+  sendBuffers.delete(sessionId);
+}
+
 export const api = {
   nodeStatus: () => command<NodeStatus>('node_status'),
   restartDaemon: () => command<void>('restart_daemon'),
@@ -58,7 +76,7 @@ export const api = {
   sessions: () => call<Session[]>('session.list'),
   startSession: (taskId: number, kind: SessionKind) => call<Session>('session.start', { task_id: taskId, kind }),
   killSession: (sessionId: number) => call<null>('session.kill', { session_id: sessionId }),
-  send: (sessionId: number, text: string) => call<null>('session.send', { session_id: sessionId, text, submit: false }),
+  send,
   resize: (sessionId: number, rows: number, cols: number) =>
     call<null>('session.resize', { session_id: sessionId, rows, cols }),
   read: (sessionId: number, lines: number) => call<SessionReadResult>('session.read', { session_id: sessionId, lines }),

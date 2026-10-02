@@ -5,8 +5,9 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { api, decodeBase64, errorMessage } from '../api';
-import { isConnected, state, toast } from '../store';
+import { api, decodeBase64, errorMessage, RpcError } from '../api';
+import { appShortcut } from '../shortcuts';
+import { isConnected, refresh, state, toast } from '../store';
 
 const props = defineProps<{ sessionId: number; live: boolean }>();
 
@@ -49,13 +50,17 @@ async function attach() {
   try {
     const result = await api.attach(props.sessionId, channel);
     if (disposed || mine !== generation) return;
+    term.resize(result.cols, result.rows);
     term.write(decodeBase64(result.snapshot));
     painted = true;
     pending.forEach((data) => term?.write(decodeBase64(data)));
     attached = true;
     syncSize();
   } catch (e) {
-    if (!disposed && mine === generation) toast(errorMessage(e));
+    if (disposed || mine !== generation) return;
+    // The session ended while detached; the refreshed status swaps this pane for its exited view.
+    if (e instanceof RpcError && e.kind === 'not_found') refresh().catch((err) => toast(errorMessage(err)));
+    else toast(errorMessage(e));
   }
 }
 
@@ -80,8 +85,12 @@ onMounted(() => {
   fit = new FitAddon();
   term.loadAddon(fit);
   term.open(el.value);
+  // Linux app shortcuts are Ctrl+Shift chords xterm would otherwise consume.
+  term.attachCustomKeyEventHandler((e) => appShortcut(e) === null);
   try {
-    term.loadAddon(new WebglAddon());
+    const webgl = new WebglAddon();
+    webgl.onContextLoss(() => webgl.dispose());
+    term.loadAddon(webgl);
   } catch {
     // WebGL can be unavailable (e.g. some Linux GPUs); xterm keeps its DOM renderer.
   }
@@ -89,7 +98,7 @@ onMounted(() => {
   observer.observe(el.value);
   fit.fit();
   if (props.live) {
-    term.onData((data) => api.send(props.sessionId, data).catch(() => {}));
+    term.onData((data) => void api.send(props.sessionId, data));
     if (isConnected(state.node)) attach();
   } else {
     showFinalScreen();

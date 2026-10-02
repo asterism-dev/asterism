@@ -76,6 +76,14 @@ export function taskSessions(s: State, taskId: number): Session[] {
     .sort((a, b) => position(a.id) - position(b.id) || a.id - b.id);
 }
 
+/** The tab a task shows: the chosen one if it still exists, else its first live session, else the diff. */
+export function activeTab(s: State, taskId: number): Tab {
+  const sessions = taskSessions(s, taskId);
+  const chosen = s.selectedTab[taskId];
+  if (chosen === 'diff' || sessions.some((x) => x.id === chosen)) return chosen;
+  return sessions.find((x) => x.status !== 'exited')?.id ?? sessions[0]?.id ?? 'diff';
+}
+
 export function moveTab(s: State, taskId: number, draggedId: number, targetId: number) {
   const ids = taskSessions(s, taskId).map((x) => x.id).filter((id) => id !== draggedId);
   const at = ids.indexOf(targetId);

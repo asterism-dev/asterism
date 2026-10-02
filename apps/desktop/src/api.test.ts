@@ -45,3 +45,28 @@ describe('attach/detach ordering', () => {
     await d;
   });
 });
+
+describe('send ordering', () => {
+  const texts = () => invoke.mock.calls.map((c) => (c[1] as { params: { text: string } }).params.text);
+
+  it('keeps one send in flight and coalesces text typed meanwhile', async () => {
+    const a = api.send(3, 'a');
+    const b = api.send(3, 'b');
+    const c = api.send(3, 'c');
+    await tick();
+    expect(texts()).toEqual(['a']);
+    pending[0].reject({ kind: 'internal', message: 'boom' });
+    await tick();
+    expect(texts()).toEqual(['a', 'bc']);
+    const d = api.send(3, 'd');
+    pending[1].resolve(null);
+    await tick();
+    expect(texts()).toEqual(['a', 'bc', 'd']);
+    pending[2].resolve(null);
+    await Promise.all([a, b, c, d]);
+    api.send(3, 'e');
+    await tick();
+    expect(texts()).toEqual(['a', 'bc', 'd', 'e']);
+    pending[3].resolve(null);
+  });
+});

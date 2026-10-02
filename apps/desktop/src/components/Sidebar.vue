@@ -12,6 +12,14 @@ import type { Project, SessionKind, Task } from '../types';
 const connected = computed(() => isConnected(state.node));
 const nodeName = computed(() => ('hello' in state.node ? state.node.hello.hostname : 'This computer'));
 const waiting = computed(() => waitingSessions(state));
+const offlineLabel = computed(() => {
+  switch (state.node.state) {
+    case 'connecting': return 'starting…';
+    case 'disconnected': return state.node.reason;
+    case 'incompatible': return 'incompatible daemon';
+    default: return '';
+  }
+});
 const tasksOf = (p: Project) => state.tasks.filter((t) => t.project_id === p.id);
 const report = (e: unknown) => toast(errorMessage(e));
 
@@ -42,10 +50,22 @@ function jump() {
   if (session) selectSession(state, session);
 }
 
+async function restartDaemon() {
+  const confirmed = await ask('Restart the asterism daemon? Running sessions may stop or be resumed.', {
+    title: 'Restart daemon', kind: 'warning',
+  });
+  if (confirmed) api.restartDaemon().catch(report);
+}
+
+async function removeProject(p: Project) {
+  const confirmed = await ask(`Remove "${p.name}" from asterism?`, { title: 'Remove project', kind: 'warning' });
+  if (confirmed) api.removeProject(p.id).catch(report);
+}
+
 function nodeMenu(e: MouseEvent) {
   showMenu(e, [
     { label: 'Add project…', action: addProject },
-    { label: 'Restart daemon', danger: true, action: () => api.restartDaemon().catch(report) },
+    { label: 'Restart daemon', danger: true, action: restartDaemon },
   ]);
 }
 
@@ -53,7 +73,7 @@ function projectMenu(e: MouseEvent, p: Project) {
   showMenu(e, [
     { label: 'New task…', action: () => (state.newTaskFor = p.id) },
     { label: 'Reveal in file manager', action: () => revealItemInDir(p.path).catch(report) },
-    { label: 'Remove project', danger: true, action: () => api.removeProject(p.id).catch(report) },
+    { label: 'Remove project', danger: true, action: () => removeProject(p) },
   ]);
 }
 
@@ -73,7 +93,7 @@ function taskMenu(e: MouseEvent, t: Task) {
     <div class="row node-row" :class="{ offline: !connected }" @contextmenu="nodeMenu">
       <span class="dot" :class="connected ? (nodeAggregateStatus(state) ?? 'idle') : ''"></span>
       <span class="name">{{ nodeName }}</span>
-      <span v-if="!connected" class="muted">reconnecting…</span>
+      <span v-if="!connected" class="muted offline-label" :title="offlineLabel">{{ offlineLabel }}</span>
       <button v-if="waiting.length" class="badge" @click="jump">{{ waiting.length }} waiting</button>
       <button class="add" title="Add project" @click="addProject">+</button>
     </div>
@@ -113,6 +133,7 @@ function taskMenu(e: MouseEvent, t: Task) {
 .row:hover .hover-action { visibility: visible; }
 .badge { background: var(--waiting); color: #1d1f27; border: 0; padding: 0 8px; border-radius: 10px; font-size: 12px; }
 .add { padding: 0 7px; }
+.offline-label { flex-shrink: 1; min-width: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
 .offline { opacity: 0.55; }
 .hint { padding: 0 8px; }
 </style>

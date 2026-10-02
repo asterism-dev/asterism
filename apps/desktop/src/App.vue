@@ -8,14 +8,16 @@ import ContextMenu from './components/ContextMenu.vue';
 import NewTaskDialog from './components/NewTaskDialog.vue';
 import Sidebar from './components/Sidebar.vue';
 import TaskView from './components/TaskView.vue';
-import { applyEvent, isConnected, nextWaiting, refresh, selectSession, state, toast } from './store';
+import { activeTab, applyEvent, isConnected, nextWaiting, refresh, selectSession, state, toast } from './store';
+import { appShortcut } from './shortcuts';
 import type { NodeEvent, NodeStatus, Session } from './types';
 
-const isMac = navigator.userAgent.includes('Mac');
 const unlisteners: UnlistenFn[] = [];
 const selectedTask = computed(() => state.tasks.find((t) => t.id === state.selectedTaskId) ?? null);
 
 async function notify(session: Session) {
+  const viewing = state.selectedTaskId === session.task_id && activeTab(state, session.task_id) === session.id;
+  if (viewing && document.hasFocus()) return;
   const task = state.tasks.find((t) => t.id === session.task_id);
   const granted = (await isPermissionGranted()) || (await requestPermission()) === 'granted';
   if (granted) sendNotification({ title: 'asterism', body: `${task?.title ?? 'A session'} is waiting for you` });
@@ -28,8 +30,7 @@ function onStatus(status: NodeStatus) {
 }
 
 function onKey(e: KeyboardEvent) {
-  if (!(isMac ? e.metaKey : e.ctrlKey && e.shiftKey)) return;
-  const key = e.key.toLowerCase();
+  const key = appShortcut(e);
   if (key === 'n') {
     e.preventDefault();
     const projectId = selectedTask.value?.project_id ?? state.projects[0]?.id;
@@ -50,7 +51,7 @@ onMounted(async () => {
   unlisteners.push(
     await listen<NodeEvent>('node-event', (e) => {
       const waiting = applyEvent(state, e.payload);
-      if (waiting) notify(waiting);
+      if (waiting) notify(waiting).catch(() => {});
     }),
   );
   unlisteners.push(

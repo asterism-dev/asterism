@@ -27,7 +27,7 @@ async function submit() {
     const created = await api.createTask({
       project_id: projectId.value,
       title: title.value.trim(),
-      prompt: prompt.value.trim() || null,
+      prompt: (agent.value && prompt.value.trim()) || null,
       agent: agent.value || null,
     });
     addTask(state, created.task);
@@ -52,7 +52,12 @@ async function submit() {
         </select>
       </label>
       <label>Title <input ref="titleInput" v-model="title" placeholder="Fix the login redirect" /></label>
-      <label>Prompt <textarea v-model="prompt" rows="5" placeholder="Optional — sent to the agent on start" /></label>
+      <label>Prompt <textarea
+        v-model="prompt"
+        rows="5"
+        :disabled="!agent"
+        :placeholder="agent ? 'Optional — sent to the agent on start' : 'Choose an agent to send a prompt'"
+      /></label>
       <label>Agent
         <select v-model="agent">
           <option v-for="a in agents" :key="a.name" :value="a.name">{{ a.name }}</option>
