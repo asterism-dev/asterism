@@ -117,3 +117,38 @@ fn project_flag_accepts_id_or_name() {
     let out = node.cmd(&["task", "new", "x", "--project", "does-not-exist"]);
     assert_eq!(out.status.code(), Some(1));
 }
+
+#[test]
+fn json_mode_is_parseable_for_commands_without_a_result() {
+    let node = Node::new();
+    let task = node.json(&["task", "new", "k"])["task"]["id"].to_string();
+    let session = node.json(&["session", "start", &task, "--", "sh", "-c", "sleep 30"])["id"].to_string();
+    assert_eq!(node.json(&["session", "kill", &session]), serde_json::json!({"ok": true}));
+    assert_eq!(node.json(&["daemon", "stop"]), serde_json::json!({"ok": true}));
+}
+
+#[test]
+fn daemon_stop_does_not_autostart() {
+    let node = Node::new();
+    let out = node.cmd(&["daemon", "stop"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(!node.home().join("asterismd.sock").exists());
+}
+
+#[test]
+fn hook_with_invalid_event_exits_zero_silently() {
+    let node = Node::new();
+    let out = node.command(&["hook", "bogus-event"]).stdin(Stdio::null()).output().unwrap();
+    assert!(out.status.success());
+    assert!(out.stdout.is_empty() && out.stderr.is_empty());
+}
+
+#[test]
+fn hook_with_hung_stdin_returns_promptly() {
+    let node = Node::new();
+    let started = std::time::Instant::now();
+    let mut child = node.command(&["hook", "stop"]).env("ASTERISM_SESSION", "1").stdin(Stdio::piped()).spawn().unwrap();
+    let _held_open = child.stdin.take();
+    assert!(child.wait().unwrap().success());
+    assert!(started.elapsed() < std::time::Duration::from_secs(3));
+}

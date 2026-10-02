@@ -1,5 +1,5 @@
 use std::fs::OpenOptions;
-use std::io::{IsTerminal, Read};
+use std::io::IsTerminal;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -12,10 +12,12 @@ use asterism_proto::types::{method, *};
 use asterism_proto::PROTO_VERSION;
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
+use tokio::io::AsyncReadExt;
 use tokio::net::UnixStream;
 
 const SPAWN_ATTEMPTS: u32 = 60;
 const SPAWN_POLL: Duration = Duration::from_millis(50);
+const HOOK_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Parser)]
 #[command(name = "asterism", version, about = "Orchestrate coding agents in parallel git worktrees")]
@@ -163,10 +165,15 @@ impl From<HookArg> for HookEvent {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(_) if std::env::args().nth(1).as_deref() == Some("hook") => std::process::exit(0),
+        Err(err) => err.exit(),
+    };
     if let Cmd::Hook { event } = cli.command {
-        hook(event).await;
-        return;
+        let _ = tokio::time::timeout(HOOK_TIMEOUT, hook(event)).await;
+        // A pending stdin read would otherwise stall runtime shutdown.
+        std::process::exit(0);
     }
     if let Err(e) = run(cli).await {
         eprintln!("error: {e}");
@@ -178,6 +185,12 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
     let json = cli.json;
     if let Cmd::Attach = cli.command {
         return Ok(attach().await?);
+    }
+    if let Cmd::Daemon(DaemonCmd::Stop) = cli.command {
+        let Ok(stream) = UnixStream::connect(socket_path()).await else { return Ok(print_ok(json)) };
+        let (reader, writer) = stream.into_split();
+        Client::new(reader, writer).call::<_, ()>(method::SHUTDOWN, ()).await?;
+        return Ok(print_ok(json));
     }
     let client = connect().await?;
     match cli.command {
@@ -193,6 +206,7 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
         }
         Cmd::Project(ProjectCmd::Remove { id }) => {
             client.call::<_, ()>(method::PROJECT_REMOVE, ProjectIdParams { project_id: id }).await?;
+            print_ok(json);
         }
         Cmd::Task(TaskCmd::New { title, project, agent, prompt }) => {
             let project_id = resolve_project(&client, project).await?;
@@ -243,11 +257,13 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
         }
         Cmd::Session(SessionCmd::Kill { id }) => {
             client.call::<_, ()>(method::SESSION_KILL, SessionIdParams { session_id: id }).await?;
+            print_ok(json);
         }
         Cmd::Send { session, text, no_submit } => {
             client
                 .call::<_, ()>(method::SESSION_SEND, SessionSendParams { session_id: session, text, submit: !no_submit })
                 .await?;
+            print_ok(json);
         }
         Cmd::Read { session, lines: count } => {
             let read: SessionReadResult =
@@ -269,8 +285,7 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
                 format!("asterismd {} (pid {}) on {}", hello.daemon_version, hello.pid, hello.hostname)
             });
         }
-        Cmd::Daemon(DaemonCmd::Stop) => client.call::<_, ()>(method::SHUTDOWN, ()).await?,
-        Cmd::Attach | Cmd::Hook { .. } => {}
+        Cmd::Attach | Cmd::Hook { .. } | Cmd::Daemon(DaemonCmd::Stop) => {}
     }
     Ok(())
 }
@@ -334,7 +349,7 @@ async fn hook(event: HookArg) {
     let Some(session_id) = env_id("ASTERISM_SESSION") else { return };
     let mut input = String::new();
     if !std::io::stdin().is_terminal() {
-        let _ = std::io::stdin().read_to_string(&mut input);
+        let _ = tokio::io::stdin().read_to_string(&mut input).await;
     }
     let agent_ref = serde_json::from_str::<serde_json::Value>(&input)
         .ok()
@@ -388,6 +403,12 @@ fn print<T: Serialize>(json: bool, value: &T, human: impl FnOnce() -> String) {
         if !text.is_empty() {
             println!("{text}");
         }
+    }
+}
+
+fn print_ok(json: bool) {
+    if json {
+        println!("{{\"ok\":true}}");
     }
 }
 
