@@ -268,6 +268,10 @@ pub struct AgentConfig {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentConfigRaw {
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: EnvSettings,
     pub mcp_text: Option<String>,
     pub hooks_text: Option<String>,
 }

@@ -319,8 +319,11 @@ async fn remove_session_stops_live_sessions_and_deletes_them() {
     let mut events = env.daemon.subscribe();
     env.daemon.remove_session(live.id).await.unwrap();
     assert_eq!(env.daemon.session(live.id).unwrap_err().kind, ErrorKind::NotFound);
+    // Give the status forwarder time to (wrongly) report the exit.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let mut removed = false;
     while let Ok(event) = events.try_recv() {
+        assert!(!matches!(event, Event::SessionStatusChanged { session_id, .. } if session_id == live.id), "{event:?}");
         removed |= matches!(event, Event::SessionRemoved { session_id } if session_id == live.id);
     }
     assert!(removed);

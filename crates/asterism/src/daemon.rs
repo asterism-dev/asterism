@@ -313,7 +313,9 @@ impl Daemon {
     /// Stops the session if it still runs, then forgets it entirely.
     pub async fn remove_session(&self, id: i64) -> Result<()> {
         self.session(id)?;
-        if let Ok(live) = self.live(id) {
+        // Taken out first so the status forwarder sees it gone and reports nothing after `session.removed`.
+        let live = lock(&self.live).remove(&id);
+        if let Some(live) = live {
             let mut status = live.status.subscribe();
             let _ = live.pty.kill();
             let exited = tokio::time::timeout(REMOVE_GRACE, status.wait_for(|s| *s == SessionStatus::Exited))
@@ -322,7 +324,6 @@ impl Daemon {
             if !exited && !*live.pty.exited().borrow() {
                 let _ = live.pty.force_kill();
             }
-            lock(&self.live).remove(&id);
         }
         self.store().delete_session(id)?;
         self.emit(Event::SessionRemoved { session_id: id });

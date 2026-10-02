@@ -64,7 +64,10 @@ pub fn load(paths: &Paths, agent: &str) -> Result<AgentConfig> {
 
 pub fn load_raw(paths: &Paths, agent: &str) -> Result<AgentConfigRaw> {
     check_agent(agent)?;
+    let entry = Config::load(&paths.config())?.agents.remove(agent).unwrap_or_default();
     Ok(AgentConfigRaw {
+        args: entry.args,
+        env: EnvSettings { remove: entry.env.remove, set: entry.env.set },
         mcp_text: read_text(&paths.agent_mcp(agent))?,
         hooks_text: read_text(&paths.agent_hooks(agent))?,
     })
@@ -77,6 +80,9 @@ pub fn validate(agent: &str, config: &AgentConfig) -> Result<()> {
     }
     if config.args.iter().any(|arg| arg.contains('\0')) {
         return Err(invalid("parameters must not contain NUL characters"));
+    }
+    if config.args.iter().any(|arg| arg.trim().is_empty()) {
+        return Err(invalid("parameters must not be blank"));
     }
     if let Some(arg) = config.args.iter().find(|a| RESERVED_ARGS.contains(&a.as_str()) || RESERVED_PREFIXES.iter().any(|p| a.starts_with(p))) {
         return Err(invalid(format!("parameter {arg:?} is managed by asterism and cannot be set")));
@@ -175,24 +181,34 @@ pub fn merged_claude_settings(user_hooks: Option<&Value>) -> Value {
     settings
 }
 
-/// Rewrites the `--settings` file; a broken hooks.json falls back to the status hooks alone.
+/// Rewrites the `--settings` file at daemon start; a broken hooks.json falls back to the status hooks alone.
 pub fn write_claude_settings(paths: &Paths) -> Result<()> {
     let _guard = crate::lock(&SAVE_LOCK);
-    write_claude_settings_locked(paths)
-}
-
-fn write_claude_settings_locked(paths: &Paths) -> Result<()> {
     let user = read_json(&paths.agent_hooks(agents::CLAUDE.name)).unwrap_or_else(|e| {
         eprintln!("asterismd: ignoring custom Claude hooks: {}", e.message);
         None
     });
-    write_atomic(&paths.claude_settings(), &merged_claude_settings(user.as_ref()).to_string())
+    write_merged_settings(paths, user.as_ref())
+}
+
+fn write_claude_settings_locked(paths: &Paths) -> Result<()> {
+    write_merged_settings(paths, read_json(&paths.agent_hooks(agents::CLAUDE.name))?.as_ref())
+}
+
+fn write_merged_settings(paths: &Paths, user_hooks: Option<&Value>) -> Result<()> {
+    write_atomic(&paths.claude_settings(), &merged_claude_settings(user_hooks).to_string())
 }
 
 pub fn launch(paths: &Paths, profile: &AgentProfile) -> Result<Launch> {
     let args = Config::load(&paths.config())?.agents.remove(profile.name).map(|a| a.args).unwrap_or_default();
     let mcp = paths.agent_mcp(profile.name);
-    Ok(Launch { settings: paths.claude_settings(), mcp_config: mcp.exists().then_some(mcp), args })
+    let has_mcp = read_json(&mcp)?.is_some();
+    // Hand-edited hooks.json must reach this start, and a broken one must fail it rather than vanish.
+    {
+        let _guard = crate::lock(&SAVE_LOCK);
+        write_claude_settings_locked(paths)?;
+    }
+    Ok(Launch { settings: paths.claude_settings(), mcp_config: has_mcp.then_some(mcp), args })
 }
 
 pub fn start_argv(paths: &Paths, profile: &AgentProfile, prompt: Option<&str>) -> Result<Vec<String>> {
@@ -273,6 +289,7 @@ mod tests {
             AgentConfig { hooks: Some(json!({"hooks": {"Stop": {"not": "a list"}}})), ..claude_config() },
             AgentConfig { hooks: Some(json!({"hooks": {"Stop": [{"command": "x"}]}})), ..claude_config() },
             AgentConfig { args: vec!["bad\0arg".into()], ..claude_config() },
+            AgentConfig { args: vec!["  ".into()], ..claude_config() },
             AgentConfig {
                 env: EnvSettings { set: [("A=B".to_string(), "x".to_string())].into(), ..Default::default() },
                 ..claude_config()
@@ -384,6 +401,40 @@ mod tests {
         assert_eq!(err.kind, ErrorKind::InvalidParams);
         assert!(err.message.contains("hooks.json"), "{}", err.message);
         assert_eq!(load_raw(&paths, "claude").unwrap().hooks_text.as_deref(), Some("{ not json"));
+    }
+
+    #[test]
+    fn raw_load_keeps_args_and_env_next_to_broken_files() {
+        let (_dir, paths) = temp_paths();
+        save(&paths, "claude", &claude_config()).unwrap();
+        std::fs::write(paths.agent_hooks("claude"), "{ not json").unwrap();
+        let raw = load_raw(&paths, "claude").unwrap();
+        assert_eq!(raw.args, claude_config().args);
+        assert_eq!(raw.env, claude_config().env);
+        assert_eq!(raw.hooks_text.as_deref(), Some("{ not json"));
+    }
+
+    #[test]
+    fn broken_mcp_file_fails_the_launch() {
+        let (_dir, paths) = temp_paths();
+        save(&paths, "claude", &claude_config()).unwrap();
+        std::fs::write(paths.agent_mcp("claude"), "{ not json").unwrap();
+        let err = start_argv(&paths, &agents::CLAUDE, None).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::InvalidParams);
+        assert!(err.message.contains("mcp.json"), "{}", err.message);
+    }
+
+    #[test]
+    fn launch_picks_up_hand_edited_hooks() {
+        let (_dir, paths) = temp_paths();
+        save(&paths, "claude", &claude_config()).unwrap();
+        std::fs::write(paths.agent_hooks("claude"), r#"{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "edited"}]}]}}"#).unwrap();
+        start_argv(&paths, &agents::CLAUDE, None).unwrap();
+        assert!(std::fs::read_to_string(paths.claude_settings()).unwrap().contains("edited"));
+
+        std::fs::write(paths.agent_hooks("claude"), "{ not json").unwrap();
+        let err = start_argv(&paths, &agents::CLAUDE, None).unwrap_err();
+        assert!(err.message.contains("hooks.json"), "{}", err.message);
     }
 
     #[test]
