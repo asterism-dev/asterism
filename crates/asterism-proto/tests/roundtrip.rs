@@ -75,3 +75,30 @@ fn optional_params_have_defaults() {
     let read: SessionReadParams = serde_json::from_value(json!({"session_id": 1})).unwrap();
     assert_eq!(read.lines, 50);
 }
+
+#[test]
+fn agent_config_defaults_and_roundtrips() {
+    let empty: AgentConfig = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(empty, AgentConfig::default());
+
+    let config: AgentConfig = serde_json::from_value(json!({
+        "args": ["--model", "opus"],
+        "env": {"remove": ["AWS_*"], "set": {"FOO": "bar"}},
+        "mcp": {"mcpServers": {}},
+        "hooks": null
+    }))
+    .unwrap();
+    assert_eq!(config.args, ["--model", "opus"]);
+    assert_eq!(config.env.set.get("FOO").map(String::as_str), Some("bar"));
+    assert!(config.hooks.is_none());
+    let back: AgentConfig = serde_json::from_value(serde_json::to_value(&config).unwrap()).unwrap();
+    assert_eq!(back, config);
+}
+
+#[test]
+fn session_removed_event_roundtrips() {
+    let event = Event::SessionRemoved { session_id: 9 };
+    let notification = event.to_notification();
+    assert_eq!(notification.method, "session.removed");
+    assert_eq!(Event::from_notification(&notification), Some(event));
+}

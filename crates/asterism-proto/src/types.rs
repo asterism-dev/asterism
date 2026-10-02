@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -24,6 +25,10 @@ pub mod method {
     pub const SESSION_DETACH: &str = "session.detach";
     pub const SESSION_WAIT: &str = "session.wait";
     pub const SESSION_HOOK: &str = "session.hook";
+    pub const AGENT_CONFIG_GET: &str = "agent_config.get";
+    pub const AGENT_CONFIG_GET_RAW: &str = "agent_config.get_raw";
+    pub const AGENT_CONFIG_SET: &str = "agent_config.set";
+    pub const SESSION_REMOVE: &str = "session.remove";
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -240,6 +245,44 @@ pub struct SessionHookParams {
     pub agent_ref: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EnvSettings {
+    #[serde(default)]
+    pub remove: Vec<String>,
+    #[serde(default)]
+    pub set: BTreeMap<String, String>,
+}
+
+/// Per-agent settings; `mcp` and `hooks` are Claude's native JSON formats.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentConfig {
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: EnvSettings,
+    #[serde(default)]
+    pub mcp: Option<Value>,
+    #[serde(default)]
+    pub hooks: Option<Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentConfigRaw {
+    pub mcp_text: Option<String>,
+    pub hooks_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentParams {
+    pub agent: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentConfigSetParams {
+    pub agent: String,
+    pub config: AgentConfig,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "method", content = "params")]
 pub enum Event {
@@ -249,6 +292,8 @@ pub enum Event {
     SessionOutput { session_id: i64, data: String },
     #[serde(rename = "session.changed")]
     SessionChanged(Session),
+    #[serde(rename = "session.removed")]
+    SessionRemoved { session_id: i64 },
     #[serde(rename = "task.changed")]
     TaskChanged(Task),
     #[serde(rename = "project.changed")]

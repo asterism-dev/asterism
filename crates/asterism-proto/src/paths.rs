@@ -50,4 +50,16 @@ impl Paths {
         fs::set_permissions(&self.home, Permissions::from_mode(0o700))?;
         fs::create_dir_all(self.worktrees())
     }
+
+    pub fn agent_dir(&self, agent: &str) -> PathBuf {
+        self.home.join("agents").join(agent)
+    }
+
+    pub fn agent_mcp(&self, agent: &str) -> PathBuf {
+        self.agent_dir(agent).join("mcp.json")
+    }
+
+    pub fn agent_hooks(&self, agent: &str) -> PathBuf {
+        self.agent_dir(agent).join("hooks.json")
+    }
 }
