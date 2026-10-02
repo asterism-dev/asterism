@@ -37,11 +37,15 @@ function drop(target: number) {
 }
 
 async function close(s: Session) {
-  if (s.kind.type === 'agent' && s.status !== 'exited') {
-    const stop = await ask(`Stop the running ${label(s)} session and close it?`, { title: 'Close session', kind: 'warning' });
-    if (!stop) return;
+  try {
+    if (s.kind.type === 'agent' && s.status !== 'exited') {
+      const stop = await ask(`Stop the running ${label(s)} session and close it?`, { title: 'Close session', kind: 'warning' });
+      if (!stop) return;
+    }
+    api.removeSession(s.id).catch(report);
+  } catch (e) {
+    report(e);
   }
-  api.removeSession(s.id).catch(report);
 }
 
 function tabMenu(e: MouseEvent, s: Session) {
@@ -63,21 +67,24 @@ function tabMenu(e: MouseEvent, s: Session) {
       </div>
     </header>
     <nav class="tabs">
-      <button
+      <div
         v-for="s in sessions"
         :key="s.id"
         class="tab"
+        role="tab"
+        :aria-selected="tab === s.id"
         :class="{ active: tab === s.id, exited: s.status === 'exited' }"
         draggable="true"
         @dragstart="dragged = s.id; $event.dataTransfer?.setData('text/plain', String(s.id))"
         @dragover.prevent
         @drop="drop(s.id)"
-        @click="select(s.id)"
         @contextmenu="tabMenu($event, s)"
       >
-        <span class="dot" :class="s.status"></span>{{ label(s) }}
-        <span class="close" title="Close session" @click.stop="close(s)">×</span>
-      </button>
+        <button class="tab-label" @click="select(s.id)" @keydown.delete="close(s)" @keydown.backspace="close(s)">
+          <span class="dot" :class="s.status"></span>{{ label(s) }}
+        </button>
+        <button class="close" aria-label="Close session" title="Close session" @click.stop="close(s)">×</button>
+      </div>
       <button class="tab" :class="{ active: tab === 'diff' }" @click="select('diff')">Diff</button>
     </nav>
     <div class="tab-body">
@@ -100,10 +107,13 @@ function tabMenu(e: MouseEvent, s: Session) {
 .toolbar { display: flex; gap: 6px; flex-wrap: wrap; }
 .tabs { display: flex; gap: 2px; padding: 6px 10px 0; background: var(--panel); border-bottom: 1px solid var(--border); }
 .tab { border: 0; border-radius: 6px 6px 0 0; display: flex; align-items: center; gap: 6px; background: transparent; }
+.tab[role="tab"] { padding: 0; }
 .tab.active { background: var(--select); }
 .tab.exited { color: var(--muted); }
 .tab-body { position: relative; flex: 1; min-height: 0; }
-.tab .close { opacity: 0; padding: 0 2px; border-radius: 4px; }
-.tab:hover .close, .tab.active .close { opacity: 0.6; }
-.tab .close:hover { opacity: 1; background: var(--border); }
+.tab-label { border: 0; background: transparent; display: flex; align-items: center; gap: 6px; padding: 0; cursor: pointer; color: inherit; font-size: inherit; font-family: inherit; }
+.tab-label:focus { outline: 1px solid var(--border); }
+.close { border: 0; background: transparent; padding: 0 2px; border-radius: 4px; opacity: 0; cursor: pointer; }
+.tab:hover .close, .tab.active .close, .tab:focus-within .close { opacity: 0.6; }
+.close:hover { opacity: 1; background: var(--border); }
 </style>
