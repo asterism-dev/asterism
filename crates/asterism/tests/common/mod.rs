@@ -35,3 +35,57 @@ pub async fn eventually(mut f: impl FnMut() -> bool) -> bool {
     }
     false
 }
+
+use std::process::Output;
+
+use tempfile::TempDir;
+
+/// An isolated asterism home plus a git repo, driven through the real CLI binary.
+pub struct Node {
+    home: TempDir,
+    repo: TempDir,
+}
+
+impl Node {
+    pub fn new() -> Self {
+        let home = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        init_repo(repo.path());
+        Self { home, repo }
+    }
+
+    pub fn repo(&self) -> &Path {
+        self.repo.path()
+    }
+
+    pub fn home(&self) -> &Path {
+        self.home.path()
+    }
+
+    pub fn command(&self, args: &[&str]) -> Command {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_asterism"));
+        cmd.args(args)
+            .env("ASTERISM_HOME", self.home.path())
+            .env_remove("ASTERISM_SOCKET")
+            .env_remove("ASTERISM_TASK")
+            .env_remove("ASTERISM_SESSION")
+            .current_dir(self.repo.path());
+        cmd
+    }
+
+    pub fn cmd(&self, args: &[&str]) -> Output {
+        self.command(args).output().unwrap()
+    }
+
+    pub fn json(&self, args: &[&str]) -> serde_json::Value {
+        let out = self.cmd(&[&["--json"][..], args].concat());
+        assert!(out.status.success(), "asterism {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+        serde_json::from_slice(&out.stdout).unwrap()
+    }
+}
+
+impl Drop for Node {
+    fn drop(&mut self) {
+        let _ = self.cmd(&["daemon", "stop"]);
+    }
+}
