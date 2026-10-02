@@ -13,6 +13,9 @@ const error = ref<string | null>(null);
 const loading = ref(false);
 const sideBySide = ref(false);
 
+const MAX_DIFF_CHANGES = 2000;
+const MAX_DIFF_LINE_LENGTH = 2000;
+
 async function load() {
   loading.value = true;
   try {
@@ -28,7 +31,12 @@ async function load() {
 // diff2html escapes file contents, so its output is safe for v-html.
 const rendered = computed(() =>
   patch.value
-    ? renderDiff(patch.value, { outputFormat: sideBySide.value ? 'side-by-side' : 'line-by-line', drawFileList: true })
+    ? renderDiff(patch.value, {
+        outputFormat: sideBySide.value ? 'side-by-side' : 'line-by-line',
+        drawFileList: true,
+        diffMaxChanges: MAX_DIFF_CHANGES,
+        diffMaxLineLength: MAX_DIFF_LINE_LENGTH,
+      })
     : '',
 );
 
