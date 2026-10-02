@@ -350,6 +350,19 @@ impl Daemon {
     }
 
     pub fn recover(self: &Arc<Self>) -> Result<()> {
+        let stored = self.store().sessions(None)?;
+        for crate::store::StoredSession { session, agent_ref } in stored {
+            if session.status == SessionStatus::Exited {
+                continue;
+            }
+            let resumed = self.task(session.task_id).ok().filter(|t| !t.archived).and_then(|task| {
+                let argv = agents::resume_argv_for(&session.kind, agent_ref.as_deref(), &self.paths.claude_settings())?;
+                self.spawn_live(session.id, &task, argv, agents::waiting_patterns(&session.kind)).ok()
+            });
+            if resumed.is_none() {
+                self.store().set_session_status(session.id, SessionStatus::Exited)?;
+            }
+        }
         Ok(())
     }
 }

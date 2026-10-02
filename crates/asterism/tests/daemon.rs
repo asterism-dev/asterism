@@ -178,3 +178,16 @@ async fn task_ids_are_not_reused_after_project_removal() {
     let second = new_task(&env, "again");
     assert_ne!(first.branch, second.branch);
 }
+
+#[tokio::test]
+async fn restart_marks_non_resumable_sessions_exited() {
+    let env = setup();
+    let task = new_task(&env, "restart");
+    let session = start(&env, &task, sh("sleep 30"));
+    assert_eq!(env.daemon.session(session.id).unwrap().status, SessionStatus::Working);
+
+    let restarted = Daemon::new(Paths { home: env.home.path().to_path_buf() }).unwrap();
+    restarted.recover().unwrap();
+    assert_eq!(restarted.session(session.id).unwrap().status, SessionStatus::Exited);
+    env.daemon.kill_session(session.id).unwrap();
+}
