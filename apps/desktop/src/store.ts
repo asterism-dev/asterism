@@ -60,6 +60,11 @@ export function projectStatus(s: State, projectId: number): SessionStatus | null
   return aggregate(s.sessions.filter((x) => ids.has(x.task_id)).map((x) => x.status));
 }
 
+export function nodeAggregateStatus(s: State): SessionStatus | null {
+  const ids = new Set(s.tasks.map((t) => t.id));
+  return aggregate(s.sessions.filter((x) => ids.has(x.task_id)).map((x) => x.status));
+}
+
 export function taskSessions(s: State, taskId: number): Session[] {
   const order = s.tabOrder[taskId] ?? [];
   const position = (id: number) => {

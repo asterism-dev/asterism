@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  aggregate, applyEvent, initialState, moveTab, nextWaiting, projectStatus, taskSessions, taskStatus, waitingSessions,
+  aggregate, applyEvent, initialState, moveTab, nextWaiting, nodeAggregateStatus, projectStatus, taskSessions, taskStatus, waitingSessions,
 } from './store';
 import type { Session, SessionStatus, Task } from './types';
 
@@ -97,5 +97,15 @@ describe('tabs and waiting sessions', () => {
     s.selectedTaskId = 2;
     s.selectedTab[2] = 11;
     expect(nextWaiting(s)?.id).toBe(10);
+  });
+});
+
+describe('nodeAggregateStatus', () => {
+  it('aggregates sessions of known tasks across projects', () => {
+    const s = initialState();
+    expect(nodeAggregateStatus(s)).toBeNull();
+    s.tasks = [task(1, 1), task(2, 2)];
+    s.sessions = [session(1, 1, 'idle'), session(2, 2, 'waiting_input'), session(3, 99, 'working')];
+    expect(nodeAggregateStatus(s)).toBe('waiting_input');
   });
 });

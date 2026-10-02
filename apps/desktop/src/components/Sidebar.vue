@@ -4,7 +4,7 @@ import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { computed } from 'vue';
 import { api, errorMessage, RpcError } from '../api';
 import {
-  addSession, isConnected, nextWaiting, projectStatus, selectSession, showMenu, state, taskStatus, toast,
+  addSession, isConnected, nextWaiting, nodeAggregateStatus, projectStatus, selectSession, showMenu, state, taskStatus, toast,
   waitingSessions,
 } from '../store';
 import type { Project, SessionKind, Task } from '../types';
@@ -71,7 +71,7 @@ function taskMenu(e: MouseEvent, t: Task) {
 <template>
   <aside class="sidebar">
     <div class="row node-row" :class="{ offline: !connected }" @contextmenu="nodeMenu">
-      <span class="dot" :class="connected ? 'idle' : ''"></span>
+      <span class="dot" :class="connected ? (nodeAggregateStatus(state) ?? 'idle') : ''"></span>
       <span class="name">{{ nodeName }}</span>
       <span v-if="!connected" class="muted">reconnecting…</span>
       <button v-if="waiting.length" class="badge" @click="jump">{{ waiting.length }} waiting</button>

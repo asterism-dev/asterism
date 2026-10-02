@@ -11,6 +11,7 @@ import TaskView from './components/TaskView.vue';
 import { applyEvent, isConnected, nextWaiting, refresh, selectSession, state, toast } from './store';
 import type { NodeEvent, NodeStatus, Session } from './types';
 
+const isMac = navigator.userAgent.includes('Mac');
 const unlisteners: UnlistenFn[] = [];
 const selectedTask = computed(() => state.tasks.find((t) => t.id === state.selectedTaskId) ?? null);
 
@@ -27,12 +28,13 @@ function onStatus(status: NodeStatus) {
 }
 
 function onKey(e: KeyboardEvent) {
-  if (!(e.metaKey || e.ctrlKey)) return;
-  if (e.key === 'n') {
+  if (!(isMac ? e.metaKey : e.ctrlKey && e.shiftKey)) return;
+  const key = e.key.toLowerCase();
+  if (key === 'n') {
     e.preventDefault();
     const projectId = selectedTask.value?.project_id ?? state.projects[0]?.id;
     if (projectId !== undefined) state.newTaskFor = projectId;
-  } else if (e.key === 'j') {
+  } else if (key === 'j') {
     e.preventDefault();
     const session = nextWaiting(state);
     if (session) selectSession(state, session);
