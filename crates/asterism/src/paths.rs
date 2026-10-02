@@ -32,6 +32,10 @@ impl Paths {
         self.home.join("claude-settings.json")
     }
 
+    pub fn config(&self) -> PathBuf {
+        self.home.join("config.toml")
+    }
+
     pub fn lock(&self) -> PathBuf {
         self.home.join("asterismd.lock")
     }

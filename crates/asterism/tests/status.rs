@@ -12,7 +12,7 @@ fn start(argv: &[&str], patterns: &'static [&'static str], hooks: bool) -> watch
     let pty = Pty::spawn(SpawnSpec {
         argv: argv.iter().map(|s| s.to_string()).collect(),
         cwd: std::env::temp_dir(),
-        env: vec![],
+        env: vec![("PATH".into(), std::env::var("PATH").unwrap())],
         rows: 24,
         cols: 80,
     })

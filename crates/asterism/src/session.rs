@@ -15,6 +15,7 @@ const DRAIN_GRACE: Duration = Duration::from_millis(500);
 pub struct SpawnSpec {
     pub argv: Vec<String>,
     pub cwd: PathBuf,
+    /// The complete environment; nothing is inherited from the daemon.
     pub env: Vec<(String, String)>,
     pub rows: u16,
     pub cols: u16,
@@ -62,12 +63,7 @@ impl Pty {
         let mut cmd = CommandBuilder::new(program);
         cmd.args(args);
         cmd.cwd(&spec.cwd);
-        // An in-process daemon started from inside Claude Code must not leak its session markers.
-        for (key, _) in std::env::vars_os() {
-            if key == "CLAUDECODE" || key.to_string_lossy().starts_with("CLAUDE_CODE_") {
-                cmd.env_remove(key);
-            }
-        }
+        cmd.env_clear();
         cmd.env("TERM", "xterm-256color");
         for (key, value) in &spec.env {
             cmd.env(key, value);

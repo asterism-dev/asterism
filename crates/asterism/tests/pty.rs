@@ -9,7 +9,7 @@ fn spec(cwd: &std::path::Path, argv: &[&str]) -> SpawnSpec {
     SpawnSpec {
         argv: argv.iter().map(|s| s.to_string()).collect(),
         cwd: cwd.to_path_buf(),
-        env: vec![("ASTERISM_TEST".into(), "yes".into())],
+        env: vec![("ASTERISM_TEST".into(), "yes".into()), ("PATH".into(), std::env::var("PATH").unwrap())],
         rows: 24,
         cols: 80,
     }

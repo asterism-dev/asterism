@@ -10,6 +10,7 @@ use asterism_proto::PROTO_VERSION;
 use tokio::sync::{broadcast, watch, Notify};
 
 use crate::agents::{self, AgentProfile};
+use crate::config::{self, Config};
 use crate::error::{Error, Result};
 use crate::paths::Paths;
 use crate::session::{Pty, Snapshot, SpawnSpec, SCROLLBACK_LINES};
@@ -210,7 +211,7 @@ impl Daemon {
             }
         };
         let id = self.store().insert_session(task.id, &params.kind, SessionStatus::Working)?;
-        if let Err(e) = self.spawn_live(id, &task, argv, agents::waiting_patterns(&params.kind)) {
+        if let Err(e) = self.spawn_live(id, &task, argv, &params.kind) {
             self.store().set_session_status(id, SessionStatus::Exited)?;
             return Err(e);
         }
@@ -224,13 +225,14 @@ impl Daemon {
         id: i64,
         task: &Task,
         argv: Vec<String>,
-        waiting_patterns: &'static [&'static str],
+        kind: &SessionKind,
     ) -> Result<()> {
+        let policy = Config::load(&self.paths.config())?.env_policy(config::agent_key(kind));
         let bin_dir = std::env::current_exe()?.parent().map(Path::to_path_buf).unwrap_or_default();
-        let inherited = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>());
-        let path = std::env::join_paths(std::iter::once(bin_dir.clone()).chain(inherited.unwrap_or_default()))
+        let inherited_path = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>());
+        let path = std::env::join_paths(std::iter::once(bin_dir.clone()).chain(inherited_path.unwrap_or_default()))
             .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
-        let env = vec![
+        let fixed = [
             ("PATH".to_string(), path.to_string_lossy().into_owned()),
             ("ASTERISM_HOME".to_string(), self.paths.home.display().to_string()),
             ("ASTERISM_SOCKET".to_string(), self.paths.socket().display().to_string()),
@@ -238,6 +240,8 @@ impl Daemon {
             ("ASTERISM_TASK".to_string(), task.id.to_string()),
             ("ASTERISM_SESSION".to_string(), id.to_string()),
         ];
+        let inherited = std::env::vars_os().filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)));
+        let env = config::session_env(inherited, &policy, &fixed);
         let pty = Pty::spawn(SpawnSpec {
             argv,
             cwd: PathBuf::from(&task.worktree_path),
@@ -252,7 +256,7 @@ impl Daemon {
             hooks_active: Arc::new(AtomicBool::new(false)),
         });
         lock(&self.live).insert(id, live.clone());
-        tokio::spawn(status::track(pty.clone(), waiting_patterns, live.status.clone(), live.hooks_active.clone()));
+        tokio::spawn(status::track(pty.clone(), agents::waiting_patterns(kind), live.status.clone(), live.hooks_active.clone()));
 
         let daemon = self.clone();
         tokio::spawn(async move {
@@ -366,7 +370,7 @@ impl Daemon {
                 Ok(task) if !task.archived => {
                     agents::resume_argv_for(&session.kind, agent_ref.as_deref(), &self.paths.claude_settings())
                         .is_some_and(|argv| {
-                            let spawned = self.spawn_live(session.id, &task, argv, agents::waiting_patterns(&session.kind));
+                            let spawned = self.spawn_live(session.id, &task, argv, &session.kind);
                             if let Err(e) = &spawned {
                                 eprintln!("asterismd: could not resume session {}: {e}", session.id);
                             }

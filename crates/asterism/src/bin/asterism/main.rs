@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use asterism_core::config;
 use asterism_core::paths::Paths;
 use asterism_proto::client::{Client, ClientError};
 use asterism_proto::rpc::{ErrorKind, RpcError};
@@ -18,8 +19,7 @@ use tokio::net::UnixStream;
 const SPAWN_ATTEMPTS: u32 = 60;
 const SPAWN_POLL: Duration = Duration::from_millis(50);
 const HOOK_TIMEOUT: Duration = Duration::from_secs(2);
-const INHERITED_ENV_BLOCKLIST: &[&str] =
-    &["ASTERISM_TASK", "ASTERISM_SESSION", "CLAUDECODE", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"];
+const INHERITED_ENV_BLOCKLIST: &[&str] = &["ASTERISM_TASK", "ASTERISM_SESSION", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"];
 
 #[derive(Parser)]
 #[command(name = "asterism", version, about = "Orchestrate coding agents in parallel git worktrees")]
@@ -312,7 +312,7 @@ fn spawn_daemon() -> std::io::Result<()> {
     cmd.current_dir("/");
     for (key, _) in std::env::vars_os() {
         let name = key.to_string_lossy();
-        if INHERITED_ENV_BLOCKLIST.contains(&&*name) || name.starts_with("CLAUDE_CODE_") {
+        if INHERITED_ENV_BLOCKLIST.contains(&&*name) || config::removed_by_default(&name) {
             cmd.env_remove(&key);
         }
     }

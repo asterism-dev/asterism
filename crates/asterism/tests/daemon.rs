@@ -249,3 +249,31 @@ async fn submit_marks_hooked_sessions_working() {
         .unwrap_err();
     assert_eq!(err.kind, ErrorKind::Timeout);
 }
+
+#[tokio::test]
+async fn agent_env_policy_from_node_config_applies_to_sessions() {
+    let env = setup();
+    std::fs::write(
+        env.home.path().join("config.toml"),
+        "[agents.command.env]\nremove = [\"HOME\"]\nset = { FOO = \"bar\", ANTHROPIC_BASE_URL = \"http://proxy\" }\n",
+    )
+    .unwrap();
+    let task = new_task(&env, "env policy");
+    let session = start(&env, &task, sh("echo \"foo=$FOO home=[$HOME] base=$ANTHROPIC_BASE_URL task=$ASTERISM_TASK\"; sleep 30"));
+    let read = || env.daemon.read(SessionReadParams { session_id: session.id, lines: 5 }).unwrap().text;
+    let expected = format!("foo=bar home=[] base=http://proxy task={}", task.id);
+    assert!(eventually(|| read().contains(&expected)).await, "{}", read());
+    env.daemon.kill_session(session.id).unwrap();
+}
+
+#[tokio::test]
+async fn broken_node_config_fails_session_start_with_a_clear_error() {
+    let env = setup();
+    std::fs::write(env.home.path().join("config.toml"), "[agents.command\n").unwrap();
+    let task = new_task(&env, "broken config");
+    let err = env.daemon
+        .start_session(SessionStartParams { task_id: task.id, kind: sh("true"), prompt: None })
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
+    assert!(err.message.contains("config.toml"), "{}", err.message);
+}

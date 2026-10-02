@@ -4,6 +4,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use tokio::net::{UnixListener, UnixStream};
 
 pub mod agents;
+pub mod config;
 pub mod daemon;
 pub mod error;
 pub mod git;
