@@ -31,6 +31,19 @@ function call<T>(method: string, params: Record<string, unknown> = {}): Promise<
   return command<T>('node_call', { method, params });
 }
 
+const queues = new Map<number, Promise<unknown>>();
+
+// Attach/detach for one session must reach the node in call order.
+function serialized<T>(sessionId: number, op: () => Promise<T>): Promise<T> {
+  const run = (queues.get(sessionId) ?? Promise.resolve()).catch(() => {}).then(op);
+  const tail = run.catch(() => {});
+  queues.set(sessionId, tail);
+  void tail.then(() => {
+    if (queues.get(sessionId) === tail) queues.delete(sessionId);
+  });
+  return run;
+}
+
 export const api = {
   nodeStatus: () => command<NodeStatus>('node_status'),
   restartDaemon: () => command<void>('restart_daemon'),
@@ -50,6 +63,6 @@ export const api = {
     call<null>('session.resize', { session_id: sessionId, rows, cols }),
   read: (sessionId: number, lines: number) => call<SessionReadResult>('session.read', { session_id: sessionId, lines }),
   attach: (sessionId: number, onOutput: Channel<string>) =>
-    command<SessionAttachResult>('session_attach', { sessionId, onOutput }),
-  detach: (sessionId: number) => command<void>('session_detach', { sessionId }),
+    serialized(sessionId, () => command<SessionAttachResult>('session_attach', { sessionId, onOutput })),
+  detach: (sessionId: number) => serialized(sessionId, () => command<void>('session_detach', { sessionId })),
 };

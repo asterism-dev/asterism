@@ -19,9 +19,12 @@ let fit: FitAddon | null = null;
 let observer: ResizeObserver | null = null;
 let resizeTimer: number | undefined;
 let attached = false;
+let disposed = false;
+let generation = 0;
 
 function syncSize() {
-  if (!term || !fit) return;
+  if (!term || !fit || !el.value) return;
+  if (el.value.clientWidth === 0 || el.value.clientHeight === 0) return;
   fit.fit();
   // A hidden or collapsed pane measures 0×0; the daemon must never be resized to that.
   if (!props.live || !attached || term.rows === 0 || term.cols === 0) return;
@@ -32,6 +35,7 @@ function syncSize() {
 
 async function attach() {
   if (!term) return;
+  const mine = ++generation;
   term.reset();
   attached = false;
   // Channel messages may overtake the invoke result, so frames wait until the snapshot is painted.
@@ -44,13 +48,18 @@ async function attach() {
   };
   try {
     const result = await api.attach(props.sessionId, channel);
+    if (disposed || mine !== generation) {
+      // A newer attach owns the session's output sink; only detach when nobody else does.
+      if (mine === generation) api.detach(props.sessionId).catch(() => {});
+      return;
+    }
     term.write(decodeBase64(result.snapshot));
     painted = true;
     pending.forEach((data) => term?.write(decodeBase64(data)));
     attached = true;
     syncSize();
   } catch (e) {
-    toast(errorMessage(e));
+    if (!disposed && mine === generation) toast(errorMessage(e));
   }
 }
 
@@ -85,7 +94,7 @@ onMounted(() => {
   fit.fit();
   if (props.live) {
     term.onData((data) => api.send(props.sessionId, data).catch(() => {}));
-    attach();
+    if (isConnected(state.node)) attach();
   } else {
     showFinalScreen();
   }
@@ -101,10 +110,13 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  disposed = true;
   observer?.disconnect();
   clearTimeout(resizeTimer);
   if (props.live && attached) api.detach(props.sessionId).catch(() => {});
   term?.dispose();
+  term = null;
+  fit = null;
 });
 </script>
 

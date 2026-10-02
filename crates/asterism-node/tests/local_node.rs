@@ -126,6 +126,18 @@ async fn calls_events_and_attached_output_flow_through() {
     assert!(output.lock().unwrap().contains("ping"));
     assert!(test.sink.events.lock().unwrap().iter().any(|e| matches!(e, Event::TaskChanged(_))));
 
+    let missing = test.node.attach(i64::MAX, Box::new(|_| {})).await;
+    assert!(missing.is_err());
+    output.lock().unwrap().clear();
+    test.node.call(method::SESSION_SEND, json!({"session_id": session.id, "text": "pong\n"})).await.unwrap();
+    for _ in 0..100 {
+        if output.lock().unwrap().contains("pong") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(output.lock().unwrap().contains("pong"), "a failed attach to another session must not drop this sink");
+
     test.node.detach(session.id).await.unwrap();
     let err = test.node.call("no.such.method", Value::Null).await.unwrap_err();
     assert_eq!(err.kind, "method_not_found");

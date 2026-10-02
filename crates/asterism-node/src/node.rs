@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -104,7 +104,8 @@ pub struct LocalNode {
     sink: Arc<dyn NodeSink>,
     client: Mutex<Option<Arc<Client>>>,
     status: Mutex<NodeStatus>,
-    outputs: Mutex<HashMap<i64, OutputSink>>,
+    outputs: Mutex<HashMap<i64, (u64, OutputSink)>>,
+    attach_token: AtomicU64,
     login_path: OnceCell<Option<String>>,
     restart: Notify,
     restarted_for_update: AtomicBool,
@@ -118,6 +119,7 @@ impl LocalNode {
             client: Mutex::new(None),
             status: Mutex::new(NodeStatus::Connecting),
             outputs: Mutex::new(HashMap::new()),
+            attach_token: AtomicU64::new(0),
             login_path: OnceCell::new(),
             restart: Notify::new(),
             restarted_for_update: AtomicBool::new(false),
@@ -143,10 +145,15 @@ impl LocalNode {
 
     pub async fn attach(&self, session_id: i64, on_output: OutputSink) -> Result<SessionAttachResult, CallError> {
         let client = self.client()?;
-        lock(&self.outputs).insert(session_id, on_output);
+        let token = self.attach_token.fetch_add(1, Ordering::Relaxed);
+        lock(&self.outputs).insert(session_id, (token, on_output));
         let attached = client.call(method::SESSION_ATTACH, SessionIdParams { session_id }).await;
         if attached.is_err() {
-            lock(&self.outputs).remove(&session_id);
+            // A newer overlapping attach may own the entry by now; only drop our own.
+            let mut outputs = lock(&self.outputs);
+            if outputs.get(&session_id).is_some_and(|(t, _)| *t == token) {
+                outputs.remove(&session_id);
+            }
         }
         Ok(attached?)
     }
@@ -260,7 +267,7 @@ impl LocalNode {
         while let Some(event) = events.recv().await {
             match event {
                 Event::SessionOutput { session_id, data } => {
-                    if let Some(sink) = lock(&self.outputs).get(&session_id) {
+                    if let Some((_, sink)) = lock(&self.outputs).get(&session_id) {
                         sink(data);
                     }
                 }
