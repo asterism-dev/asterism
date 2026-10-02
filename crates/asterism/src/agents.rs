@@ -25,7 +25,9 @@ pub fn profile(name: &str) -> Option<&'static AgentProfile> {
 impl AgentProfile {
     pub fn start_argv(&self, settings: &Path, prompt: Option<&str>) -> Vec<String> {
         let mut argv = vec![self.binary.to_string(), "--settings".into(), settings.display().to_string()];
-        argv.extend(prompt.map(str::to_string));
+        if let Some(prompt) = prompt {
+            argv.extend(["--".to_string(), prompt.to_string()]);
+        }
         argv
     }
 
@@ -84,7 +86,7 @@ mod tests {
         let settings = Path::new("/h/claude-settings.json");
         assert_eq!(
             CLAUDE.start_argv(settings, Some("fix it")),
-            ["claude", "--settings", "/h/claude-settings.json", "fix it"]
+            ["claude", "--settings", "/h/claude-settings.json", "--", "fix it"]
         );
         assert_eq!(CLAUDE.start_argv(settings, None), ["claude", "--settings", "/h/claude-settings.json"]);
         assert_eq!(

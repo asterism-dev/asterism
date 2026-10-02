@@ -23,6 +23,11 @@ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 pub async fn run(paths: Paths) -> io::Result<()> {
     let socket = paths.socket();
     paths.ensure_dirs()?;
+    // Held for the whole run: two daemons racing after a crash must not both bind and recover.
+    let lock_file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(paths.lock())?;
+    if lock_file.try_lock().is_err() {
+        return Err(io::Error::new(io::ErrorKind::AddrInUse, "another daemon is running"));
+    }
     if socket.exists() {
         if UnixStream::connect(&socket).await.is_ok() {
             return Err(io::Error::new(

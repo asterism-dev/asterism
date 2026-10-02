@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     task_id INTEGER NOT NULL,
     kind TEXT NOT NULL,
     status TEXT NOT NULL,
-    agent_ref TEXT
+    agent_ref TEXT,
+    last_text TEXT
 );
 ";
 
@@ -168,6 +169,18 @@ impl Store {
         Ok(())
     }
 
+    pub fn set_session_last_text(&self, id: i64, text: &str) -> rusqlite::Result<()> {
+        self.conn.execute("UPDATE sessions SET last_text = ?2 WHERE id = ?1", params![id, text])?;
+        Ok(())
+    }
+
+    /// `None` if the session does not exist; `Some(None)` if it never stored a final screen.
+    pub fn session_last_text(&self, id: i64) -> rusqlite::Result<Option<Option<String>>> {
+        self.conn
+            .query_row("SELECT last_text FROM sessions WHERE id = ?1", [id], |row| row.get(0))
+            .optional()
+    }
+
     pub fn session(&self, id: i64) -> rusqlite::Result<Option<StoredSession>> {
         self.conn
             .query_row(&format!("SELECT {SESSION_COLUMNS} FROM sessions WHERE id = ?1"), [id], session_row)
@@ -266,6 +279,10 @@ mod tests {
         assert_eq!(stored.session.kind, kind);
         assert_eq!(stored.session.status, SessionStatus::WaitingInput);
         assert_eq!(stored.agent_ref.as_deref(), Some("abc"));
+        assert_eq!(store.session_last_text(id).unwrap(), Some(None));
+        store.set_session_last_text(id, "bye").unwrap();
+        assert_eq!(store.session_last_text(id).unwrap(), Some(Some("bye".into())));
+        assert_eq!(store.session_last_text(id + 1).unwrap(), None);
         assert_eq!(store.sessions(Some(task)).unwrap().len(), 1);
         assert!(store.sessions(Some(task + 1)).unwrap().is_empty());
     }

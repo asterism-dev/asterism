@@ -12,7 +12,7 @@ use tokio::sync::{broadcast, watch, Notify};
 use crate::agents::{self, AgentProfile};
 use crate::error::{Error, Result};
 use crate::paths::Paths;
-use crate::session::{Pty, Snapshot, SpawnSpec};
+use crate::session::{Pty, Snapshot, SpawnSpec, SCROLLBACK_LINES};
 use crate::store::Store;
 use crate::{git, lock, status};
 
@@ -252,13 +252,16 @@ impl Daemon {
             hooks_active: Arc::new(AtomicBool::new(false)),
         });
         lock(&self.live).insert(id, live.clone());
-        tokio::spawn(status::track(pty, waiting_patterns, live.status.clone(), live.hooks_active.clone()));
+        tokio::spawn(status::track(pty.clone(), waiting_patterns, live.status.clone(), live.hooks_active.clone()));
 
         let daemon = self.clone();
         tokio::spawn(async move {
             while status_rx.changed().await.is_ok() {
                 let status = *status_rx.borrow_and_update();
                 if status == SessionStatus::Exited {
+                    // Stored before leaving `live` so `read` always finds one of the two.
+                    let text = last_lines(&pty.history(), SCROLLBACK_LINES);
+                    let _ = daemon.store().set_session_last_text(id, &text);
                     lock(&daemon.live).remove(&id);
                 }
                 let _ = daemon.store().set_session_status(id, status);
@@ -292,20 +295,31 @@ impl Daemon {
 
     pub async fn send(&self, params: SessionSendParams) -> Result<()> {
         let live = self.live(params.session_id)?;
-        live.pty.write(params.text.as_bytes())?;
+        write_blocking(&live.pty, params.text.into_bytes()).await?;
         if params.submit {
             tokio::time::sleep(SUBMIT_DELAY).await;
-            live.pty.write(b"\r")?;
+            write_blocking(&live.pty, b"\r".to_vec()).await?;
+            // Hook sessions stay idle until UserPromptSubmit arrives; a `wait --until idle` right after must not pass.
+            if live.hooks_active.load(Ordering::Relaxed) {
+                set_unless_exited(&live.status, SessionStatus::Working);
+            }
         }
         Ok(())
     }
 
     pub fn resize(&self, params: SessionResizeParams) -> Result<()> {
+        if params.rows == 0 || params.cols == 0 {
+            return Err(Error::new(ErrorKind::InvalidParams, "rows and cols must be at least 1"));
+        }
         Ok(self.live(params.session_id)?.pty.resize(params.rows, params.cols)?)
     }
 
     pub fn read(&self, params: SessionReadParams) -> Result<SessionReadResult> {
-        let text = self.live(params.session_id)?.pty.text();
+        let id = params.session_id;
+        let text = match self.live(id) {
+            Ok(live) => live.pty.history(),
+            Err(_) => self.store().session_last_text(id)?.ok_or_else(|| not_found("session", id))?.unwrap_or_default(),
+        };
         Ok(SessionReadResult { text: last_lines(&text, params.lines) })
     }
 
@@ -335,14 +349,7 @@ impl Daemon {
     pub fn hook(&self, params: SessionHookParams) -> Result<()> {
         let live = self.live(params.session_id)?;
         live.hooks_active.store(true, Ordering::Relaxed);
-        let next = status::hook_status(params.event);
-        live.status.send_if_modified(|current| {
-            let changed = *current != next && *current != SessionStatus::Exited;
-            if changed {
-                *current = next;
-            }
-            changed
-        });
+        set_unless_exited(&live.status, status::hook_status(params.event));
         if let Some(agent_ref) = params.agent_ref {
             self.store().set_session_agent_ref(params.session_id, &agent_ref)?;
         }
@@ -355,16 +362,47 @@ impl Daemon {
             if session.status == SessionStatus::Exited {
                 continue;
             }
-            let resumed = self.task(session.task_id).ok().filter(|t| !t.archived).and_then(|task| {
-                let argv = agents::resume_argv_for(&session.kind, agent_ref.as_deref(), &self.paths.claude_settings())?;
-                self.spawn_live(session.id, &task, argv, agents::waiting_patterns(&session.kind)).ok()
-            });
-            if resumed.is_none() {
+            let resumed = match self.task(session.task_id) {
+                Ok(task) if !task.archived => {
+                    agents::resume_argv_for(&session.kind, agent_ref.as_deref(), &self.paths.claude_settings())
+                        .is_some_and(|argv| {
+                            let spawned = self.spawn_live(session.id, &task, argv, agents::waiting_patterns(&session.kind));
+                            if let Err(e) = &spawned {
+                                eprintln!("asterismd: could not resume session {}: {e}", session.id);
+                            }
+                            spawned.is_ok()
+                        })
+                }
+                Ok(_) => false,
+                Err(e) => {
+                    eprintln!("asterismd: could not resume session {}: task lookup failed: {e}", session.id);
+                    false
+                }
+            };
+            if !resumed {
                 self.store().set_session_status(session.id, SessionStatus::Exited)?;
             }
         }
         Ok(())
     }
+}
+
+fn set_unless_exited(status: &watch::Sender<SessionStatus>, next: SessionStatus) {
+    status.send_if_modified(|current| {
+        let changed = *current != next && *current != SessionStatus::Exited;
+        if changed {
+            *current = next;
+        }
+        changed
+    });
+}
+
+async fn write_blocking(pty: &Arc<Pty>, data: Vec<u8>) -> Result<()> {
+    let pty = pty.clone();
+    tokio::task::spawn_blocking(move || pty.write(&data))
+        .await
+        .map_err(|e| Error::new(ErrorKind::Internal, format!("pty write task failed: {e}")))??;
+    Ok(())
 }
 
 fn not_found(what: &str, id: i64) -> Error {

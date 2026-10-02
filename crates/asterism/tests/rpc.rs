@@ -255,3 +255,42 @@ async fn shutdown_stops_the_server() {
     tokio::time::timeout(Duration::from_secs(5), server).await.unwrap().unwrap().unwrap();
     assert!(!socket.exists());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_daemons_start_exactly_once() {
+    let home = tempfile::tempdir().unwrap();
+    let paths = Paths { home: home.path().to_path_buf() };
+    let socket = paths.socket();
+    let mut a = tokio::spawn(asterism_core::run(paths.clone()));
+    let mut b = tokio::spawn(asterism_core::run(paths));
+    let (loser, winner) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::select! {
+            res = &mut a => (res, b),
+            res = &mut b => (res, a),
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(loser.unwrap().unwrap_err().kind(), std::io::ErrorKind::AddrInUse);
+    for _ in 0..100 {
+        if UnixStream::connect(&socket).await.is_ok() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(!winner.is_finished());
+    let _: () = client(&socket).await.call(method::SHUTDOWN, ()).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), winner).await.unwrap().unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn held_daemon_lock_refuses_to_start() {
+    let home = tempfile::tempdir().unwrap();
+    let paths = Paths { home: home.path().to_path_buf() };
+    paths.ensure_dirs().unwrap();
+    let held = std::fs::File::create(paths.lock()).unwrap();
+    held.try_lock().unwrap();
+    let err = asterism_core::run(paths.clone()).await.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
+    assert!(!paths.socket().exists());
+}

@@ -191,3 +191,61 @@ async fn restart_marks_non_resumable_sessions_exited() {
     assert_eq!(restarted.session(session.id).unwrap().status, SessionStatus::Exited);
     env.daemon.kill_session(session.id).unwrap();
 }
+
+#[tokio::test]
+async fn zero_sized_resize_is_rejected() {
+    let env = setup();
+    let task = new_task(&env, "resize");
+    let session = start(&env, &task, sh("echo alive; cat"));
+    let resize = |rows, cols| env.daemon.resize(SessionResizeParams { session_id: session.id, rows, cols });
+    assert_eq!(resize(0, 80).unwrap_err().kind, ErrorKind::InvalidParams);
+    assert_eq!(resize(24, 0).unwrap_err().kind, ErrorKind::InvalidParams);
+    let read = || env.daemon.read(SessionReadParams { session_id: session.id, lines: 5 }).unwrap().text;
+    assert!(eventually(|| read().contains("alive")).await);
+}
+
+#[tokio::test]
+async fn read_includes_scrollback() {
+    let env = setup();
+    let task = new_task(&env, "scroll");
+    let session = start(&env, &task, sh("read go; i=1; while [ $i -le 100 ]; do echo line$i; i=$((i+1)); done; cat"));
+    env.daemon.resize(SessionResizeParams { session_id: session.id, rows: 24, cols: 80 }).unwrap();
+    env.daemon.send(SessionSendParams { session_id: session.id, text: "go".into(), submit: true }).await.unwrap();
+    let read = || env.daemon.read(SessionReadParams { session_id: session.id, lines: 60 }).unwrap().text;
+    assert!(eventually(|| read().contains("line100")).await);
+    let text = read();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 60, "{text}");
+    assert_eq!(lines[0], "line41");
+    assert_eq!(lines[59], "line100");
+}
+
+#[tokio::test]
+async fn exited_sessions_stay_readable() {
+    let env = setup();
+    let task = new_task(&env, "exited");
+    let session = start(&env, &task, sh("echo done-marker"));
+    let status = env.daemon
+        .wait(SessionWaitParams { session_id: session.id, until: SessionStatus::Exited, timeout_ms: Some(5_000) })
+        .await
+        .unwrap();
+    assert_eq!(status, SessionStatus::Exited);
+    let read = || env.daemon.read(SessionReadParams { session_id: session.id, lines: 10 });
+    assert!(eventually(|| read().is_ok_and(|r| r.text.contains("done-marker"))).await);
+    let missing = env.daemon.read(SessionReadParams { session_id: session.id + 100, lines: 10 }).unwrap_err();
+    assert_eq!(missing.kind, ErrorKind::NotFound);
+}
+
+#[tokio::test]
+async fn submit_marks_hooked_sessions_working() {
+    let env = setup();
+    let task = new_task(&env, "submit");
+    let session = start(&env, &task, sh("cat"));
+    env.daemon.hook(SessionHookParams { session_id: session.id, event: HookEvent::Stop, agent_ref: None }).unwrap();
+    env.daemon.send(SessionSendParams { session_id: session.id, text: "hi".into(), submit: true }).await.unwrap();
+    let err = env.daemon
+        .wait(SessionWaitParams { session_id: session.id, until: SessionStatus::Idle, timeout_ms: Some(1_500) })
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::Timeout);
+}

@@ -62,14 +62,14 @@ pub fn remove_worktree(repo: &Path, worktree: &Path, force: bool) -> Result<()> 
 
 pub fn diff(worktree: &Path, base: &str) -> Result<String> {
     let merge_base = git(worktree, &["merge-base", base, "HEAD"])?;
-    let mut patch = git(worktree, &["diff", merge_base.trim()])?;
+    let mut patch = git(worktree, &["diff", "--no-color", "--no-ext-diff", merge_base.trim()])?;
     let untracked = git(worktree, &["ls-files", "-z", "--others", "--exclude-standard"])?;
     for file in untracked.split('\0').filter(|f| !f.is_empty()) {
         // `git diff --no-index` exits 1 when the files differ, so its status is ignored.
         let out = Command::new("git")
             .arg("-C")
             .arg(worktree)
-            .args(["diff", "--no-index", "--", "/dev/null", file])
+            .args(["diff", "--no-color", "--no-ext-diff", "--no-index", "--", "/dev/null", file])
             .output()?;
         patch.push_str(&String::from_utf8_lossy(&out.stdout));
     }

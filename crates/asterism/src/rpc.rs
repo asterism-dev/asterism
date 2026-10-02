@@ -24,6 +24,7 @@ const MAX_OUTPUT_FRAME: usize = 64 * 1024;
 const OUT_QUEUE: usize = 256;
 // Lets the shutdown response reach the client before the server stops.
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(50);
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
 /// One client connection; background forwarders are keyed so re-attaching replaces them.
 struct Conn {
@@ -64,7 +65,11 @@ pub async fn serve(daemon: Arc<Daemon>, listener: UnixListener) {
             Ok((stream, _)) => {
                 tokio::spawn(handle_conn(daemon.clone(), stream));
             }
-            Err(e) => eprintln!("asterismd: accept failed: {e}"),
+            Err(e) => {
+                eprintln!("asterismd: accept failed: {e}");
+                // Persistent errors such as EMFILE would otherwise spin a core.
+                tokio::time::sleep(ACCEPT_BACKOFF).await;
+            }
         }
     }
 }

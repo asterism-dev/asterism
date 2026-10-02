@@ -1,14 +1,16 @@
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::Duration;
 
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use tokio::sync::{broadcast, watch};
 
 use crate::lock;
 
-pub const SCROLLBACK_LINES: usize = 5_000;
+pub const SCROLLBACK_LINES: usize = 2_000;
 const READ_BUFFER: usize = 64 * 1024;
+const DRAIN_GRACE: Duration = Duration::from_millis(500);
 
 pub struct SpawnSpec {
     pub argv: Vec<String>,
@@ -37,12 +39,20 @@ fn io_err(e: impl std::fmt::Display) -> io::Error {
     io::Error::other(e.to_string())
 }
 
+fn check_size(rows: u16, cols: u16) -> io::Result<()> {
+    if rows == 0 || cols == 0 {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "rows and cols must be at least 1"));
+    }
+    Ok(())
+}
+
 fn pty_size(rows: u16, cols: u16) -> PtySize {
     PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }
 }
 
 impl Pty {
     pub fn spawn(spec: SpawnSpec) -> io::Result<Arc<Self>> {
+        check_size(spec.rows, spec.cols)?;
         let (program, args) = spec
             .argv
             .split_first()
@@ -52,6 +62,12 @@ impl Pty {
         let mut cmd = CommandBuilder::new(program);
         cmd.args(args);
         cmd.cwd(&spec.cwd);
+        // An in-process daemon started from inside Claude Code must not leak its session markers.
+        for (key, _) in std::env::vars_os() {
+            if key == "CLAUDECODE" || key.to_string_lossy().starts_with("CLAUDE_CODE_") {
+                cmd.env_remove(key);
+            }
+        }
         cmd.env("TERM", "xterm-256color");
         for (key, value) in &spec.env {
             cmd.env(key, value);
@@ -68,7 +84,9 @@ impl Pty {
 
         let reader_parser = parser.clone();
         let reader_output = output.clone();
+        let (drained_tx, drained) = mpsc::channel::<()>();
         std::thread::spawn(move || {
+            let _drained = drained_tx;
             let mut buf = vec![0u8; READ_BUFFER];
             loop {
                 match reader.read(&mut buf) {
@@ -85,6 +103,8 @@ impl Pty {
         // Waiting separately from reading reports the exit even if a grandchild keeps the PTY open.
         std::thread::spawn(move || {
             let _ = child.wait();
+            // Let the reader parse the final output first (bounded: a grandchild may keep the PTY open).
+            let _ = drained.recv_timeout(DRAIN_GRACE);
             let _ = exited_tx.send(true);
         });
 
@@ -105,6 +125,7 @@ impl Pty {
     }
 
     pub fn resize(&self, rows: u16, cols: u16) -> io::Result<()> {
+        check_size(rows, cols)?;
         lock(&self.master).resize(pty_size(rows, cols)).map_err(io_err)?;
         lock(&self.parser).set_size(rows, cols);
         Ok(())
@@ -112,6 +133,20 @@ impl Pty {
 
     pub fn text(&self) -> String {
         lock(&self.parser).screen().contents()
+    }
+
+    pub fn history(&self) -> String {
+        let mut parser = lock(&self.parser);
+        let (rows, cols) = parser.screen().size();
+        parser.set_scrollback(usize::MAX);
+        let depth = parser.screen().scrollback();
+        // ponytail: vt100 scrolls back one screen at most, so grow the screen per read (depth x cols cells); keep a line log if reads get hot.
+        parser.set_size(rows.saturating_add(u16::try_from(depth).unwrap_or(u16::MAX)), cols);
+        parser.set_scrollback(depth);
+        let text = parser.screen().rows(0, cols).take(depth + usize::from(rows)).collect::<Vec<_>>().join("\n");
+        parser.set_scrollback(0);
+        parser.set_size(rows, cols);
+        text
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
