@@ -1,5 +1,7 @@
 use std::io;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use asterism_proto::paths::Paths;
 use asterism_proto::rpc::ErrorKind;
@@ -9,6 +11,14 @@ use serde_json::Value;
 use crate::agents::{self, AgentProfile, Launch};
 use crate::config::{Config, EnvPolicy};
 use crate::error::{Error, Result};
+
+/// Serialises settings writers: config.toml is read-modify-write and the temp names must not collide.
+static SAVE_LOCK: Mutex<()> = Mutex::new(());
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Flags that would override or break asterism's own launch.
+const RESERVED_ARGS: &[&str] = &["--", "--settings", "--mcp-config", "--resume", "-r", "--continue", "-c", "--print", "-p"];
+const RESERVED_PREFIXES: &[&str] = &["--settings=", "--mcp-config=", "--resume="];
 
 /// Session kinds that only take environment settings.
 pub const BASE_AGENTS: &[&str] = &["shell", "command"];
@@ -68,11 +78,17 @@ pub fn validate(agent: &str, config: &AgentConfig) -> Result<()> {
     if config.args.iter().any(|arg| arg.contains('\0')) {
         return Err(invalid("parameters must not contain NUL characters"));
     }
+    if let Some(arg) = config.args.iter().find(|a| RESERVED_ARGS.contains(&a.as_str()) || RESERVED_PREFIXES.iter().any(|p| a.starts_with(p))) {
+        return Err(invalid(format!("parameter {arg:?} is managed by asterism and cannot be set")));
+    }
     if let Some(name) = config.env.set.keys().find(|name| name.is_empty() || name.contains(['=', '\0'])) {
         return Err(invalid(format!("invalid environment variable name {name:?}")));
     }
-    if config.env.remove.iter().any(|pattern| pattern.is_empty() || pattern.contains('\0')) {
+    if config.env.remove.iter().any(String::is_empty) {
         return Err(invalid("remove patterns must not be empty"));
+    }
+    if config.env.remove.iter().any(|pattern| pattern.contains('\0')) {
+        return Err(invalid("remove patterns must not contain NUL characters"));
     }
     if let Some(mcp) = &config.mcp {
         if !mcp.get("mcpServers").is_some_and(Value::is_object) {
@@ -101,6 +117,7 @@ fn validate_hooks(hooks: &Value) -> Result<()> {
 
 pub fn save(paths: &Paths, agent: &str, config: &AgentConfig) -> Result<()> {
     validate(agent, config)?;
+    let _guard = crate::lock(&SAVE_LOCK);
     let mut file = Config::load(&paths.config())?;
     let entry = file.agents.entry(agent.to_string()).or_default();
     entry.args = config.args.clone();
@@ -111,7 +128,7 @@ pub fn save(paths: &Paths, agent: &str, config: &AgentConfig) -> Result<()> {
     write_or_remove(&paths.agent_mcp(agent), config.mcp.as_ref())?;
     write_or_remove(&paths.agent_hooks(agent), config.hooks.as_ref())?;
     if agents::profile(agent).is_some() {
-        write_claude_settings(paths)?;
+        write_claude_settings_locked(paths)?;
     }
     Ok(())
 }
@@ -134,10 +151,13 @@ pub fn write_atomic(path: &Path, contents: &str) -> Result<()> {
     let dir = path.parent().ok_or_else(|| Error::new(ErrorKind::Internal, "path has no parent"))?;
     std::fs::create_dir_all(dir)?;
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let temp = dir.join(format!(".{name}.tmp"));
-    std::fs::write(&temp, contents)?;
-    std::fs::rename(&temp, path)?;
-    Ok(())
+    let unique = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let temp = dir.join(format!(".{name}.{}.{unique}.tmp", std::process::id()));
+    let result = std::fs::write(&temp, contents).and_then(|()| std::fs::rename(&temp, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    Ok(result?)
 }
 
 /// asterism's status hooks followed by the user's hooks, per event.
@@ -157,6 +177,11 @@ pub fn merged_claude_settings(user_hooks: Option<&Value>) -> Value {
 
 /// Rewrites the `--settings` file; a broken hooks.json falls back to the status hooks alone.
 pub fn write_claude_settings(paths: &Paths) -> Result<()> {
+    let _guard = crate::lock(&SAVE_LOCK);
+    write_claude_settings_locked(paths)
+}
+
+fn write_claude_settings_locked(paths: &Paths) -> Result<()> {
     let user = read_json(&paths.agent_hooks(agents::CLAUDE.name)).unwrap_or_else(|e| {
         eprintln!("asterismd: ignoring custom Claude hooks: {}", e.message);
         None
@@ -241,6 +266,7 @@ mod tests {
         save(&paths, "claude", &claude_config()).unwrap();
         let config_before = std::fs::read_to_string(paths.config()).unwrap();
         let mcp_before = std::fs::read_to_string(paths.agent_mcp("claude")).unwrap();
+        let hooks_before = std::fs::read_to_string(paths.agent_hooks("claude")).unwrap();
 
         let invalid = [
             AgentConfig { mcp: Some(json!({"servers": {}})), ..claude_config() },
@@ -252,12 +278,48 @@ mod tests {
                 ..claude_config()
             },
             AgentConfig { env: EnvSettings { remove: vec![String::new()], ..Default::default() }, ..claude_config() },
+            AgentConfig { env: EnvSettings { remove: vec!["A\0".into()], ..Default::default() }, ..claude_config() },
         ];
+        let reserved = ["--", "--settings", "--mcp-config", "--resume", "-r", "--continue", "-c", "--print", "-p", "--settings=x", "--mcp-config=x", "--resume=x"];
+        let invalid: Vec<_> = invalid
+            .into_iter()
+            .chain(reserved.map(|arg| AgentConfig { args: vec!["--model".into(), arg.into()], ..claude_config() }))
+            .collect();
         for config in invalid {
             assert_eq!(save(&paths, "claude", &config).unwrap_err().kind, ErrorKind::InvalidParams, "{config:?}");
         }
         assert_eq!(std::fs::read_to_string(paths.config()).unwrap(), config_before);
         assert_eq!(std::fs::read_to_string(paths.agent_mcp("claude")).unwrap(), mcp_before);
+        assert_eq!(std::fs::read_to_string(paths.agent_hooks("claude")).unwrap(), hooks_before);
+    }
+
+    #[test]
+    fn concurrent_saves_keep_every_agent_and_leave_no_temp_files() {
+        let (_dir, paths) = temp_paths();
+        let paths = std::sync::Arc::new(paths);
+        let threads: Vec<_> = (0..8)
+            .map(|t| {
+                let paths = paths.clone();
+                std::thread::spawn(move || {
+                    let (agent, last) = if t % 2 == 0 { ("claude", format!("c{t}")) } else { ("shell", format!("s{t}")) };
+                    for i in 0..50 {
+                        let value = if i == 49 { last.clone() } else { format!("{agent}{i}") };
+                        let config = AgentConfig {
+                            env: EnvSettings { set: [(agent.to_string(), value)].into(), ..Default::default() },
+                            ..Default::default()
+                        };
+                        save(&paths, agent, &config).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert!(load(&paths, "claude").unwrap().env.set["claude"].starts_with('c'));
+        assert!(load(&paths, "shell").unwrap().env.set["shell"].starts_with('s'));
+        let temps = std::fs::read_dir(&paths.home).unwrap().filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().ends_with(".tmp")).count();
+        assert_eq!(temps, 0);
     }
 
     #[test]
