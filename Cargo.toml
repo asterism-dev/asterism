@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["crates/asterism-proto", "crates/asterism", "crates/asterism-node"]
+members = ["crates/asterism-proto", "crates/asterism", "crates/asterism-node", "apps/desktop/src-tauri"]
+# The desktop crate needs the built frontend and sidecars; build it through npm (see Global Constraints).
+default-members = ["crates/asterism-proto", "crates/asterism", "crates/asterism-node"]
 
 [workspace.package]
 version = "0.1.0"
