@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use asterism_node::{login_env, CallError, LocalNode, LocalNodeConfig, NodeSink, NodeStatus};
+use asterism_node::{CallError, LocalNode, LocalNodeConfig, NodeSink, NodeStatus, PathEnv};
 use asterism_proto::paths::Paths;
 use asterism_proto::types::{Event, SessionAttachResult};
 use serde_json::Value;
@@ -61,7 +61,7 @@ fn main() {
                 paths: Paths::from_env(),
                 // Tauri places externalBin sidecars next to the app executable.
                 daemon_bin: std::env::current_exe()?.with_file_name("asterismd"),
-                path_env: login_env::login_shell_path(),
+                path_env: PathEnv::LoginShell,
                 bundled_version: env!("CARGO_PKG_VERSION").into(),
             };
             let node = LocalNode::new(config, Arc::new(TauriSink(app.handle().clone())));

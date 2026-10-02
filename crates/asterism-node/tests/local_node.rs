@@ -3,7 +3,7 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use asterism_node::{LocalNode, LocalNodeConfig, NodeStatus};
+use asterism_node::{LocalNode, LocalNodeConfig, NodeStatus, PathEnv};
 use asterism_proto::paths::Paths;
 use asterism_proto::types::{method, Event, Project, Session, SessionAttachResult, TaskCreateResult};
 use base64::Engine;
@@ -23,7 +23,7 @@ struct TestNode {
 }
 
 impl TestNode {
-    fn start(home: &TempDir, bundled_version: &str, path_env: Option<String>) -> Self {
+    fn start(home: &TempDir, bundled_version: &str, path_env: PathEnv) -> Self {
         let paths = Paths { home: home.path().join("h") };
         let sink = Arc::new(Recorder::default());
         let config = LocalNodeConfig {
@@ -96,7 +96,7 @@ fn decode(data: &str) -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn autostarts_the_bundled_daemon_and_connects() {
     let home = tempfile::tempdir().unwrap();
-    let test = TestNode::start(&home, VERSION, None);
+    let test = TestNode::start(&home, VERSION, PathEnv::Inherit);
     test.connected_pid().await;
     assert!(matches!(test.node.status(), NodeStatus::Connected { .. }));
     assert!(test.paths.socket().exists());
@@ -105,7 +105,7 @@ async fn autostarts_the_bundled_daemon_and_connects() {
 #[tokio::test(flavor = "multi_thread")]
 async fn calls_events_and_attached_output_flow_through() {
     let home = tempfile::tempdir().unwrap();
-    let test = TestNode::start(&home, VERSION, None);
+    let test = TestNode::start(&home, VERSION, PathEnv::Inherit);
     test.connected_pid().await;
     let session = shell_session(&test.node, "echo ready; cat").await;
     read_screen(&test.node, session.id, "ready").await;
@@ -135,7 +135,7 @@ async fn calls_events_and_attached_output_flow_through() {
 async fn sessions_get_the_login_path() {
     let home = tempfile::tempdir().unwrap();
     let path = format!("/asterism-test-bin:{}", std::env::var("PATH").unwrap());
-    let test = TestNode::start(&home, VERSION, Some(path));
+    let test = TestNode::start(&home, VERSION, PathEnv::Fixed(path));
     test.connected_pid().await;
     let session = shell_session(&test.node, "echo \"path=$PATH\"; sleep 30").await;
     read_screen(&test.node, session.id, "/asterism-test-bin").await;
@@ -144,7 +144,7 @@ async fn sessions_get_the_login_path() {
 #[tokio::test(flavor = "multi_thread")]
 async fn reconnects_after_the_daemon_stops() {
     let home = tempfile::tempdir().unwrap();
-    let test = TestNode::start(&home, VERSION, None);
+    let test = TestNode::start(&home, VERSION, PathEnv::Inherit);
     let first = test.connected_pid().await;
     test.sink.clear();
     test.node.call(method::SHUTDOWN, Value::Null).await.unwrap();
@@ -155,11 +155,11 @@ async fn reconnects_after_the_daemon_stops() {
 #[tokio::test(flavor = "multi_thread")]
 async fn version_mismatch_restarts_an_idle_daemon_once() {
     let home = tempfile::tempdir().unwrap();
-    let first = TestNode::start(&home, VERSION, None);
+    let first = TestNode::start(&home, VERSION, PathEnv::Inherit);
     let old_pid = first.connected_pid().await;
     first.abandon();
 
-    let test = TestNode::start(&home, "999.0.0", None);
+    let test = TestNode::start(&home, "999.0.0", PathEnv::Inherit);
     match test.sink.wait_status(|s| matches!(s, NodeStatus::UpdateAvailable { .. })).await {
         NodeStatus::UpdateAvailable { hello, bundled_version } => {
             assert_ne!(hello.pid, old_pid, "idle daemon should have been replaced");
@@ -172,12 +172,12 @@ async fn version_mismatch_restarts_an_idle_daemon_once() {
 #[tokio::test(flavor = "multi_thread")]
 async fn running_sessions_block_the_silent_update() {
     let home = tempfile::tempdir().unwrap();
-    let first = TestNode::start(&home, VERSION, None);
+    let first = TestNode::start(&home, VERSION, PathEnv::Inherit);
     let old_pid = first.connected_pid().await;
     shell_session(&first.node, "sleep 30").await;
     first.abandon();
 
-    let test = TestNode::start(&home, "999.0.0", None);
+    let test = TestNode::start(&home, "999.0.0", PathEnv::Inherit);
     match test.sink.wait_status(|s| matches!(s, NodeStatus::UpdateAvailable { .. })).await {
         NodeStatus::UpdateAvailable { hello, .. } => assert_eq!(hello.pid, old_pid),
         _ => unreachable!(),
@@ -212,7 +212,7 @@ async fn incompatible_daemon_is_reported_and_replaced_on_restart() {
         }
     });
 
-    let test = TestNode::start(&home, VERSION, None);
+    let test = TestNode::start(&home, VERSION, PathEnv::Inherit);
     match test.sink.wait_status(|s| matches!(s, NodeStatus::Incompatible { .. })).await {
         NodeStatus::Incompatible { message } => assert!(message.contains("protocol 0")),
         _ => unreachable!(),
@@ -245,7 +245,7 @@ async fn connected_status_is_published_only_once_calls_work() {
     let home = tempfile::tempdir().unwrap();
     let paths = Paths { home: home.path().join("h") };
     let sink = Arc::new(CallOnConnected { node: Default::default(), result: Default::default() });
-    let config = LocalNodeConfig { paths: paths.clone(), daemon_bin: daemon_bin(), path_env: None, bundled_version: VERSION.into() };
+    let config = LocalNodeConfig { paths: paths.clone(), daemon_bin: daemon_bin(), path_env: PathEnv::Inherit, bundled_version: VERSION.into() };
     let node = LocalNode::new(config, sink.clone());
     let _ = sink.node.set(node.clone());
     let run = tokio::spawn(node.clone().run());
@@ -282,7 +282,7 @@ async fn incompatible_wait_wakes_when_the_daemon_is_already_gone() {
         }
     });
 
-    let test = TestNode::start(&home, VERSION, None);
+    let test = TestNode::start(&home, VERSION, PathEnv::Inherit);
     test.sink.wait_status(|s| matches!(s, NodeStatus::Incompatible { .. })).await;
     fake.abort();
     let _ = fake.await;

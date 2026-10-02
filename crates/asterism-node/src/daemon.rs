@@ -13,18 +13,25 @@ const SPAWN_POLL: Duration = Duration::from_millis(50);
 
 /// Connects to the node daemon, starting `daemon_bin` first when nothing listens on the socket.
 pub async fn connect_or_spawn(paths: &Paths, daemon_bin: &Path, path_env: Option<&str>) -> io::Result<UnixStream> {
-    let socket = paths.socket();
-    if let Ok(stream) = UnixStream::connect(&socket).await {
+    if let Ok(stream) = connect(paths).await {
         return Ok(stream);
     }
+    spawn_and_connect(paths, daemon_bin, path_env).await
+}
+
+pub async fn connect(paths: &Paths) -> io::Result<UnixStream> {
+    UnixStream::connect(paths.socket()).await
+}
+
+pub async fn spawn_and_connect(paths: &Paths, daemon_bin: &Path, path_env: Option<&str>) -> io::Result<UnixStream> {
     spawn(paths, daemon_bin, path_env)?;
     for _ in 0..SPAWN_ATTEMPTS {
         tokio::time::sleep(SPAWN_POLL).await;
-        if let Ok(stream) = UnixStream::connect(&socket).await {
+        if let Ok(stream) = connect(paths).await {
             return Ok(stream);
         }
     }
-    UnixStream::connect(&socket).await
+    connect(paths).await
 }
 
 pub fn spawn(paths: &Paths, daemon_bin: &Path, path_env: Option<&str>) -> io::Result<()> {

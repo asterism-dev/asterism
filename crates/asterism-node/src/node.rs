@@ -16,9 +16,9 @@ use serde::Serialize;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, OnceCell};
 
-use crate::daemon;
+use crate::{daemon, login_env};
 
 const BACKOFF_START: Duration = Duration::from_millis(250);
 const BACKOFF_MAX: Duration = Duration::from_secs(5);
@@ -71,10 +71,17 @@ fn kind_name(kind: ErrorKind) -> String {
     serde_json::to_value(kind).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_else(|| "unknown".into())
 }
 
+pub enum PathEnv {
+    Inherit,
+    Fixed(String),
+    /// Read from the user's login shell, only when the daemon has to be started.
+    LoginShell,
+}
+
 pub struct LocalNodeConfig {
     pub paths: Paths,
     pub daemon_bin: PathBuf,
-    pub path_env: Option<String>,
+    pub path_env: PathEnv,
     pub bundled_version: String,
 }
 
@@ -98,6 +105,7 @@ pub struct LocalNode {
     client: Mutex<Option<Arc<Client>>>,
     status: Mutex<NodeStatus>,
     outputs: Mutex<HashMap<i64, OutputSink>>,
+    login_path: OnceCell<Option<String>>,
     restart: Notify,
     restarted_for_update: AtomicBool,
 }
@@ -110,6 +118,7 @@ impl LocalNode {
             client: Mutex::new(None),
             status: Mutex::new(NodeStatus::Connecting),
             outputs: Mutex::new(HashMap::new()),
+            login_path: OnceCell::new(),
             restart: Notify::new(),
             restarted_for_update: AtomicBool::new(false),
         })
@@ -187,11 +196,29 @@ impl LocalNode {
         }
     }
 
+    async fn spawn_path(&self) -> Option<String> {
+        match &self.config.path_env {
+            PathEnv::Inherit => None,
+            PathEnv::Fixed(path) => Some(path.clone()),
+            PathEnv::LoginShell => self
+                .login_path
+                .get_or_init(|| async { tokio::task::spawn_blocking(login_env::login_shell_path).await.ok().flatten() })
+                .await
+                .clone(),
+        }
+    }
+
     async fn connect_and_serve(&self) -> Outcome {
         let config = &self.config;
-        let stream = match daemon::connect_or_spawn(&config.paths, &config.daemon_bin, config.path_env.as_deref()).await {
+        let stream = match daemon::connect(&config.paths).await {
             Ok(stream) => stream,
-            Err(e) => return retry(format!("could not start the daemon: {e}")),
+            Err(_) => {
+                let path = self.spawn_path().await;
+                match daemon::spawn_and_connect(&config.paths, &config.daemon_bin, path.as_deref()).await {
+                    Ok(stream) => stream,
+                    Err(e) => return retry(format!("could not start the daemon: {e}")),
+                }
+            }
         };
         let (reader, writer) = stream.into_split();
         let client = Arc::new(Client::new(reader, writer));
