@@ -69,7 +69,8 @@ async function showFinalScreen() {
     const read = await api.read(props.sessionId, FINAL_SCREEN_LINES);
     term?.write(read.text.replace(/\n/g, '\r\n'));
   } catch (e) {
-    toast(errorMessage(e));
+    // A just-removed session has no final screen; its tab is about to disappear.
+    if (!(e instanceof RpcError && e.kind === 'not_found')) toast(errorMessage(e));
   }
 }
 

@@ -8,7 +8,7 @@ export interface AgentConfig {
   mcp: Record<string, unknown> | null;
   hooks: Record<string, unknown> | null;
 }
-export interface AgentConfigRaw { mcp_text: string | null; hooks_text: string | null }
+export interface AgentConfigRaw { args: string[]; env: EnvSettings; mcp_text: string | null; hooks_text: string | null }
 
 export interface Project { id: number; name: string; path: string }
 export interface Task {

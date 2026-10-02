@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ask } from '@tauri-apps/plugin-dialog';
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { BASE_AGENTS } from '../settingsForm';
 import { leaveSettings } from '../settingsGuard';
 import { state } from '../store';
@@ -9,6 +9,12 @@ import AgentSettings from './AgentSettings.vue';
 const profiles = computed(() => ('hello' in state.node ? state.node.hello.agents : []));
 const agents = computed(() => [...profiles.value.map((a) => a.name), ...BASE_AGENTS]);
 const agent = ref(agents.value[0] ?? 'shell');
+let picked = false;
+
+// Opened before hello: switch to the first profile once it arrives, unless the user already chose.
+watch(agents, (list) => {
+  if (!picked && !state.settingsDirty && list[0]) agent.value = list[0];
+});
 
 function installed(name: string): boolean | null {
   const profile = profiles.value.find((a) => a.name === name);
@@ -20,6 +26,7 @@ async function pick(name: string) {
   if (state.settingsDirty && !(await ask('Discard unsaved settings changes?', { title: 'Settings', kind: 'warning' }))) {
     return;
   }
+  picked = true;
   agent.value = name;
 }
 </script>

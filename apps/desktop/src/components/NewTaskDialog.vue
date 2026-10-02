@@ -25,6 +25,7 @@ async function submit() {
   }
   busy.value = true;
   try {
+    if (!(await leaveSettings())) return;
     const created = await api.createTask({
       project_id: projectId.value,
       title: title.value.trim(),
@@ -32,7 +33,6 @@ async function submit() {
       agent: agent.value || null,
     });
     addTask(state, created.task);
-    await leaveSettings();
     state.selectedTaskId = created.task.id;
     if (created.session) addSession(state, created.session);
     emit('close');

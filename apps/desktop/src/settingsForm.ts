@@ -48,7 +48,8 @@ function parseObject(text: string, label: string): Parsed {
 /** Browser-side checks only; the daemon validates the shapes and is authoritative. */
 export function fromForm(form: AgentForm, withOptions: boolean): { config: AgentConfig } | { errors: FormErrors } {
   const errors: FormErrors = {};
-  const set: Record<string, string> = {};
+  // No prototype, so names like "constructor" or "__proto__" are plain keys.
+  const set: Record<string, string> = Object.create(null);
   for (const row of form.set) {
     const key = row.key.trim();
     if (!key) continue;
@@ -62,7 +63,7 @@ export function fromForm(form: AgentForm, withOptions: boolean): { config: Agent
   if ('error' in mcp || 'error' in hooks || Object.keys(errors).length) return { errors };
   return {
     config: {
-      args: withOptions ? form.args.filter((arg) => arg !== '') : [],
+      args: withOptions ? form.args.filter((arg) => arg.trim() !== '') : [],
       env: { remove: form.remove.map((r) => r.trim()).filter(Boolean), set },
       mcp: mcp.value,
       hooks: hooks.value,

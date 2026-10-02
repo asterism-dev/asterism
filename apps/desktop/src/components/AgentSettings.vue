@@ -34,8 +34,11 @@ async function load() {
     form.value = emptyForm();
     try {
       const raw = await api.agentConfigRaw(props.agent);
-      form.value.mcpText = raw.mcp_text ?? '';
-      form.value.hooksText = raw.hooks_text ?? '';
+      form.value = {
+        ...toForm({ args: raw.args, env: raw.env, mcp: null, hooks: null }),
+        mcpText: raw.mcp_text ?? '',
+        hooksText: raw.hooks_text ?? '',
+      };
     } catch {
       // Keep the empty form; loadError already explains the problem.
     }
