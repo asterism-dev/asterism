@@ -1,7 +1,7 @@
 [package]
 name = "asterism-proto"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -9,4 +9,5 @@ serde_json = "1"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync"] }
 
 [dev-dependencies]
+tempfile = "3"
 tokio = { version = "1", features = ["time"] }
