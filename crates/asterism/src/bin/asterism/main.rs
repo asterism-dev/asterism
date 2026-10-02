@@ -18,6 +18,8 @@ use tokio::net::UnixStream;
 const SPAWN_ATTEMPTS: u32 = 60;
 const SPAWN_POLL: Duration = Duration::from_millis(50);
 const HOOK_TIMEOUT: Duration = Duration::from_secs(2);
+const INHERITED_ENV_BLOCKLIST: &[&str] =
+    &["ASTERISM_TASK", "ASTERISM_SESSION", "CLAUDECODE", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"];
 
 #[derive(Parser)]
 #[command(name = "asterism", version, about = "Orchestrate coding agents in parallel git worktrees")]
@@ -187,10 +189,12 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
         return Ok(attach().await?);
     }
     if let Cmd::Daemon(DaemonCmd::Stop) = cli.command {
-        let Ok(stream) = UnixStream::connect(socket_path()).await else { return Ok(print_ok(json)) };
-        let (reader, writer) = stream.into_split();
-        Client::new(reader, writer).call::<_, ()>(method::SHUTDOWN, ()).await?;
-        return Ok(print_ok(json));
+        if let Ok(stream) = UnixStream::connect(socket_path()).await {
+            let (reader, writer) = stream.into_split();
+            Client::new(reader, writer).call::<_, ()>(method::SHUTDOWN, ()).await?;
+        }
+        print_ok(json);
+        return Ok(());
     }
     let client = connect().await?;
     match cli.command {
@@ -303,9 +307,17 @@ fn spawn_daemon() -> std::io::Result<()> {
     paths.ensure_dirs()?;
     let log = OpenOptions::new().create(true).append(true).open(paths.log())?;
     let daemon = std::env::current_exe()?.with_file_name("asterismd");
+    let mut cmd = Command::new(daemon);
+    // The daemon must not inherit the caller's session, agent, or git context.
+    cmd.current_dir("/");
+    for (key, _) in std::env::vars_os() {
+        let name = key.to_string_lossy();
+        if INHERITED_ENV_BLOCKLIST.contains(&&*name) || name.starts_with("CLAUDE_CODE_") {
+            cmd.env_remove(&key);
+        }
+    }
     // Own process group so the daemon outlives the terminal or app that started it.
-    Command::new(daemon)
-        .stdin(Stdio::null())
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(log)
         .process_group(0)
@@ -351,13 +363,18 @@ async fn hook(event: HookArg) {
     if !std::io::stdin().is_terminal() {
         let _ = tokio::io::stdin().read_to_string(&mut input).await;
     }
-    let agent_ref = serde_json::from_str::<serde_json::Value>(&input)
-        .ok()
-        .and_then(|v| v["session_id"].as_str().map(String::from));
+    let payload = serde_json::from_str::<serde_json::Value>(&input).unwrap_or_default();
+    let agent_ref = payload["session_id"].as_str().map(String::from);
+    let message = payload["message"].as_str().unwrap_or_default().to_lowercase();
+    // ponytail: matches Claude's idle-prompt Notification text; verify against real Claude and update if it changes.
+    let event = match event {
+        HookArg::Notification if message.contains("waiting for your input") => HookEvent::Stop,
+        other => other.into(),
+    };
     let Ok(stream) = UnixStream::connect(socket_path()).await else { return };
     let (reader, writer) = stream.into_split();
     let client = Client::new(reader, writer);
-    let params = SessionHookParams { session_id, event: event.into(), agent_ref };
+    let params = SessionHookParams { session_id, event, agent_ref };
     let _ = client.call::<_, ()>(method::SESSION_HOOK, params).await;
 }
 

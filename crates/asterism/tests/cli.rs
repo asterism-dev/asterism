@@ -152,3 +152,41 @@ fn hook_with_hung_stdin_returns_promptly() {
     assert!(child.wait().unwrap().success());
     assert!(started.elapsed() < std::time::Duration::from_secs(3));
 }
+
+#[test]
+fn idle_prompt_notification_means_idle() {
+    let node = Node::new();
+    let task = node.json(&["task", "new", "idle prompt"])["task"]["id"].to_string();
+    let session = node.json(&["session", "start", &task, "--", "sh", "-c", "sleep 30"])["id"].to_string();
+    let hook = |event: &str, payload: &[u8]| {
+        let mut child =
+            node.command(&["hook", event]).env("ASTERISM_SESSION", &session).stdin(Stdio::piped()).spawn().unwrap();
+        child.stdin.take().unwrap().write_all(payload).unwrap();
+        assert!(child.wait().unwrap().success());
+    };
+    hook("prompt-submit", br#"{"session_id":"x"}"#);
+    let working = (0..40).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        node.json(&["session", "list", "--task", &task])[0]["status"] == "working"
+    });
+    assert!(working);
+
+    hook("notification", br#"{"session_id":"x","message":"Claude is waiting for your input"}"#);
+    let idle = node.json(&["wait", &session, "--until", "idle", "--timeout", "5s"]);
+    assert_eq!(idle["status"], "idle");
+    node.cmd(&["session", "kill", &session]);
+}
+
+#[test]
+fn autostarted_daemon_drops_the_callers_claude_env() {
+    let node = Node::new();
+    let created = node.command(&["--json", "task", "new", "env"]).env("CLAUDECODE", "1").output().unwrap();
+    assert!(created.status.success(), "{}", stderr(&created));
+    let task = serde_json::from_slice::<serde_json::Value>(&created.stdout).unwrap()["task"]["id"].to_string();
+    let session =
+        node.json(&["session", "start", &task, "--", "sh", "-c", "echo \"[$CLAUDECODE]\"; sleep 30"])["id"].to_string();
+    node.json(&["wait", &session, "--until", "idle", "--timeout", "10s"]);
+    let read = node.json(&["read", &session, "--lines", "5"]);
+    assert!(read["text"].as_str().unwrap().contains("[]"), "{read}");
+    node.cmd(&["session", "kill", &session]);
+}
