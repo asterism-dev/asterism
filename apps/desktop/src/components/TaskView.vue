@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ask } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { computed } from 'vue';
 import { api, errorMessage } from '../api';
@@ -35,10 +36,16 @@ function drop(target: number) {
   dragged = null;
 }
 
+async function close(s: Session) {
+  if (s.kind.type === 'agent' && s.status !== 'exited') {
+    const stop = await ask(`Stop the running ${label(s)} session and close it?`, { title: 'Close session', kind: 'warning' });
+    if (!stop) return;
+  }
+  api.removeSession(s.id).catch(report);
+}
+
 function tabMenu(e: MouseEvent, s: Session) {
-  showMenu(e, s.status === 'exited' ? [] : [
-    { label: 'Kill session', danger: true, action: () => api.killSession(s.id).catch(report) },
-  ]);
+  showMenu(e, [{ label: 'Close session', danger: true, action: () => close(s) }]);
 }
 </script>
 
@@ -69,6 +76,7 @@ function tabMenu(e: MouseEvent, s: Session) {
         @contextmenu="tabMenu($event, s)"
       >
         <span class="dot" :class="s.status"></span>{{ label(s) }}
+        <span class="close" title="Close session" @click.stop="close(s)">×</span>
       </button>
       <button class="tab" :class="{ active: tab === 'diff' }" @click="select('diff')">Diff</button>
     </nav>
@@ -95,4 +103,7 @@ function tabMenu(e: MouseEvent, s: Session) {
 .tab.active { background: var(--select); }
 .tab.exited { color: var(--muted); }
 .tab-body { position: relative; flex: 1; min-height: 0; }
+.tab .close { opacity: 0; padding: 0 2px; border-radius: 4px; }
+.tab:hover .close, .tab.active .close { opacity: 0.6; }
+.tab .close:hover { opacity: 1; background: var(--border); }
 </style>
