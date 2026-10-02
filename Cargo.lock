@@ -96,6 +96,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "asterism-node"
+version = "0.1.0"
+dependencies = [
+ "asterism-proto",
+ "base64",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "asterism-proto"
 version = "0.1.0"
 dependencies = [
