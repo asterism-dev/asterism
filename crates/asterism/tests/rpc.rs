@@ -294,3 +294,28 @@ async fn held_daemon_lock_refuses_to_start() {
     assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
     assert!(!paths.socket().exists());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_config_and_session_remove_are_routed() {
+    let (_home, socket) = start_daemon().await;
+    let client = client(&socket).await;
+    let config: AgentConfig =
+        client.call(method::AGENT_CONFIG_GET, AgentParams { agent: "claude".into() }).await.unwrap();
+    assert_eq!(config, AgentConfig::default());
+    let err = client
+        .call::<_, ()>(
+            method::AGENT_CONFIG_SET,
+            AgentConfigSetParams {
+                agent: "claude".into(),
+                config: AgentConfig { mcp: Some(serde_json::json!([])), ..Default::default() },
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
+    let raw: AgentConfigRaw =
+        client.call(method::AGENT_CONFIG_GET_RAW, AgentParams { agent: "claude".into() }).await.unwrap();
+    assert_eq!(raw, AgentConfigRaw::default());
+    let err = client.call::<_, ()>(method::SESSION_REMOVE, SessionIdParams { session_id: 42 }).await.unwrap_err();
+    assert_eq!(rpc_kind(err), ErrorKind::NotFound);
+}

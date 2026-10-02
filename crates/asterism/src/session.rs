@@ -34,6 +34,7 @@ pub struct Pty {
     parser: Arc<Mutex<vt100::Parser>>,
     output: broadcast::Sender<Vec<u8>>,
     exited: watch::Receiver<bool>,
+    pid: Option<u32>,
 }
 
 fn io_err(e: impl std::fmt::Display) -> io::Error {
@@ -71,6 +72,7 @@ impl Pty {
         let mut child = pair.slave.spawn_command(cmd).map_err(io_err)?;
         drop(pair.slave);
 
+        let pid = child.process_id();
         let killer = child.clone_killer();
         let mut reader = pair.master.try_clone_reader().map_err(io_err)?;
         let writer = pair.master.take_writer().map_err(io_err)?;
@@ -111,6 +113,7 @@ impl Pty {
             parser,
             output,
             exited,
+            pid,
         }))
     }
 
@@ -164,5 +167,11 @@ impl Pty {
 
     pub fn kill(&self) -> io::Result<()> {
         lock(&self.killer).kill()
+    }
+
+    /// SIGKILL for processes that ignore the hangup `kill` sends.
+    pub fn force_kill(&self) -> io::Result<()> {
+        let Some(pid) = self.pid else { return Ok(()) };
+        std::process::Command::new("kill").args(["-KILL", &pid.to_string()]).status().map(|_| ())
     }
 }

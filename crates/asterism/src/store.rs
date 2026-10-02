@@ -119,6 +119,11 @@ impl Store {
         Ok(())
     }
 
+    pub fn delete_session(&self, id: i64) -> rusqlite::Result<()> {
+        self.conn.execute("DELETE FROM sessions WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
     pub fn delete_task(&self, id: i64) -> rusqlite::Result<()> {
         self.conn.execute("DELETE FROM tasks WHERE id = ?1", [id])?;
         Ok(())

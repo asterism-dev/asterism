@@ -134,6 +134,12 @@ async fn attach(daemon: &Daemon, conn: &Conn, id: u64, raw: Value) {
     }
 }
 
+async fn blocking(f: impl FnOnce() -> Result<Value> + Send + 'static) -> Result<Value> {
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?
+}
+
 async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result<Value> {
     let raw = request.params;
     match request.method.as_str() {
@@ -155,6 +161,27 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
         method::PROJECT_ADD => to_value(daemon.add_project(&params::<ProjectAddParams>(raw)?.path)?),
         method::PROJECT_REMOVE => {
             daemon.remove_project(params::<ProjectIdParams>(raw)?.project_id)?;
+            Ok(Value::Null)
+        }
+        method::AGENT_CONFIG_GET => {
+            let daemon = daemon.clone();
+            blocking(move || to_value(daemon.agent_config(&params::<AgentParams>(raw)?.agent)?)).await
+        }
+        method::AGENT_CONFIG_GET_RAW => {
+            let daemon = daemon.clone();
+            blocking(move || to_value(daemon.agent_config_raw(&params::<AgentParams>(raw)?.agent)?)).await
+        }
+        method::AGENT_CONFIG_SET => {
+            let daemon = daemon.clone();
+            blocking(move || {
+                let p: AgentConfigSetParams = params(raw)?;
+                daemon.set_agent_config(&p.agent, &p.config)?;
+                Ok(Value::Null)
+            })
+            .await
+        }
+        method::SESSION_REMOVE => {
+            daemon.remove_session(params::<SessionIdParams>(raw)?.session_id).await?;
             Ok(Value::Null)
         }
         method::TASK_LIST => to_value(daemon.tasks(params(raw)?)?),

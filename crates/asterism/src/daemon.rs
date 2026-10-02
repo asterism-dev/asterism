@@ -21,6 +21,7 @@ use crate::{git, lock, status};
 const DEFAULT_ROWS: u16 = 40;
 const DEFAULT_COLS: u16 = 120;
 // ponytail: fixed pause so TUIs treat Enter as a submit, not part of the paste; make it per-profile if an agent needs more.
+const REMOVE_GRACE: Duration = Duration::from_secs(2);
 const SUBMIT_DELAY: Duration = Duration::from_millis(100);
 const SLUG_MAX: usize = 40;
 
@@ -292,6 +293,37 @@ impl Daemon {
 
     pub fn sessions(&self, task_id: Option<i64>) -> Result<Vec<Session>> {
         Ok(self.store().sessions(task_id)?.into_iter().map(|s| s.session).collect())
+    }
+
+    pub fn agent_config(&self, agent: &str) -> Result<AgentConfig> {
+        agent_settings::load(&self.paths, agent)
+    }
+
+    pub fn agent_config_raw(&self, agent: &str) -> Result<AgentConfigRaw> {
+        agent_settings::load_raw(&self.paths, agent)
+    }
+
+    pub fn set_agent_config(&self, agent: &str, config: &AgentConfig) -> Result<()> {
+        agent_settings::save(&self.paths, agent, config)
+    }
+
+    /// Stops the session if it still runs, then forgets it entirely.
+    pub async fn remove_session(&self, id: i64) -> Result<()> {
+        self.session(id)?;
+        if let Ok(live) = self.live(id) {
+            let mut status = live.status.subscribe();
+            let _ = live.pty.kill();
+            let exited = tokio::time::timeout(REMOVE_GRACE, status.wait_for(|s| *s == SessionStatus::Exited))
+                .await
+                .is_ok_and(|r| r.is_ok());
+            if !exited {
+                let _ = live.pty.force_kill();
+                lock(&self.live).remove(&id);
+            }
+        }
+        self.store().delete_session(id)?;
+        self.emit(Event::SessionRemoved { session_id: id });
+        Ok(())
     }
 
     pub fn kill_session(&self, id: i64) -> Result<()> {

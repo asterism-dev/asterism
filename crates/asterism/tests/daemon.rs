@@ -277,3 +277,73 @@ async fn broken_node_config_fails_session_start_with_a_clear_error() {
     assert_eq!(err.kind, ErrorKind::InvalidParams);
     assert!(err.message.contains("config.toml"), "{}", err.message);
 }
+
+#[tokio::test]
+async fn agent_config_roundtrips_through_the_daemon() {
+    let env = setup();
+    let config = AgentConfig {
+        args: vec!["--model".into(), "opus".into()],
+        hooks: Some(serde_json::json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "say done"}]}]}})),
+        ..Default::default()
+    };
+    env.daemon.set_agent_config("claude", &config).unwrap();
+    assert_eq!(env.daemon.agent_config("claude").unwrap(), config);
+    let merged = std::fs::read_to_string(env.home.path().join("claude-settings.json")).unwrap();
+    assert!(merged.contains("say done") && merged.contains("hook stop"), "{merged}");
+    assert_eq!(
+        env.daemon.set_agent_config("shell", &config).unwrap_err().kind,
+        ErrorKind::InvalidParams
+    );
+}
+
+#[tokio::test]
+async fn shell_env_settings_reach_new_sessions() {
+    let env = setup();
+    let config = AgentConfig {
+        env: EnvSettings { set: [("FROM_SETTINGS".to_string(), "yes".to_string())].into(), ..Default::default() },
+        ..Default::default()
+    };
+    env.daemon.set_agent_config("command", &config).unwrap();
+    let task = new_task(&env, "settings env");
+    let session = start(&env, &task, sh("echo \"value=$FROM_SETTINGS\"; sleep 30"));
+    let read = || env.daemon.read(SessionReadParams { session_id: session.id, lines: 5 }).unwrap().text;
+    assert!(eventually(|| read().contains("value=yes")).await, "{}", read());
+    env.daemon.remove_session(session.id).await.unwrap();
+}
+
+#[tokio::test]
+async fn remove_session_stops_live_sessions_and_deletes_them() {
+    let env = setup();
+    let task = new_task(&env, "remove");
+    let live = start(&env, &task, sh("sleep 30"));
+    let mut events = env.daemon.subscribe();
+    env.daemon.remove_session(live.id).await.unwrap();
+    assert_eq!(env.daemon.session(live.id).unwrap_err().kind, ErrorKind::NotFound);
+    let mut removed = false;
+    while let Ok(event) = events.try_recv() {
+        removed |= matches!(event, Event::SessionRemoved { session_id } if session_id == live.id);
+    }
+    assert!(removed);
+
+    let exited = start(&env, &task, sh("exit 0"));
+    env.daemon
+        .wait(SessionWaitParams { session_id: exited.id, until: SessionStatus::Exited, timeout_ms: Some(5_000) })
+        .await
+        .unwrap();
+    env.daemon.remove_session(exited.id).await.unwrap();
+    assert!(env.daemon.sessions(Some(task.id)).unwrap().is_empty());
+    assert_eq!(env.daemon.remove_session(9_999).await.unwrap_err().kind, ErrorKind::NotFound);
+}
+
+#[tokio::test]
+async fn remove_force_kills_stubborn_sessions() {
+    let env = setup();
+    let task = new_task(&env, "stubborn");
+    let session = start(&env, &task, sh("trap '' HUP TERM INT; echo ready; while true; do sleep 1; done"));
+    let read = || env.daemon.read(SessionReadParams { session_id: session.id, lines: 5 }).unwrap().text;
+    assert!(eventually(|| read().contains("ready")).await);
+    let started = std::time::Instant::now();
+    env.daemon.remove_session(session.id).await.unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert_eq!(env.daemon.session(session.id).unwrap_err().kind, ErrorKind::NotFound);
+}
