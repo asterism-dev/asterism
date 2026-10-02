@@ -17,6 +17,8 @@ export interface State {
   toasts: Toast[];
   menu: { x: number; y: number; items: MenuItem[] } | null;
   newTaskFor: number | null;
+  settingsOpen: boolean;
+  settingsDirty: boolean;
 }
 
 export function initialState(): State {
@@ -31,6 +33,8 @@ export function initialState(): State {
     toasts: [],
     menu: null,
     newTaskFor: null,
+    settingsOpen: false,
+    settingsDirty: false,
   };
 }
 
@@ -145,6 +149,15 @@ export function applyEvent(s: State, event: NodeEvent): Session | null {
     case 'session.changed':
       upsert(s.sessions, event.params);
       return null;
+    case 'session.removed': {
+      const removed = s.sessions.find((x) => x.id === event.params.session_id);
+      if (!removed) return null;
+      s.sessions = s.sessions.filter((x) => x.id !== removed.id);
+      const order = s.tabOrder[removed.task_id];
+      if (order) s.tabOrder[removed.task_id] = order.filter((id) => id !== removed.id);
+      if (s.selectedTab[removed.task_id] === removed.id) delete s.selectedTab[removed.task_id];
+      return null;
+    }
     case 'task.changed':
       if (event.params.archived) dropTask(s, event.params.id);
       else upsert(s.tasks, event.params);

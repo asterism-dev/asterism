@@ -1,6 +1,15 @@
 export type SessionStatus = 'working' | 'idle' | 'waiting_input' | 'exited';
 export type SessionKind = { type: 'agent'; name: string } | { type: 'shell' } | { type: 'command'; argv: string[] };
 
+export interface EnvSettings { remove: string[]; set: Record<string, string> }
+export interface AgentConfig {
+  args: string[];
+  env: EnvSettings;
+  mcp: Record<string, unknown> | null;
+  hooks: Record<string, unknown> | null;
+}
+export interface AgentConfigRaw { mcp_text: string | null; hooks_text: string | null }
+
 export interface Project { id: number; name: string; path: string }
 export interface Task {
   id: number;
@@ -34,6 +43,7 @@ export type NodeStatus =
 export type NodeEvent =
   | { method: 'session.status_changed'; params: { session_id: number; status: SessionStatus } }
   | { method: 'session.changed'; params: Session }
+  | { method: 'session.removed'; params: { session_id: number } }
   | { method: 'task.changed'; params: Task }
   | { method: 'project.changed'; params: Project }
   | { method: 'project.removed'; params: { project_id: number } };

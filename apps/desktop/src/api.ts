@@ -1,6 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type {
-  NodeStatus, Project, Session, SessionAttachResult, SessionKind, SessionReadResult, Task, TaskCreateResult,
+  AgentConfig, AgentConfigRaw, NodeStatus, Project, Session, SessionAttachResult, SessionKind, SessionReadResult, Task, TaskCreateResult,
   TaskDiffResult,
 } from './types';
 
@@ -83,4 +83,8 @@ export const api = {
   attach: (sessionId: number, onOutput: Channel<string>) =>
     serialized(sessionId, () => command<SessionAttachResult>('session_attach', { sessionId, onOutput })),
   detach: (sessionId: number) => serialized(sessionId, () => command<void>('session_detach', { sessionId })),
+  agentConfig: (agent: string) => call<AgentConfig>('agent_config.get', { agent }),
+  agentConfigRaw: (agent: string) => call<AgentConfigRaw>('agent_config.get_raw', { agent }),
+  setAgentConfig: (agent: string, config: AgentConfig) => call<null>('agent_config.set', { agent, config }),
+  removeSession: (sessionId: number) => call<null>('session.remove', { session_id: sessionId }),
 };

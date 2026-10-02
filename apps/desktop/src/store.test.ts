@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  aggregate, applyEvent, initialState, moveTab, nextWaiting, nodeAggregateStatus, projectStatus, taskSessions, taskStatus, waitingSessions,
+  activeTab, aggregate, applyEvent, initialState, moveTab, nextWaiting, nodeAggregateStatus, projectStatus, taskSessions, taskStatus, waitingSessions,
 } from './store';
 import type { Session, SessionStatus, Task } from './types';
 
@@ -107,5 +107,22 @@ describe('nodeAggregateStatus', () => {
     s.tasks = [task(1, 1), task(2, 2)];
     s.sessions = [session(1, 1, 'idle'), session(2, 2, 'waiting_input'), session(3, 99, 'working')];
     expect(nodeAggregateStatus(s)).toBe('waiting_input');
+  });
+});
+
+describe('session removal', () => {
+  it('drops the session and its tab state so the next tab is chosen', () => {
+    const s = initialState();
+    s.tasks = [task(1)];
+    s.sessions = [session(10, 1), session(11, 1)];
+    s.selectedTaskId = 1;
+    s.selectedTab[1] = 10;
+    s.tabOrder[1] = [10, 11];
+    applyEvent(s, { method: 'session.removed', params: { session_id: 10 } });
+    expect(s.sessions.map((x) => x.id)).toEqual([11]);
+    expect(s.tabOrder[1]).toEqual([11]);
+    expect(s.selectedTab[1]).toBeUndefined();
+    expect(activeTab(s, 1)).toBe(11);
+    expect(applyEvent(s, { method: 'session.removed', params: { session_id: 99 } })).toBeNull();
   });
 });
