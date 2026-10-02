@@ -1,0 +1,404 @@
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
+
+use asterism_proto::rpc::ErrorKind;
+use asterism_proto::types::*;
+use asterism_proto::PROTO_VERSION;
+use tokio::sync::{broadcast, watch, Notify};
+
+use crate::agents::{self, AgentProfile};
+use crate::error::{Error, Result};
+use crate::paths::Paths;
+use crate::session::{Pty, Snapshot, SpawnSpec};
+use crate::store::Store;
+use crate::{git, lock, status};
+
+const DEFAULT_ROWS: u16 = 40;
+const DEFAULT_COLS: u16 = 120;
+// ponytail: fixed pause so TUIs treat Enter as a submit, not part of the paste; make it per-profile if an agent needs more.
+const SUBMIT_DELAY: Duration = Duration::from_millis(100);
+const SLUG_MAX: usize = 40;
+
+struct LiveSession {
+    pty: Arc<Pty>,
+    status: Arc<watch::Sender<SessionStatus>>,
+    hooks_active: Arc<AtomicBool>,
+}
+
+pub struct Daemon {
+    paths: Paths,
+    store: Mutex<Store>,
+    live: Mutex<HashMap<i64, Arc<LiveSession>>>,
+    events: broadcast::Sender<Event>,
+    shutdown: Notify,
+}
+
+impl Daemon {
+    pub fn new(paths: Paths) -> Result<Arc<Self>> {
+        paths.ensure_dirs()?;
+        std::fs::write(paths.claude_settings(), agents::claude_settings().to_string())?;
+        let store = Store::open(&paths.db())?;
+        let (events, _) = broadcast::channel(1024);
+        Ok(Arc::new(Self {
+            paths,
+            store: Mutex::new(store),
+            live: Mutex::new(HashMap::new()),
+            events,
+            shutdown: Notify::new(),
+        }))
+    }
+
+    pub fn paths(&self) -> &Paths {
+        &self.paths
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<Event> {
+        self.events.subscribe()
+    }
+
+    pub fn request_shutdown(&self) {
+        self.shutdown.notify_one();
+    }
+
+    pub async fn shutdown_requested(&self) {
+        self.shutdown.notified().await;
+    }
+
+    fn store(&self) -> MutexGuard<'_, Store> {
+        lock(&self.store)
+    }
+
+    fn emit(&self, event: Event) {
+        let _ = self.events.send(event);
+    }
+
+    pub fn hello(&self, params: HelloParams) -> Result<HelloResult> {
+        if params.proto_version != PROTO_VERSION {
+            return Err(Error::new(
+                ErrorKind::IncompatibleVersion,
+                format!("daemon speaks protocol {PROTO_VERSION}, client speaks {}", params.proto_version),
+            ));
+        }
+        Ok(HelloResult {
+            proto_version: PROTO_VERSION,
+            daemon_version: env!("CARGO_PKG_VERSION").into(),
+            pid: std::process::id(),
+            hostname: gethostname::gethostname().to_string_lossy().into_owned(),
+            os: std::env::consts::OS.into(),
+            agents: agents::PROFILES
+                .iter()
+                .map(|p| AgentInfo { name: p.name.into(), available: p.is_available() })
+                .collect(),
+        })
+    }
+
+    pub fn add_project(&self, path: &str) -> Result<Project> {
+        let root = git::toplevel(Path::new(path))?;
+        let name = root.file_name().map_or_else(|| "project".into(), |n| n.to_string_lossy().into_owned());
+        let project = self.store().add_project(&name, &root.to_string_lossy())?;
+        self.emit(Event::ProjectChanged(project.clone()));
+        Ok(project)
+    }
+
+    pub fn projects(&self) -> Result<Vec<Project>> {
+        Ok(self.store().projects()?)
+    }
+
+    pub fn remove_project(&self, project_id: i64) -> Result<()> {
+        {
+            let store = self.store();
+            if !store.tasks(Some(project_id), false)?.is_empty() {
+                return Err(Error::new(ErrorKind::InvalidParams, "project has active tasks; archive them first"));
+            }
+            store.remove_project(project_id)?;
+        }
+        self.emit(Event::ProjectRemoved { project_id });
+        Ok(())
+    }
+
+    pub fn create_task(self: &Arc<Self>, params: TaskCreateParams) -> Result<TaskCreateResult> {
+        if let Some(name) = &params.agent {
+            self.agent(name)?;
+        }
+        let project = self.store().project(params.project_id)?.ok_or_else(|| not_found("project", params.project_id))?;
+        let repo = PathBuf::from(&project.path);
+        let base = git::base_ref(&repo)?;
+        let id = self.store().insert_task(project.id, &params.title, params.prompt.as_deref(), &base)?;
+        let slug = slugify(id, &params.title);
+        let branch = format!("asterism/{slug}");
+        let worktree = self.paths.worktrees().join(format!("{}-{}", project.id, project.name)).join(&slug);
+        if let Err(e) = git::add_worktree(&repo, &branch, &worktree, &base) {
+            self.store().delete_task(id)?;
+            return Err(e);
+        }
+        self.store().set_task_location(id, &slug, &branch, &worktree.to_string_lossy())?;
+        let task = self.task(id)?;
+        self.emit(Event::TaskChanged(task.clone()));
+
+        let session = match params.agent {
+            Some(name) => Some(self.start_session(SessionStartParams {
+                task_id: id,
+                kind: SessionKind::Agent { name },
+                prompt: params.prompt,
+            })?),
+            None => None,
+        };
+        Ok(TaskCreateResult { task, session })
+    }
+
+    pub fn task(&self, id: i64) -> Result<Task> {
+        self.store().task(id)?.ok_or_else(|| not_found("task", id))
+    }
+
+    pub fn tasks(&self, params: TaskListParams) -> Result<Vec<Task>> {
+        Ok(self.store().tasks(params.project_id, params.include_archived)?)
+    }
+
+    pub fn archive_task(&self, task_id: i64, force: bool) -> Result<Task> {
+        let task = self.task(task_id)?;
+        if task.archived {
+            return Ok(task);
+        }
+        let worktree = PathBuf::from(&task.worktree_path);
+        if !force && git::is_dirty(&worktree)? {
+            return Err(Error::new(
+                ErrorKind::DirtyWorktree,
+                format!("task {task_id} has uncommitted changes; archive with force to discard them"),
+            ));
+        }
+        let sessions = self.store().sessions(Some(task_id))?;
+        for stored in sessions {
+            if let Ok(live) = self.live(stored.session.id) {
+                let _ = live.pty.kill();
+            }
+        }
+        let project = self.store().project(task.project_id)?.ok_or_else(|| not_found("project", task.project_id))?;
+        git::remove_worktree(Path::new(&project.path), &worktree, force)?;
+        self.store().set_task_archived(task_id)?;
+        let task = self.task(task_id)?;
+        self.emit(Event::TaskChanged(task.clone()));
+        Ok(task)
+    }
+
+    pub fn diff(&self, task_id: i64) -> Result<TaskDiffResult> {
+        let task = self.task(task_id)?;
+        Ok(TaskDiffResult { patch: git::diff(Path::new(&task.worktree_path), &task.base_branch)? })
+    }
+
+    fn agent(&self, name: &str) -> Result<&'static AgentProfile> {
+        agents::profile(name).filter(|p| p.is_available()).ok_or_else(|| {
+            Error::new(ErrorKind::AgentUnavailable, format!("agent {name} is not installed on this node"))
+        })
+    }
+
+    pub fn start_session(self: &Arc<Self>, params: SessionStartParams) -> Result<Session> {
+        let task = self.task(params.task_id)?;
+        if task.archived {
+            return Err(Error::new(ErrorKind::InvalidParams, format!("task {} is archived", task.id)));
+        }
+        let argv = match &params.kind {
+            SessionKind::Agent { name } => {
+                self.agent(name)?.start_argv(&self.paths.claude_settings(), params.prompt.as_deref())
+            }
+            SessionKind::Shell => vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())],
+            SessionKind::Command { argv } if !argv.is_empty() => argv.clone(),
+            SessionKind::Command { .. } => {
+                return Err(Error::new(ErrorKind::InvalidParams, "command argv must not be empty"));
+            }
+        };
+        let id = self.store().insert_session(task.id, &params.kind, SessionStatus::Working)?;
+        if let Err(e) = self.spawn_live(id, &task, argv, agents::waiting_patterns(&params.kind)) {
+            self.store().set_session_status(id, SessionStatus::Exited)?;
+            return Err(e);
+        }
+        let session = self.session(id)?;
+        self.emit(Event::SessionChanged(session.clone()));
+        Ok(session)
+    }
+
+    fn spawn_live(
+        self: &Arc<Self>,
+        id: i64,
+        task: &Task,
+        argv: Vec<String>,
+        waiting_patterns: &'static [&'static str],
+    ) -> Result<()> {
+        let bin_dir = std::env::current_exe()?.parent().map(Path::to_path_buf).unwrap_or_default();
+        let inherited = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>());
+        let path = std::env::join_paths(std::iter::once(bin_dir.clone()).chain(inherited.unwrap_or_default()))
+            .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+        let env = vec![
+            ("PATH".to_string(), path.to_string_lossy().into_owned()),
+            ("ASTERISM_HOME".to_string(), self.paths.home.display().to_string()),
+            ("ASTERISM_SOCKET".to_string(), self.paths.socket().display().to_string()),
+            ("ASTERISM_CLI".to_string(), bin_dir.join("asterism").display().to_string()),
+            ("ASTERISM_TASK".to_string(), task.id.to_string()),
+            ("ASTERISM_SESSION".to_string(), id.to_string()),
+        ];
+        let pty = Pty::spawn(SpawnSpec {
+            argv,
+            cwd: PathBuf::from(&task.worktree_path),
+            env,
+            rows: DEFAULT_ROWS,
+            cols: DEFAULT_COLS,
+        })?;
+        let (status_tx, mut status_rx) = watch::channel(SessionStatus::Working);
+        let live = Arc::new(LiveSession {
+            pty: pty.clone(),
+            status: Arc::new(status_tx),
+            hooks_active: Arc::new(AtomicBool::new(false)),
+        });
+        lock(&self.live).insert(id, live.clone());
+        tokio::spawn(status::track(pty, waiting_patterns, live.status.clone(), live.hooks_active.clone()));
+
+        let daemon = self.clone();
+        tokio::spawn(async move {
+            while status_rx.changed().await.is_ok() {
+                let status = *status_rx.borrow_and_update();
+                let _ = daemon.store().set_session_status(id, status);
+                daemon.emit(Event::SessionStatusChanged { session_id: id, status });
+                if status == SessionStatus::Exited {
+                    lock(&daemon.live).remove(&id);
+                    break;
+                }
+            }
+        });
+        Ok(())
+    }
+
+    fn live(&self, id: i64) -> Result<Arc<LiveSession>> {
+        lock(&self.live)
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, format!("session {id} is not running")))
+    }
+
+    pub fn session(&self, id: i64) -> Result<Session> {
+        self.store().session(id)?.map(|s| s.session).ok_or_else(|| not_found("session", id))
+    }
+
+    pub fn sessions(&self, task_id: Option<i64>) -> Result<Vec<Session>> {
+        Ok(self.store().sessions(task_id)?.into_iter().map(|s| s.session).collect())
+    }
+
+    pub fn kill_session(&self, id: i64) -> Result<()> {
+        Ok(self.live(id)?.pty.kill()?)
+    }
+
+    pub async fn send(&self, params: SessionSendParams) -> Result<()> {
+        let live = self.live(params.session_id)?;
+        live.pty.write(params.text.as_bytes())?;
+        if params.submit {
+            tokio::time::sleep(SUBMIT_DELAY).await;
+            live.pty.write(b"\r")?;
+        }
+        Ok(())
+    }
+
+    pub fn resize(&self, params: SessionResizeParams) -> Result<()> {
+        Ok(self.live(params.session_id)?.pty.resize(params.rows, params.cols)?)
+    }
+
+    pub fn read(&self, params: SessionReadParams) -> Result<SessionReadResult> {
+        let text = self.live(params.session_id)?.pty.text();
+        Ok(SessionReadResult { text: last_lines(&text, params.lines) })
+    }
+
+    pub fn attach(&self, session_id: i64) -> Result<(Snapshot, broadcast::Receiver<Vec<u8>>)> {
+        Ok(self.live(session_id)?.pty.attach())
+    }
+
+    pub async fn wait(&self, params: SessionWaitParams) -> Result<SessionStatus> {
+        let mut rx = match self.live(params.session_id) {
+            Ok(live) => live.status.subscribe(),
+            Err(_) => return Ok(self.session(params.session_id)?.status),
+        };
+        let until = params.until;
+        let reached = rx.wait_for(|s| *s == until || *s == SessionStatus::Exited);
+        let outcome = match params.timeout_ms {
+            Some(ms) => tokio::time::timeout(Duration::from_millis(ms), reached).await.map_err(|_| {
+                Error::new(
+                    ErrorKind::Timeout,
+                    format!("session {} did not reach {until:?} within {ms} ms", params.session_id),
+                )
+            })?,
+            None => reached.await,
+        };
+        Ok(outcome.map(|s| *s).unwrap_or(SessionStatus::Exited))
+    }
+
+    pub fn hook(&self, params: SessionHookParams) -> Result<()> {
+        let live = self.live(params.session_id)?;
+        live.hooks_active.store(true, Ordering::Relaxed);
+        let next = status::hook_status(params.event);
+        live.status.send_if_modified(|current| {
+            let changed = *current != next && *current != SessionStatus::Exited;
+            if changed {
+                *current = next;
+            }
+            changed
+        });
+        if let Some(agent_ref) = params.agent_ref {
+            self.store().set_session_agent_ref(params.session_id, &agent_ref)?;
+        }
+        Ok(())
+    }
+
+    pub fn recover(self: &Arc<Self>) -> Result<()> {
+        Ok(())
+    }
+}
+
+fn not_found(what: &str, id: i64) -> Error {
+    Error::new(ErrorKind::NotFound, format!("{what} {id} not found"))
+}
+
+pub fn slugify(id: i64, title: &str) -> String {
+    let mut slug = String::new();
+    for c in title.chars().flat_map(char::to_lowercase) {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c);
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    let slug: String = slug.chars().take(SLUG_MAX).collect();
+    let slug = slug.trim_end_matches('-');
+    if slug.is_empty() {
+        id.to_string()
+    } else {
+        format!("{id}-{slug}")
+    }
+}
+
+pub fn last_lines(text: &str, n: usize) -> String {
+    let lines: Vec<&str> = text.trim_end().lines().collect();
+    lines[lines.len().saturating_sub(n)..].join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slugs_are_branch_safe_and_unique_by_id() {
+        assert_eq!(slugify(1, "Fix login bug"), "1-fix-login-bug");
+        assert_eq!(slugify(2, "  Ünïcode & spaces!! "), "2-n-code-spaces");
+        assert_eq!(slugify(3, "!!!"), "3");
+        assert_eq!(slugify(4, ""), "4");
+        assert_eq!(slugify(5, "a/b..c~d^e:f"), "5-a-b-c-d-e-f");
+        let long = slugify(6, &"x".repeat(200));
+        assert_eq!(long.len(), "6-".len() + SLUG_MAX);
+        assert_eq!(slugify(7, &format!("{}-tail", "y".repeat(39))), format!("7-{}", "y".repeat(39)));
+    }
+
+    #[test]
+    fn last_lines_trims_trailing_blank_screen() {
+        assert_eq!(last_lines("a\nb\nc\n\n\n", 2), "b\nc");
+        assert_eq!(last_lines("a", 10), "a");
+        assert_eq!(last_lines("", 3), "");
+    }
+}

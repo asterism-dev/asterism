@@ -1,6 +1,7 @@
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 pub mod agents;
+pub mod daemon;
 pub mod error;
 pub mod git;
 pub mod paths;
