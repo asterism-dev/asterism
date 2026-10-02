@@ -20,6 +20,7 @@ pub enum ClientError {
     Io(io::Error),
     Rpc(RpcError),
     Decode(serde_json::Error),
+    Protocol(String),
     Closed,
 }
 
@@ -29,6 +30,7 @@ impl fmt::Display for ClientError {
             Self::Io(e) => write!(f, "{e}"),
             Self::Rpc(e) => write!(f, "{e}"),
             Self::Decode(e) => write!(f, "invalid response: {e}"),
+            Self::Protocol(e) => write!(f, "invalid response: {e}"),
             Self::Closed => write!(f, "connection to the daemon closed"),
         }
     }
@@ -48,7 +50,7 @@ impl From<serde_json::Error> for ClientError {
     }
 }
 
-type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Response>>>>;
+type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Response, String>>>>>;
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -95,7 +97,7 @@ impl Client {
                 match serde_json::from_str::<ServerMessage>(&line) {
                     Ok(ServerMessage::Response(response)) => {
                         if let Some(tx) = lock(&reader_pending).remove(&response.id) {
-                            let _ = tx.send(response);
+                            let _ = tx.send(Ok(response));
                         }
                     }
                     Ok(ServerMessage::Notification(notification)) => {
@@ -103,7 +105,13 @@ impl Client {
                             let _ = event_tx.send(event);
                         }
                     }
-                    Err(_) => {}
+                    // Fail the matching call instead of leaving it waiting forever.
+                    Err(e) => {
+                        let id = serde_json::from_str::<Value>(&line).ok().and_then(|v| v["id"].as_u64());
+                        if let Some(tx) = id.and_then(|id| lock(&reader_pending).remove(&id)) {
+                            let _ = tx.send(Err(e.to_string()));
+                        }
+                    }
                 }
             }
             reader_closed.store(true, Ordering::SeqCst);
@@ -123,7 +131,7 @@ impl Client {
         }
         let request = Request::new(id, method, serde_json::to_value(params)?);
         self.outgoing.send(serde_json::to_string(&request)?).map_err(|_| ClientError::Closed)?;
-        let response = rx.await.map_err(|_| ClientError::Closed)?;
+        let response = rx.await.map_err(|_| ClientError::Closed)?.map_err(ClientError::Protocol)?;
         match (response.result, response.error) {
             (_, Some(error)) => Err(ClientError::Rpc(error)),
             (result, None) => Ok(serde_json::from_value(result.unwrap_or(Value::Null))?),

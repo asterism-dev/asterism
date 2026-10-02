@@ -76,6 +76,9 @@ pub enum ErrorKind {
     IncompatibleVersion,
     Timeout,
     Git,
+    /// A kind from a newer peer; keeps older clients decoding its errors.
+    #[serde(other)]
+    Unknown,
 }
 
 impl ErrorKind {
@@ -93,6 +96,7 @@ impl ErrorKind {
             Self::IncompatibleVersion => -32006,
             Self::Timeout => -32007,
             Self::Git => -32008,
+            Self::Unknown => -32099,
         }
     }
 }
