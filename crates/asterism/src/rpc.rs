@@ -1,0 +1,232 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use asterism_proto::rpc::{ErrorKind, Request, Response, RpcError};
+use asterism_proto::types::{method, *};
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use serde_json::Value;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::{broadcast, mpsc};
+use tokio::task::{JoinHandle, JoinSet};
+
+use crate::daemon::Daemon;
+use crate::error::{Error, Result};
+use crate::lock;
+
+const MAX_OUTPUT_FRAME: usize = 64 * 1024;
+// Lets the shutdown response reach the client before the server stops.
+const SHUTDOWN_GRACE: Duration = Duration::from_millis(50);
+
+/// One client connection; background forwarders are keyed so re-attaching replaces them.
+struct Conn {
+    out: mpsc::UnboundedSender<String>,
+    forwarders: Mutex<HashMap<String, JoinHandle<()>>>,
+}
+
+impl Conn {
+    fn send(&self, response: &Response) {
+        if let Ok(line) = serde_json::to_string(response) {
+            let _ = self.out.send(line);
+        }
+    }
+
+    fn replace_forwarder(&self, key: String, handle: JoinHandle<()>) {
+        if let Some(old) = lock(&self.forwarders).insert(key, handle) {
+            old.abort();
+        }
+    }
+
+    fn stop_forwarder(&self, key: &str) {
+        if let Some(handle) = lock(&self.forwarders).remove(key) {
+            handle.abort();
+        }
+    }
+
+    fn stop_all(&self) {
+        for (_, handle) in lock(&self.forwarders).drain() {
+            handle.abort();
+        }
+    }
+}
+
+pub async fn serve(daemon: Arc<Daemon>, listener: UnixListener) {
+    loop {
+        match listener.accept().await {
+            Ok((stream, _)) => {
+                tokio::spawn(handle_conn(daemon.clone(), stream));
+            }
+            Err(e) => eprintln!("asterismd: accept failed: {e}"),
+        }
+    }
+}
+
+async fn handle_conn(daemon: Arc<Daemon>, stream: UnixStream) {
+    let (reader, mut writer) = stream.into_split();
+    let (out, mut out_rx) = mpsc::unbounded_channel::<String>();
+    tokio::spawn(async move {
+        while let Some(mut line) = out_rx.recv().await {
+            line.push('\n');
+            if writer.write_all(line.as_bytes()).await.is_err() {
+                break;
+            }
+        }
+    });
+    let conn = Arc::new(Conn { out, forwarders: Mutex::new(HashMap::new()) });
+    // Dropping the set on disconnect aborts in-flight requests such as an unbounded `wait`.
+    let mut requests = JoinSet::new();
+    let mut lines = BufReader::new(reader).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        while requests.try_join_next().is_some() {}
+        requests.spawn(handle_line(daemon.clone(), conn.clone(), line));
+    }
+    conn.stop_all();
+}
+
+async fn handle_line(daemon: Arc<Daemon>, conn: Arc<Conn>, line: String) {
+    let request = match serde_json::from_str::<Request>(&line) {
+        Ok(request) => request,
+        Err(e) => {
+            conn.send(&Response::err(0, RpcError::new(ErrorKind::ParseError, e.to_string())));
+            return;
+        }
+    };
+    let id = request.id;
+    if request.method == method::SESSION_ATTACH {
+        attach(&daemon, &conn, id, request.params);
+        return;
+    }
+    let response = match dispatch(&daemon, &conn, request).await {
+        Ok(result) => Response::ok(id, result),
+        Err(e) => Response::err(id, e.into()),
+    };
+    conn.send(&response);
+}
+
+/// The snapshot response is queued before the forwarder starts, so output never overtakes it.
+fn attach(daemon: &Daemon, conn: &Conn, id: u64, raw: Value) {
+    let result = params::<SessionIdParams>(raw).and_then(|p| {
+        let (snapshot, rx) = daemon.attach(p.session_id)?;
+        let result = SessionAttachResult { snapshot: BASE64.encode(&snapshot.screen), rows: snapshot.rows, cols: snapshot.cols };
+        Ok((p.session_id, to_value(result)?, rx))
+    });
+    match result {
+        Ok((session_id, value, rx)) => {
+            conn.send(&Response::ok(id, value));
+            let forwarder = tokio::spawn(forward_output(session_id, rx, conn.out.clone()));
+            conn.replace_forwarder(format!("attach:{session_id}"), forwarder);
+        }
+        Err(e) => conn.send(&Response::err(id, e.into())),
+    }
+}
+
+async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result<Value> {
+    let raw = request.params;
+    match request.method.as_str() {
+        method::HELLO => to_value(daemon.hello(params(raw)?)?),
+        method::SHUTDOWN => {
+            let daemon = daemon.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(SHUTDOWN_GRACE).await;
+                daemon.request_shutdown();
+            });
+            Ok(Value::Null)
+        }
+        method::SUBSCRIBE => {
+            let forwarder = tokio::spawn(forward_events(daemon.subscribe(), conn.out.clone()));
+            conn.replace_forwarder("subscribe".into(), forwarder);
+            Ok(Value::Null)
+        }
+        method::PROJECT_LIST => to_value(daemon.projects()?),
+        method::PROJECT_ADD => to_value(daemon.add_project(&params::<ProjectAddParams>(raw)?.path)?),
+        method::PROJECT_REMOVE => {
+            daemon.remove_project(params::<ProjectIdParams>(raw)?.project_id)?;
+            Ok(Value::Null)
+        }
+        method::TASK_LIST => to_value(daemon.tasks(params(raw)?)?),
+        method::TASK_CREATE => to_value(daemon.create_task(params(raw)?)?),
+        method::TASK_ARCHIVE => {
+            let p: TaskArchiveParams = params(raw)?;
+            to_value(daemon.archive_task(p.task_id, p.force)?)
+        }
+        method::TASK_DIFF => to_value(daemon.diff(params::<TaskIdParams>(raw)?.task_id)?),
+        method::SESSION_LIST => to_value(daemon.sessions(params::<SessionListParams>(raw)?.task_id)?),
+        method::SESSION_START => to_value(daemon.start_session(params(raw)?)?),
+        method::SESSION_KILL => {
+            daemon.kill_session(params::<SessionIdParams>(raw)?.session_id)?;
+            Ok(Value::Null)
+        }
+        method::SESSION_SEND => {
+            daemon.send(params(raw)?).await?;
+            Ok(Value::Null)
+        }
+        method::SESSION_RESIZE => {
+            daemon.resize(params(raw)?)?;
+            Ok(Value::Null)
+        }
+        method::SESSION_READ => to_value(daemon.read(params(raw)?)?),
+        method::SESSION_DETACH => {
+            conn.stop_forwarder(&format!("attach:{}", params::<SessionIdParams>(raw)?.session_id));
+            Ok(Value::Null)
+        }
+        method::SESSION_WAIT => to_value(SessionWaitResult { status: daemon.wait(params(raw)?).await? }),
+        method::SESSION_HOOK => {
+            daemon.hook(params(raw)?)?;
+            Ok(Value::Null)
+        }
+        other => Err(Error::new(ErrorKind::MethodNotFound, format!("unknown method {other}"))),
+    }
+}
+
+async fn forward_events(mut rx: broadcast::Receiver<Event>, out: mpsc::UnboundedSender<String>) {
+    loop {
+        match rx.recv().await {
+            Ok(event) => {
+                if let Ok(line) = serde_json::to_string(&event.to_notification()) {
+                    if out.send(line).is_err() {
+                        break;
+                    }
+                }
+            }
+            // ponytail: lagged events are dropped; add a resync event if clients ever fall 1024 events behind.
+            Err(RecvError::Lagged(_)) => continue,
+            Err(RecvError::Closed) => break,
+        }
+    }
+}
+
+async fn forward_output(session_id: i64, mut rx: broadcast::Receiver<Vec<u8>>, out: mpsc::UnboundedSender<String>) {
+    loop {
+        let mut frame = match rx.recv().await {
+            Ok(chunk) => chunk,
+            // ponytail: lagging drops bytes and garbles the client screen until it re-attaches.
+            Err(RecvError::Lagged(_)) => continue,
+            Err(RecvError::Closed) => break,
+        };
+        while frame.len() < MAX_OUTPUT_FRAME {
+            match rx.try_recv() {
+                Ok(more) => frame.extend_from_slice(&more),
+                Err(_) => break,
+            }
+        }
+        let event = Event::SessionOutput { session_id, data: BASE64.encode(&frame) };
+        let Ok(line) = serde_json::to_string(&event.to_notification()) else { continue };
+        if out.send(line).is_err() {
+            break;
+        }
+    }
+}
+
+fn params<T: DeserializeOwned>(value: Value) -> Result<T> {
+    let value = if value.is_null() { Value::Object(Default::default()) } else { value };
+    serde_json::from_value(value).map_err(|e| Error::new(ErrorKind::InvalidParams, e.to_string()))
+}
+
+fn to_value<T: Serialize>(value: T) -> Result<Value> {
+    serde_json::to_value(value).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))
+}
