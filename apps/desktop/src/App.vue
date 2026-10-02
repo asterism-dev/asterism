@@ -6,10 +6,12 @@ import { computed, onMounted, onUnmounted } from 'vue';
 import { api, errorMessage } from './api';
 import ContextMenu from './components/ContextMenu.vue';
 import NewTaskDialog from './components/NewTaskDialog.vue';
+import SettingsView from './components/SettingsView.vue';
 import Sidebar from './components/Sidebar.vue';
 import TaskView from './components/TaskView.vue';
 import { activeTab, applyEvent, isConnected, nextWaiting, refresh, selectSession, state, toast } from './store';
 import { appShortcut } from './shortcuts';
+import { leaveSettings } from './settingsGuard';
 import type { NodeEvent, NodeStatus, Session } from './types';
 
 const unlisteners: UnlistenFn[] = [];
@@ -38,7 +40,7 @@ function onKey(e: KeyboardEvent) {
   } else if (key === 'j') {
     e.preventDefault();
     const session = nextWaiting(state);
-    if (session) selectSession(state, session);
+    if (session) leaveSettings().then((left) => left && selectSession(state, session)).catch(() => {});
   }
 }
 
@@ -83,7 +85,8 @@ onUnmounted(() => {
       <div v-else-if="state.node.state === 'incompatible'" class="banner error">
         {{ state.node.message }} <button @click="restart">Restart daemon</button>
       </div>
-      <TaskView v-if="selectedTask" :key="selectedTask.id" :task="selectedTask" />
+      <SettingsView v-if="state.settingsOpen" />
+      <TaskView v-else-if="selectedTask" :key="selectedTask.id" :task="selectedTask" />
       <p v-else class="empty">Select a task, or create one with + Task.</p>
     </main>
     <NewTaskDialog v-if="state.newTaskFor !== null" :project-id="state.newTaskFor" @close="state.newTaskFor = null" />

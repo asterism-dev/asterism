@@ -7,6 +7,7 @@ import {
   addSession, isConnected, nextWaiting, nodeAggregateStatus, projectStatus, selectSession, showMenu, state, taskStatus, toast,
   waitingSessions,
 } from '../store';
+import { leaveSettings } from '../settingsGuard';
 import type { Project, SessionKind, Task } from '../types';
 
 const connected = computed(() => isConnected(state.node));
@@ -45,9 +46,13 @@ function start(task: Task, kind: SessionKind) {
   api.startSession(task.id, kind).then((s) => addSession(state, s)).catch(report);
 }
 
+function openTask(t: Task) {
+  leaveSettings().then((left) => { if (left) state.selectedTaskId = t.id; }).catch(report);
+}
+
 function jump() {
   const session = nextWaiting(state);
-  if (session) selectSession(state, session);
+  if (session) leaveSettings().then((left) => left && selectSession(state, session)).catch(report);
 }
 
 async function restartDaemon() {
@@ -64,6 +69,7 @@ async function removeProject(p: Project) {
 
 function nodeMenu(e: MouseEvent) {
   showMenu(e, [
+    { label: 'Settings…', action: () => (state.settingsOpen = true) },
     { label: 'Add project…', action: addProject },
     { label: 'Restart daemon', danger: true, action: restartDaemon },
   ]);
@@ -108,7 +114,7 @@ function taskMenu(e: MouseEvent, t: Task) {
         :key="t.id"
         class="row task-row"
         :class="{ selected: state.selectedTaskId === t.id }"
-        @click="state.selectedTaskId = t.id"
+        @click="openTask(t)"
         @contextmenu="taskMenu($event, t)"
       >
         <span class="dot" :class="taskStatus(state, t.id) ?? ''"></span>
@@ -117,6 +123,7 @@ function taskMenu(e: MouseEvent, t: Task) {
       </div>
     </div>
     <p v-if="connected && !state.projects.length" class="hint">Drop a git repository onto the window, or click + to add a project.</p>
+    <button class="settings-button" :class="{ active: state.settingsOpen }" @click="state.settingsOpen = true">⚙ Settings</button>
   </aside>
 </template>
 
@@ -136,4 +143,6 @@ function taskMenu(e: MouseEvent, t: Task) {
 .offline-label { flex-shrink: 1; min-width: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
 .offline { opacity: 0.55; }
 .hint { padding: 0 8px; }
+.settings-button { margin-top: 12px; width: 100%; text-align: left; border: 0; }
+.settings-button.active { background: var(--select); }
 </style>

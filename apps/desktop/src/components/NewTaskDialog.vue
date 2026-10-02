@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { api, errorMessage } from '../api';
+import { leaveSettings } from '../settingsGuard';
 import { addSession, addTask, state } from '../store';
 
 const props = defineProps<{ projectId: number }>();
@@ -31,6 +32,7 @@ async function submit() {
       agent: agent.value || null,
     });
     addTask(state, created.task);
+    await leaveSettings();
     state.selectedTaskId = created.task.id;
     if (created.session) addSession(state, created.session);
     emit('close');
