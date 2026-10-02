@@ -4,34 +4,36 @@ use std::path::Path;
 
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::SessionKind;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
 /// Inherited variables no session receives unless an agent's `set` adds them back.
 pub const DEFAULT_REMOVE: &[&str] = &["CLAUDE*", "ANTHROPIC_*"];
 
-#[derive(Debug, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub agents: BTreeMap<String, AgentConfig>,
 }
 
-#[derive(Debug, Default, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AgentConfig {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
     #[serde(default)]
     pub env: EnvPolicy,
 }
 
-#[derive(Debug, Default, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct EnvPolicy {
     /// Exact names, or prefixes ending in `*`, removed in addition to `DEFAULT_REMOVE`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remove: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub set: BTreeMap<String, String>,
 }
 

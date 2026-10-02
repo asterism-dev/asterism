@@ -9,6 +9,7 @@ use asterism_proto::types::*;
 use asterism_proto::PROTO_VERSION;
 use tokio::sync::{broadcast, watch, Notify};
 
+use crate::agent_settings;
 use crate::agents::{self, AgentProfile};
 use crate::config::{self, Config};
 use crate::error::{Error, Result};
@@ -40,7 +41,7 @@ pub struct Daemon {
 impl Daemon {
     pub fn new(paths: Paths) -> Result<Arc<Self>> {
         paths.ensure_dirs()?;
-        std::fs::write(paths.claude_settings(), agents::claude_settings().to_string())?;
+        agent_settings::write_claude_settings(&paths)?;
         let store = Store::open(&paths.db())?;
         let (events, _) = broadcast::channel(1024);
         Ok(Arc::new(Self {
@@ -202,7 +203,7 @@ impl Daemon {
         }
         let argv = match &params.kind {
             SessionKind::Agent { name } => {
-                self.agent(name)?.start_argv(&self.paths.claude_settings(), params.prompt.as_deref())
+                agent_settings::start_argv(&self.paths, self.agent(name)?, params.prompt.as_deref())?
             }
             SessionKind::Shell => vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())],
             SessionKind::Command { argv } if !argv.is_empty() => argv.clone(),
@@ -368,14 +369,20 @@ impl Daemon {
             }
             let resumed = match self.task(session.task_id) {
                 Ok(task) if !task.archived => {
-                    agents::resume_argv_for(&session.kind, agent_ref.as_deref(), &self.paths.claude_settings())
-                        .is_some_and(|argv| {
+                    match agent_settings::resume_argv(&self.paths, &session.kind, agent_ref.as_deref()) {
+                        Ok(Some(argv)) => {
                             let spawned = self.spawn_live(session.id, &task, argv, &session.kind);
                             if let Err(e) = &spawned {
                                 eprintln!("asterismd: could not resume session {}: {e}", session.id);
                             }
                             spawned.is_ok()
-                        })
+                        }
+                        Ok(None) => false,
+                        Err(e) => {
+                            eprintln!("asterismd: could not resume session {}: {e}", session.id);
+                            false
+                        }
+                    }
                 }
                 Ok(_) => false,
                 Err(e) => {

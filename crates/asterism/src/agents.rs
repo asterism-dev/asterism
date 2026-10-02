@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::PathBuf;
 
 use asterism_proto::types::SessionKind;
 use serde_json::{json, Value};
@@ -22,17 +22,33 @@ pub fn profile(name: &str) -> Option<&'static AgentProfile> {
     PROFILES.iter().find(|p| p.name == name)
 }
 
+/// Everything Claude is launched with besides the prompt or resume reference.
+pub struct Launch {
+    pub settings: PathBuf,
+    pub mcp_config: Option<PathBuf>,
+    pub args: Vec<String>,
+}
+
 impl AgentProfile {
-    pub fn start_argv(&self, settings: &Path, prompt: Option<&str>) -> Vec<String> {
-        let mut argv = vec![self.binary.to_string(), "--settings".into(), settings.display().to_string()];
+    fn base_argv(&self, launch: &Launch) -> Vec<String> {
+        let mut argv = vec![self.binary.to_string(), "--settings".into(), launch.settings.display().to_string()];
+        if let Some(mcp) = &launch.mcp_config {
+            argv.extend(["--mcp-config".to_string(), mcp.display().to_string()]);
+        }
+        argv.extend(launch.args.iter().cloned());
+        argv
+    }
+
+    pub fn start_argv(&self, launch: &Launch, prompt: Option<&str>) -> Vec<String> {
+        let mut argv = self.base_argv(launch);
         if let Some(prompt) = prompt {
             argv.extend(["--".to_string(), prompt.to_string()]);
         }
         argv
     }
 
-    pub fn resume_argv(&self, settings: &Path, agent_ref: &str) -> Vec<String> {
-        let mut argv = self.start_argv(settings, None);
+    pub fn resume_argv(&self, launch: &Launch, agent_ref: &str) -> Vec<String> {
+        let mut argv = self.base_argv(launch);
         argv.extend(["--resume".to_string(), agent_ref.to_string()]);
         argv
     }
@@ -46,13 +62,6 @@ pub fn waiting_patterns(kind: &SessionKind) -> &'static [&'static str] {
     match kind {
         SessionKind::Agent { name } => profile(name).map_or(&[], |p| p.waiting_patterns),
         _ => &[],
-    }
-}
-
-pub fn resume_argv_for(kind: &SessionKind, agent_ref: Option<&str>, settings: &Path) -> Option<Vec<String>> {
-    match kind {
-        SessionKind::Agent { name } => Some(profile(name)?.resume_argv(settings, agent_ref?)),
-        _ => None,
     }
 }
 
@@ -79,31 +88,30 @@ pub fn claude_settings() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     #[test]
-    fn claude_start_and_resume_commands() {
-        let settings = Path::new("/h/claude-settings.json");
+    fn claude_argv_puts_settings_mcp_and_args_before_prompt_or_resume() {
+        let launch = Launch {
+            settings: "/h/claude-settings.json".into(),
+            mcp_config: Some("/h/agents/claude/mcp.json".into()),
+            args: vec!["--model".into(), "opus".into()],
+        };
         assert_eq!(
-            CLAUDE.start_argv(settings, Some("fix it")),
-            ["claude", "--settings", "/h/claude-settings.json", "--", "fix it"]
+            CLAUDE.start_argv(&launch, Some("fix it")),
+            [
+                "claude", "--settings", "/h/claude-settings.json", "--mcp-config", "/h/agents/claude/mcp.json",
+                "--model", "opus", "--", "fix it",
+            ]
         );
-        assert_eq!(CLAUDE.start_argv(settings, None), ["claude", "--settings", "/h/claude-settings.json"]);
         assert_eq!(
-            CLAUDE.resume_argv(settings, "abc"),
-            ["claude", "--settings", "/h/claude-settings.json", "--resume", "abc"]
+            CLAUDE.resume_argv(&launch, "abc"),
+            [
+                "claude", "--settings", "/h/claude-settings.json", "--mcp-config", "/h/agents/claude/mcp.json",
+                "--model", "opus", "--resume", "abc",
+            ]
         );
-    }
-
-    #[test]
-    fn only_agent_sessions_with_a_ref_are_resumable() {
-        let settings = Path::new("/s.json");
-        let claude = SessionKind::Agent { name: "claude".into() };
-        assert!(resume_argv_for(&claude, Some("abc"), settings).is_some());
-        assert!(resume_argv_for(&claude, None, settings).is_none());
-        assert!(resume_argv_for(&SessionKind::Shell, Some("abc"), settings).is_none());
-        let unknown = SessionKind::Agent { name: "nope".into() };
-        assert!(resume_argv_for(&unknown, Some("abc"), settings).is_none());
+        let plain = Launch { settings: "/s.json".into(), mcp_config: None, args: vec![] };
+        assert_eq!(CLAUDE.start_argv(&plain, None), ["claude", "--settings", "/s.json"]);
     }
 
     #[test]
