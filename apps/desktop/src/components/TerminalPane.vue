@@ -48,11 +48,7 @@ async function attach() {
   };
   try {
     const result = await api.attach(props.sessionId, channel);
-    if (disposed || mine !== generation) {
-      // A newer attach owns the session's output sink; only detach when nobody else does.
-      if (mine === generation) api.detach(props.sessionId).catch(() => {});
-      return;
-    }
+    if (disposed || mine !== generation) return;
     term.write(decodeBase64(result.snapshot));
     painted = true;
     pending.forEach((data) => term?.write(decodeBase64(data)));
@@ -113,7 +109,8 @@ onBeforeUnmount(() => {
   disposed = true;
   observer?.disconnect();
   clearTimeout(resizeTimer);
-  if (props.live && attached) api.detach(props.sessionId).catch(() => {});
+  // Unconditional: it must enter the session's queue before any later instance's attach.
+  if (props.live) api.detach(props.sessionId).catch(() => {});
   term?.dispose();
   term = null;
   fit = null;
