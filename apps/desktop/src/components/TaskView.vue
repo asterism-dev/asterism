@@ -80,7 +80,7 @@ function tabMenu(e: MouseEvent, s: Session) {
         @drop="drop(s.id)"
         @contextmenu="tabMenu($event, s)"
       >
-        <button class="tab-label" @click="select(s.id)" @keydown.delete="close(s)" @keydown.backspace="close(s)">
+        <button class="tab-label" @click="select(s.id)" @keydown.delete="close(s)">
           <span class="dot" :class="s.status"></span>{{ label(s) }}
         </button>
         <button class="close" aria-label="Close session" title="Close session" @click.stop="close(s)">×</button>
