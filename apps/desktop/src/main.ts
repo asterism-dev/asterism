@@ -1,6 +1,7 @@
 import { createApp } from 'vue';
 import App from './App.vue';
 import './styles.css';
+import { initTheme } from './theme';
 
 // Only text fields keep the native menu (copy/paste); elsewhere WebKit would offer Reload.
 window.addEventListener('contextmenu', (e) => {
@@ -9,4 +10,5 @@ window.addEventListener('contextmenu', (e) => {
   if (!textField) e.preventDefault();
 });
 
+initTheme();
 createApp(App).mount('#app');

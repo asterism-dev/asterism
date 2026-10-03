@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { computed, ref, watch } from 'vue';
-import { api, errorMessage } from '../api';
+import { api, errorMessage, RpcError } from '../api';
 import {
   commandPreview, emptyForm, fromForm, HOOKS_EXAMPLE, MCP_EXAMPLE, supportsAgentOptions, toForm,
   type AgentForm, type FormErrors,
@@ -29,6 +29,10 @@ async function load() {
   try {
     form.value = toForm(await api.agentConfig(props.agent));
   } catch (e) {
+    if (e instanceof RpcError && e.kind === 'method_not_found') {
+      loadError.value = 'The running daemon is too old for settings. Restart it from the node menu (right-click the computer name).';
+      return;
+    }
     // Broken hand-edited files: show their raw text so they can be repaired here.
     loadError.value = errorMessage(e);
     form.value = emptyForm();

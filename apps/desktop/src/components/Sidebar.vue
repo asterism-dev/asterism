@@ -96,39 +96,42 @@ function taskMenu(e: MouseEvent, t: Task) {
 
 <template>
   <aside class="sidebar">
-    <div class="row node-row" :class="{ offline: !connected }" @contextmenu="nodeMenu">
-      <span class="dot" :class="connected ? (nodeAggregateStatus(state) ?? 'idle') : ''"></span>
-      <span class="name">{{ nodeName }}</span>
-      <span v-if="!connected" class="muted offline-label" :title="offlineLabel">{{ offlineLabel }}</span>
-      <button v-if="waiting.length" class="badge" @click="jump">{{ waiting.length }} waiting</button>
-      <button class="add" title="Add project" @click="addProject">+</button>
-    </div>
-    <div v-for="p in state.projects" :key="p.id" class="project" :class="{ offline: !connected }">
-      <div class="row project-row" @contextmenu="projectMenu($event, p)">
-        <span class="dot" :class="projectStatus(state, p.id) ?? ''"></span>
-        <span class="name">{{ p.name }}</span>
-        <button class="hover-action" title="New task" @click="state.newTaskFor = p.id">+ Task</button>
+    <div class="sidebar-scroll">
+      <div class="row node-row" :class="{ offline: !connected }" @contextmenu="nodeMenu">
+        <span class="dot" :class="connected ? (nodeAggregateStatus(state) ?? 'idle') : ''"></span>
+        <span class="name">{{ nodeName }}</span>
+        <span v-if="!connected" class="muted offline-label" :title="offlineLabel">{{ offlineLabel }}</span>
+        <button v-if="waiting.length" class="badge" @click="jump">{{ waiting.length }} waiting</button>
+        <button class="add" title="Add project" @click="addProject">+</button>
       </div>
-      <div
-        v-for="t in tasksOf(p)"
-        :key="t.id"
-        class="row task-row"
-        :class="{ selected: state.selectedTaskId === t.id }"
-        @click="openTask(t)"
-        @contextmenu="taskMenu($event, t)"
-      >
-        <span class="dot" :class="taskStatus(state, t.id) ?? ''"></span>
-        <span class="name">{{ t.title }}</span>
-        <button class="hover-action" title="Archive task" @click.stop="archive(t)">Archive</button>
+      <div v-for="p in state.projects" :key="p.id" class="project" :class="{ offline: !connected }">
+        <div class="row project-row" @contextmenu="projectMenu($event, p)">
+          <span class="dot" :class="projectStatus(state, p.id) ?? ''"></span>
+          <span class="name">{{ p.name }}</span>
+          <button class="hover-action" title="New task" @click="state.newTaskFor = p.id">+ Task</button>
+        </div>
+        <div
+          v-for="t in tasksOf(p)"
+          :key="t.id"
+          class="row task-row"
+          :class="{ selected: state.selectedTaskId === t.id }"
+          @click="openTask(t)"
+          @contextmenu="taskMenu($event, t)"
+        >
+          <span class="dot" :class="taskStatus(state, t.id) ?? ''"></span>
+          <span class="name">{{ t.title }}</span>
+          <button class="hover-action" title="Archive task" @click.stop="archive(t)">Archive</button>
+        </div>
       </div>
+      <p v-if="connected && !state.projects.length" class="hint">Drop a git repository onto the window, or click + to add a project.</p>
     </div>
-    <p v-if="connected && !state.projects.length" class="hint">Drop a git repository onto the window, or click + to add a project.</p>
     <button class="settings-button" :class="{ active: state.settingsOpen }" @click="state.settingsOpen = true">⚙ Settings</button>
   </aside>
 </template>
 
 <style scoped>
-.sidebar { background: var(--panel); border-right: 1px solid var(--border); overflow-y: auto; padding: 8px 6px; }
+.sidebar { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+.sidebar-scroll { flex: 1; overflow-y: auto; padding: 8px 6px; }
 .row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; min-height: 28px; }
 .row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .node-row { font-weight: 600; }
@@ -143,6 +146,6 @@ function taskMenu(e: MouseEvent, t: Task) {
 .offline-label { flex-shrink: 1; min-width: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
 .offline { opacity: 0.55; }
 .hint { padding: 0 8px; }
-.settings-button { margin-top: 12px; width: 100%; text-align: left; border: 0; }
+.settings-button { flex: none; margin: 0; padding: 8px 12px; width: 100%; text-align: left; border: 0; border-top: 1px solid var(--border); border-radius: 0; }
 .settings-button.active { background: var(--select); }
 </style>

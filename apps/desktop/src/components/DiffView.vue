@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { html as renderDiff } from 'diff2html';
+import { ColorSchemeType } from 'diff2html/lib/types';
 import 'diff2html/bundles/css/diff2html.min.css';
 import { computed, onMounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
 import { state, taskStatus } from '../store';
+import { activeTheme } from '../theme';
 import type { Task } from '../types';
 
 const props = defineProps<{ task: Task }>();
@@ -36,6 +38,7 @@ const rendered = computed(() =>
         drawFileList: true,
         diffMaxChanges: MAX_DIFF_CHANGES,
         diffMaxLineLength: MAX_DIFF_LINE_LENGTH,
+        colorScheme: activeTheme.value === 'dark' ? ColorSchemeType.DARK : ColorSchemeType.LIGHT,
       })
     : '',
 );

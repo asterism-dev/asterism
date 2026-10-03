@@ -4,12 +4,19 @@ import { computed, ref, watch } from 'vue';
 import { BASE_AGENTS } from '../settingsForm';
 import { leaveSettings } from '../settingsGuard';
 import { state } from '../store';
+import { setTheme, themeChoice, type ThemeChoice } from '../theme';
 import AgentSettings from './AgentSettings.vue';
 
 const profiles = computed(() => ('hello' in state.node ? state.node.hello.agents : []));
 const agents = computed(() => [...profiles.value.map((a) => a.name), ...BASE_AGENTS]);
 const agent = ref(agents.value[0] ?? 'shell');
 let picked = false;
+const section = ref<'interface' | 'agents'>('interface');
+const themes: { value: ThemeChoice; label: string }[] = [
+  { value: 'system', label: 'System' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+];
 
 // Opened before hello: switch to the first profile once it arrives, unless the user already chose.
 watch(agents, (list) => {
@@ -21,13 +28,20 @@ function installed(name: string): boolean | null {
   return profile ? profile.available : null;
 }
 
+async function discardChanges(): Promise<boolean> {
+  return !state.settingsDirty || ask('Discard unsaved settings changes?', { title: 'Settings', kind: 'warning' });
+}
+
 async function pick(name: string) {
-  if (name === agent.value) return;
-  if (state.settingsDirty && !(await ask('Discard unsaved settings changes?', { title: 'Settings', kind: 'warning' }))) {
-    return;
-  }
+  if (name === agent.value || !(await discardChanges())) return;
   picked = true;
   agent.value = name;
+}
+
+async function open(next: 'interface' | 'agents') {
+  if (next === section.value || !(await discardChanges())) return;
+  state.settingsDirty = false;
+  section.value = next;
 }
 </script>
 
@@ -39,9 +53,28 @@ async function pick(name: string) {
     </header>
     <div class="settings-body">
       <nav class="settings-nav">
-        <button class="active">Agents</button>
+        <button :class="{ active: section === 'interface' }" @click="open('interface')">Interface</button>
+        <button :class="{ active: section === 'agents' }" @click="open('agents')">Agents</button>
       </nav>
-      <div class="settings-content">
+      <div v-if="section === 'interface'" class="settings-content">
+        <section>
+          <h3>Theme</h3>
+          <div class="agent-picker" role="radiogroup" aria-label="Theme">
+            <button
+              v-for="t in themes"
+              :key="t.value"
+              role="radio"
+              :aria-checked="themeChoice === t.value"
+              :class="{ active: themeChoice === t.value }"
+              @click="setTheme(t.value)"
+            >
+              {{ t.label }}
+            </button>
+          </div>
+          <p class="muted">System follows your operating system's appearance. Terminals stay dark.</p>
+        </section>
+      </div>
+      <div v-else class="settings-content">
         <div class="agent-picker">
           <button v-for="name in agents" :key="name" :class="{ active: name === agent }" @click="pick(name)">
             {{ name }}
@@ -64,4 +97,5 @@ async function pick(name: string) {
 .settings-nav button.active, .agent-picker button.active { background: var(--select); }
 .settings-content { overflow-y: auto; padding: 14px 18px; }
 .agent-picker { display: flex; gap: 6px; margin-bottom: 12px; }
+.settings-content h3 { font-size: 13px; margin: 0 0 6px; }
 </style>
