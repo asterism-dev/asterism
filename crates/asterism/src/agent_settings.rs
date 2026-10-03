@@ -200,13 +200,34 @@ fn write_merged_settings(paths: &Paths, user_hooks: Option<&Value>) -> Result<()
 }
 
 pub fn launch(paths: &Paths, profile: &AgentProfile) -> Result<Launch> {
+    launch_with(paths, profile, false)
+}
+
+/// Lenient launches skip broken hooks.json / mcp.json instead of failing, so a daemon restart can still resume sessions.
+fn launch_with(paths: &Paths, profile: &AgentProfile, lenient: bool) -> Result<Launch> {
     let args = Config::load(&paths.config())?.agents.remove(profile.name).map(|a| a.args).unwrap_or_default();
     let mcp = paths.agent_mcp(profile.name);
-    let has_mcp = read_json(&mcp)?.is_some();
-    // Hand-edited hooks.json must reach this start, and a broken one must fail it rather than vanish.
+    let has_mcp = match read_json(&mcp) {
+        Ok(value) => value.is_some(),
+        Err(e) if lenient => {
+            eprintln!("asterismd: resuming without {}: {}", mcp.display(), e.message);
+            false
+        }
+        Err(e) => return Err(e),
+    };
+    // Hand-edited hooks.json must reach this start; a strict launch fails on a broken one rather than dropping it.
     {
         let _guard = crate::lock(&SAVE_LOCK);
-        write_claude_settings_locked(paths)?;
+        let hooks_path = paths.agent_hooks(agents::CLAUDE.name);
+        let user = match read_json(&hooks_path) {
+            Ok(user) => user,
+            Err(e) if lenient => {
+                eprintln!("asterismd: resuming with status hooks only, ignoring {}: {}", hooks_path.display(), e.message);
+                None
+            }
+            Err(e) => return Err(e),
+        };
+        write_merged_settings(paths, user.as_ref())?;
     }
     Ok(Launch { settings: paths.claude_settings(), mcp_config: has_mcp.then_some(mcp), args })
 }
@@ -219,7 +240,7 @@ pub fn start_argv(paths: &Paths, profile: &AgentProfile, prompt: Option<&str>) -
 pub fn resume_argv(paths: &Paths, kind: &SessionKind, agent_ref: Option<&str>) -> Result<Option<Vec<String>>> {
     let (SessionKind::Agent { name }, Some(agent_ref)) = (kind, agent_ref) else { return Ok(None) };
     let Some(profile) = agents::profile(name) else { return Ok(None) };
-    Ok(Some(profile.resume_argv(&launch(paths, profile)?, agent_ref)))
+    Ok(Some(profile.resume_argv(&launch_with(paths, profile, true)?, agent_ref)))
 }
 
 #[cfg(test)]
@@ -422,6 +443,33 @@ mod tests {
         let err = start_argv(&paths, &agents::CLAUDE, None).unwrap_err();
         assert_eq!(err.kind, ErrorKind::InvalidParams);
         assert!(err.message.contains("mcp.json"), "{}", err.message);
+    }
+
+    #[test]
+    fn resume_ignores_broken_hooks_but_start_fails() {
+        let (_dir, paths) = temp_paths();
+        std::fs::create_dir_all(paths.agent_dir("claude")).unwrap();
+        std::fs::write(paths.agent_hooks("claude"), "{ not json").unwrap();
+        let kind = SessionKind::Agent { name: "claude".into() };
+        let argv = resume_argv(&paths, &kind, Some("ref")).unwrap().unwrap();
+        assert_eq!(&argv[argv.len() - 2..], ["--resume", "ref"]);
+        let written: Value = serde_json::from_str(&std::fs::read_to_string(paths.claude_settings()).unwrap()).unwrap();
+        assert_eq!(written, agents::claude_settings());
+
+        let err = start_argv(&paths, &agents::CLAUDE, None).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::InvalidParams);
+        assert!(err.message.contains("hooks.json"), "{}", err.message);
+    }
+
+    #[test]
+    fn resume_omits_broken_mcp_but_start_fails() {
+        let (_dir, paths) = temp_paths();
+        std::fs::create_dir_all(paths.agent_dir("claude")).unwrap();
+        std::fs::write(paths.agent_mcp("claude"), "{ not json").unwrap();
+        let kind = SessionKind::Agent { name: "claude".into() };
+        let argv = resume_argv(&paths, &kind, Some("ref")).unwrap().unwrap();
+        assert!(!argv.iter().any(|a| a == "--mcp-config"));
+        assert!(start_argv(&paths, &agents::CLAUDE, None).is_err());
     }
 
     #[test]
