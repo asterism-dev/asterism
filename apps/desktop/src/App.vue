@@ -4,6 +4,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { computed, onMounted, onUnmounted } from 'vue';
 import { api, errorMessage } from './api';
+import ActivityView from './components/ActivityView.vue';
 import AddProjectDialog from './components/AddProjectDialog.vue';
 import ContextMenu from './components/ContextMenu.vue';
 import NewTaskDialog from './components/NewTaskDialog.vue';
@@ -90,6 +91,7 @@ onUnmounted(() => {
         {{ state.node.message }} <button @click="restart">Restart daemon</button>
       </div>
       <SettingsView v-if="state.settingsOpen" />
+      <ActivityView v-else-if="state.activityOpen" />
       <TaskView v-else-if="selectedTask" :key="selectedTask.id" :task="selectedTask" />
       <p v-else class="empty">Select a task, or create one with + Task.</p>
     </main>

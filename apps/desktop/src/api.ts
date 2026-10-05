@@ -1,7 +1,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type {
-  AgentConfig, AgentConfigRaw, GithubRepo, GithubStatus, GithubTarget, NodeConfig, NodeConfigInfo, NodeStatus, Project, ProjectCreateResult, Session, SessionAttachResult, SessionKind, SessionReadResult, Task, TaskCreateResult,
-  TaskDiffResult,
+  AgentConfig, AgentConfigRaw, GithubRepo, GithubStatus, GithubTarget, NodeConfig, NodeConfigInfo, NodeStats, NodeStatus, Project, ProjectCreateResult, Session, SessionAttachResult, SessionKind, SessionReadResult, Task,
+  TaskCreateResult, TaskDiffResult,
 } from './types';
 
 export class RpcError extends Error {
@@ -65,6 +65,7 @@ async function send(sessionId: number, text: string): Promise<void> {
 export const api = {
   nodeStatus: () => command<NodeStatus>('node_status'),
   restartDaemon: () => command<void>('restart_daemon'),
+  appPid: () => command<number>('app_pid'),
   projects: () => call<Project[]>('project.list'),
   addProject: (path: string) => call<Project>('project.add', { path }),
   removeProject: (projectId: number) => call<null>('project.remove', { project_id: projectId }),
@@ -88,6 +89,7 @@ export const api = {
   setAgentConfig: (agent: string, config: AgentConfig) => call<null>('agent_config.set', { agent, config }),
   removeSession: (sessionId: number) => call<null>('session.remove', { session_id: sessionId }),
   nodeConfig: () => call<NodeConfigInfo>('node_config.get'),
+  nodeStats: (pids: number[]) => call<NodeStats>('node.stats', { pids }),
   setNodeConfig: (config: NodeConfig) => call<null>('node_config.set', { config }),
   githubStatus: () => call<GithubStatus>('github.status'),
   githubRepos: (owner: string) => call<GithubRepo[]>('github.repos', { owner }),

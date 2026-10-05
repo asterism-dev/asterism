@@ -63,4 +63,10 @@ export interface GithubStatus { available: boolean; logged_in: boolean; login: s
 export interface GithubRepo { name_with_owner: string; description: string | null; private: boolean }
 export type Visibility = 'public' | 'private' | 'internal';
 export interface GithubTarget { owner: string; visibility: Visibility }
+export interface ProcStats { memory_bytes: number; cpu_percent: number }
+export interface NodeStats {
+  daemon: ProcStats;
+  sessions: { session_id: number; stats: ProcStats }[];
+  processes: { pid: number; stats: ProcStats }[];
+}
 export interface ProjectCreateResult { project: Project; github_error: string | null }

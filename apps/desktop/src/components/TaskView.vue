@@ -3,7 +3,7 @@ import { ask } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { computed } from 'vue';
 import { api, errorMessage } from '../api';
-import { activeTab, addSession, moveTab, showMenu, state, taskSessions, toast, type Tab } from '../store';
+import { activeTab, addSession, moveTab, sessionLabel, showMenu, state, taskSessions, toast, type Tab } from '../store';
 import type { Session, SessionKind, Task } from '../types';
 import DiffView from './DiffView.vue';
 import StatusIndicator from './StatusIndicator.vue';
@@ -28,12 +28,6 @@ function start(kind: SessionKind) {
   api.startSession(props.task.id, kind).then((s) => addSession(state, s)).catch(report);
 }
 
-function label(s: Session): string {
-  if (s.kind.type === 'agent') return s.kind.name;
-  if (s.kind.type === 'shell') return 'shell';
-  return s.kind.argv[0] ?? 'command';
-}
-
 function drop(target: number) {
   if (dragged !== null && dragged !== target) moveTab(state, props.task.id, dragged, target);
   dragged = null;
@@ -44,7 +38,7 @@ async function close(s: Session) {
   closing.add(s.id);
   try {
     if (s.kind.type === 'agent' && s.status !== 'exited') {
-      const stop = await ask(`Stop the running ${label(s)} session and close it?`, { title: 'Close session', kind: 'warning' });
+      const stop = await ask(`Stop the running ${sessionLabel(s)} session and close it?`, { title: 'Close session', kind: 'warning' });
       if (!stop) return;
     }
     await api.removeSession(s.id);
@@ -88,7 +82,7 @@ function tabMenu(e: MouseEvent, s: Session) {
         @contextmenu="tabMenu($event, s)"
       >
         <button class="tab-label" @click="select(s.id)" @keydown.delete="close(s)">
-          <StatusIndicator :status="s.status" show-all />{{ label(s) }}
+          <StatusIndicator :status="s.status" show-all />{{ sessionLabel(s) }}
         </button>
         <button class="close" aria-label="Close session" title="Close session" @click.stop="close(s)">×</button>
       </div>

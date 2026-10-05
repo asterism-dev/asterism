@@ -14,6 +14,7 @@ use crate::agents::{self, AgentProfile};
 use crate::config::{self, Config};
 use crate::error::{Error, Result};
 use crate::paths::Paths;
+use crate::proc_stats::{self, CpuTracker};
 use crate::session::{Pty, Snapshot, SpawnSpec, SCROLLBACK_LINES};
 use crate::store::Store;
 use crate::node_settings::LOCAL_OWNER;
@@ -51,6 +52,7 @@ pub struct Daemon {
     live: Mutex<HashMap<i64, Arc<LiveSession>>>,
     events: broadcast::Sender<Event>,
     shutdown: Notify,
+    cpu: Mutex<CpuTracker>,
 }
 
 impl Daemon {
@@ -70,6 +72,7 @@ impl Daemon {
             live: Mutex::new(HashMap::new()),
             events,
             shutdown: Notify::new(),
+            cpu: Mutex::new(CpuTracker::default()),
         }))
     }
 
@@ -410,6 +413,26 @@ impl Daemon {
             .get(&id)
             .cloned()
             .ok_or_else(|| Error::new(ErrorKind::NotFound, format!("session {id} is not running")))
+    }
+
+    pub fn stats(&self, params: NodeStatsParams) -> NodeStats {
+        let sessions: Vec<(i64, u32)> =
+            lock(&self.live).iter().filter_map(|(id, live)| Some((*id, live.pty.pid()?))).collect();
+        let mut cpu = lock(&self.cpu);
+        let mut measure = |pids: &[u32]| {
+            let (memory_bytes, cpu_percent) = cpu.measure(pids);
+            ProcStats { memory_bytes, cpu_percent }
+        };
+        let stats = NodeStats {
+            daemon: measure(&[std::process::id()]),
+            sessions: sessions
+                .into_iter()
+                .map(|(session_id, pid)| SessionStats { session_id, stats: measure(&proc_stats::tree(pid)) })
+                .collect(),
+            processes: params.pids.into_iter().map(|pid| PidStats { pid, stats: measure(&[pid]) }).collect(),
+        };
+        cpu.finish();
+        stats
     }
 
     pub fn session(&self, id: i64) -> Result<Session> {

@@ -35,6 +35,7 @@ pub mod method {
     pub const GITHUB_REPOS: &str = "github.repos";
     pub const PROJECT_CLONE: &str = "project.clone";
     pub const PROJECT_CREATE: &str = "project.create";
+    pub const NODE_STATS: &str = "node.stats";
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -108,6 +109,40 @@ pub struct NodeConfigInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NodeConfigSetParams {
     pub config: NodeConfig,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NodeStatsParams {
+    /// Extra processes to measure on their own, e.g. the app itself.
+    #[serde(default)]
+    pub pids: Vec<u32>,
+}
+
+/// CPU is a percentage of one core since the previous `node.stats` call.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub struct ProcStats {
+    pub memory_bytes: u64,
+    pub cpu_percent: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionStats {
+    pub session_id: i64,
+    pub stats: ProcStats,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PidStats {
+    pub pid: u32,
+    pub stats: ProcStats,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NodeStats {
+    pub daemon: ProcStats,
+    /// Each running session with its whole process tree.
+    pub sessions: Vec<SessionStats>,
+    pub processes: Vec<PidStats>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

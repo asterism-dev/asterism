@@ -19,6 +19,7 @@ export interface State {
   menu: { x: number; y: number; items: MenuItem[] } | null;
   newTaskFor: number | null;
   settingsOpen: boolean;
+  activityOpen: boolean;
   settingsDirty: boolean;
   collapsed: Record<number, boolean>;
   projectDialog: ProjectDialogTab | null;
@@ -37,6 +38,7 @@ export function initialState(): State {
     menu: null,
     newTaskFor: null,
     settingsOpen: false,
+    activityOpen: false,
     settingsDirty: false,
     collapsed: {},
     projectDialog: null,
@@ -103,7 +105,14 @@ export function nextWaiting(s: State): Session | null {
   return waiting.find((x) => x.id > current) ?? waiting[0];
 }
 
+export function sessionLabel(session: Session): string {
+  if (session.kind.type === 'agent') return session.kind.name;
+  if (session.kind.type === 'shell') return 'shell';
+  return session.kind.argv[0] ?? 'command';
+}
+
 export function selectSession(s: State, session: Session) {
+  s.activityOpen = false;
   s.selectedTaskId = session.task_id;
   s.selectedTab[session.task_id] = session.id;
   const projectId = s.tasks.find((t) => t.id === session.task_id)?.project_id;

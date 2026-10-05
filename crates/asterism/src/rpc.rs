@@ -175,6 +175,11 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
             })
             .await
         }
+        method::NODE_STATS => {
+            let daemon = daemon.clone();
+            let params = params::<NodeStatsParams>(raw)?;
+            blocking(move || to_value(daemon.stats(params))).await
+        }
         method::GITHUB_STATUS => {
             let daemon = daemon.clone();
             blocking(move || to_value(daemon.github_status())).await

@@ -117,6 +117,10 @@ impl Pty {
         }))
     }
 
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
+    }
+
     pub fn write(&self, data: &[u8]) -> io::Result<()> {
         let mut writer = lock(&self.writer);
         writer.write_all(data)?;

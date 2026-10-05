@@ -51,6 +51,11 @@ async fn restart_daemon(node: State<'_, Arc<LocalNode>>) -> Result<(), CallError
     node.restart_daemon().await
 }
 
+#[tauri::command]
+fn app_pid() -> u32 {
+    std::process::id()
+}
+
 fn main() {
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -70,7 +75,7 @@ fn main() {
             tauri::async_runtime::spawn(node.run());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![node_status, node_call, session_attach, session_detach, restart_daemon])
+        .invoke_handler(tauri::generate_handler![node_status, node_call, session_attach, session_detach, restart_daemon, app_pid])
         .run(tauri::generate_context!());
     if let Err(e) = result {
         eprintln!("asterism: {e}");

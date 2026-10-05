@@ -355,3 +355,18 @@ async fn remove_force_kills_stubborn_sessions() {
     assert_eq!(env.daemon.session(session.id).unwrap_err().kind, ErrorKind::NotFound);
     assert!(eventually(|| !alive()).await, "process {pid} survived remove");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stats_cover_running_sessions_and_requested_pids() {
+    let env = setup();
+    let task = new_task(&env, "Stats");
+    let session = start(&env, &task, sh("sleep 30"));
+    let me = std::process::id();
+    let stats = env.daemon.stats(NodeStatsParams { pids: vec![me] });
+    assert!(stats.daemon.memory_bytes > 0);
+    let entry = stats.sessions.iter().find(|s| s.session_id == session.id).expect("running session is measured");
+    assert!(entry.stats.memory_bytes > 0);
+    assert_eq!(stats.processes.len(), 1);
+    assert_eq!(stats.processes[0].pid, me);
+    env.daemon.kill_session(session.id).ok();
+}

@@ -74,7 +74,15 @@ function start(task: Task, kind: SessionKind) {
 }
 
 function openTask(t: Task) {
-  leaveSettings().then((left) => { if (left) state.selectedTaskId = t.id; }).catch(report);
+  leaveSettings().then((left) => {
+    if (!left) return;
+    state.activityOpen = false;
+    state.selectedTaskId = t.id;
+  }).catch(report);
+}
+
+function openActivity() {
+  leaveSettings().then((left) => { if (left) state.activityOpen = true; }).catch(report);
 }
 
 function jump() {
@@ -122,6 +130,7 @@ function taskMenu(e: MouseEvent, t: Task) {
 
 <template>
   <aside class="sidebar">
+    <button class="activity-button" :class="{ active: state.activityOpen }" @click="openActivity">Activity Monitor</button>
     <div class="sidebar-scroll">
       <div class="row node-row" :class="{ offline: !connected }" @contextmenu="nodeMenu">
         <span class="name">{{ nodeName }}</span>
@@ -188,4 +197,6 @@ function taskMenu(e: MouseEvent, t: Task) {
 .hint { padding: 0 8px; }
 .settings-button { flex: none; margin: 0; padding: 8px 12px; width: 100%; text-align: left; border: 0; border-top: 1px solid var(--border); border-radius: 0; }
 .settings-button.active { background: var(--select); }
+.activity-button { flex: none; margin: 0; padding: 8px 12px; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; }
+.activity-button.active { background: var(--select); }
 </style>

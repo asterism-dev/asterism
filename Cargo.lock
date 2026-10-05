@@ -124,6 +124,7 @@ dependencies = [
  "clap",
  "gethostname",
  "humantime",
+ "libc",
  "portable-pty",
  "rusqlite",
  "serde",
