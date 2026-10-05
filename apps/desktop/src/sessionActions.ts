@@ -1,7 +1,7 @@
 import { ask } from '@tauri-apps/plugin-dialog';
 import { api, errorMessage } from './api';
-import { placeNext, type Placement } from './dock/workspace';
-import { addSession, sessionLabel, showMenu, state, toast } from './store';
+import { placeNext, type Placement } from './dock/main';
+import { addSession, sessionLabel, showMenu, state, toast, type MenuItem } from './store';
 import type { Session, SessionKind } from './types';
 
 const report = (e: unknown) => toast(errorMessage(e));
@@ -15,7 +15,7 @@ export function startSession(taskId: number, kind: SessionKind, placement?: Plac
   }).catch(report);
 }
 
-export function newSessionMenu(e: MouseEvent, taskId: number, groupId?: string) {
+export function newSessionMenu(e: MouseEvent, taskId: number, groupId?: string, extra: MenuItem[] = []) {
   const agents = 'hello' in state.node ? state.node.hello.agents.filter((a) => a.available) : [];
   const shell: SessionKind = { type: 'shell' };
   const here: Placement | undefined = groupId ? { referenceGroup: groupId, direction: 'within' } : undefined;
@@ -26,6 +26,7 @@ export function newSessionMenu(e: MouseEvent, taskId: number, groupId?: string) 
       { label: 'Terminal below', action: () => startSession(taskId, shell, { referenceGroup: groupId, direction: 'below' }) },
       { label: 'Terminal right', action: () => startSession(taskId, shell, { referenceGroup: groupId, direction: 'right' }) },
     ] : []),
+    ...extra,
   ]);
 }
 

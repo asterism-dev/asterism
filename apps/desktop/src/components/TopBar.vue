@@ -3,18 +3,16 @@ import { ask } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { computed } from 'vue';
 import { errorMessage } from '../api';
-import { paneState, resetOuterLayout, togglePane } from '../dock/outer';
-import { clearWorkspaces } from '../dock/workspace';
+import { floatUnlocked, mainApi, paneState, resetLayout as resetMainLayout, setFloatUnlocked, togglePane } from '../dock/main';
+import { sidebar } from '../dock/sidebar';
 import { state, toast } from '../store';
 
 const task = computed(() => state.tasks.find((t) => t.id === state.selectedTaskId) ?? null);
 const repo = computed(() => state.projects.find((p) => p.id === task.value?.project_id)?.name ?? '');
 
 async function resetLayout() {
-  const confirmed = await ask('Reset the layout of all panes to the default?', { title: 'Reset layout', kind: 'warning' });
-  if (!confirmed) return;
-  resetOuterLayout();
-  clearWorkspaces();
+  const confirmed = await ask('Reset this task\'s layout to the default?', { title: 'Reset layout', kind: 'warning' });
+  if (confirmed) resetMainLayout();
 }
 
 function copyBranch() {
@@ -25,7 +23,7 @@ function copyBranch() {
 
 <template>
   <header class="top-bar">
-    <button class="icon" :aria-pressed="paneState('projects') !== 'closed'" title="Toggle projects" @click="togglePane('projects')">◧</button>
+    <button class="icon" :aria-pressed="sidebar.open" title="Toggle projects" @click="sidebar.open = !sidebar.open">◧</button>
     <div class="location">
       <template v-if="task">
         <span class="repo">{{ repo }}</span>
@@ -34,9 +32,16 @@ function copyBranch() {
       </template>
     </div>
     <button v-if="task" @click="revealItemInDir(task.worktree_path).catch((e) => toast(errorMessage(e)))">Reveal worktree</button>
-    <button :class="{ active: paneState('diff') === 'front' }" @click="togglePane('diff')">Diff</button>
-    <button :class="{ active: paneState('activity') === 'front' }" @click="togglePane('activity')">Activity Monitor</button>
-    <button class="icon" title="Reset layout" aria-label="Reset layout" @click="resetLayout">⟲</button>
+    <button :disabled="!mainApi" :class="{ active: paneState('diff') === 'front' }" @click="togglePane('diff')">Diff</button>
+    <button :disabled="!mainApi" :class="{ active: paneState('activity') === 'front' }" @click="togglePane('activity')">Activity Monitor</button>
+    <button
+      class="icon"
+      :disabled="!mainApi"
+      :aria-pressed="floatUnlocked"
+      :title="floatUnlocked ? 'Free mode on: tabs can float (click to lock)' : 'Free mode off (click to let tabs float)'"
+      @click="setFloatUnlocked(!floatUnlocked)"
+    >{{ floatUnlocked ? '🔓' : '🔒' }}</button>
+    <button class="icon" :disabled="!mainApi" title="Reset layout" aria-label="Reset layout" @click="resetLayout">⟲</button>
     <button class="icon" title="Settings" aria-label="Settings" @click="state.settingsOpen = true">⚙</button>
   </header>
 </template>

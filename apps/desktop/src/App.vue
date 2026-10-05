@@ -3,10 +3,13 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { computed, onMounted, onUnmounted } from 'vue';
 import { api, errorMessage } from './api';
-import OuterLayout from './components/OuterLayout.vue';
+import MainDock from './components/MainDock.vue';
+import PaneHandle from './components/PaneHandle.vue';
+import Sidebar from './components/Sidebar.vue';
 import TopBar from './components/TopBar.vue';
-import { togglePane } from './dock/outer';
-import { pruneWorkspaces } from './dock/workspace';
+import { layoutEpoch, pruneLayouts, togglePane } from './dock/main';
+import { SIDEBAR, clampWidth } from './dock/model';
+import { sidebar } from './dock/sidebar';
 import AddProjectDialog from './components/AddProjectDialog.vue';
 import ContextMenu from './components/ContextMenu.vue';
 import NewTaskDialog from './components/NewTaskDialog.vue';
@@ -18,6 +21,7 @@ import type { NodeEvent, NodeStatus, Session } from './types';
 
 const unlisteners: UnlistenFn[] = [];
 const selectedTask = computed(() => state.tasks.find((t) => t.id === state.selectedTaskId) ?? null);
+const columns = computed(() => (sidebar.open ? `${sidebar.width}px 0 minmax(0, 1fr)` : 'minmax(0, 1fr)'));
 
 async function notify(session: Session) {
   const viewing = state.selectedTaskId === session.task_id && activeTab(state, session.task_id) === session.id;
@@ -31,7 +35,7 @@ function onStatus(status: NodeStatus) {
   const wasConnected = isConnected(state.node);
   state.node = status;
   if (!wasConnected && isConnected(status)) {
-    refresh().then(() => pruneWorkspaces(state.tasks.map((t) => t.id))).catch((e) => toast(errorMessage(e)));
+    refresh().then(() => pruneLayouts(state.tasks.map((t) => t.id))).catch((e) => toast(errorMessage(e)));
   }
 }
 
@@ -43,7 +47,8 @@ function onKey(e: KeyboardEvent) {
     if (projectId !== undefined) state.newTaskFor = projectId;
   } else if (key === 'left' || key === 'right') {
     e.preventDefault();
-    togglePane(key === 'left' ? 'projects' : 'diff');
+    if (key === 'left') sidebar.open = !sidebar.open;
+    else togglePane('diff');
   } else if (key === 'j') {
     e.preventDefault();
     const session = nextWaiting(state);
@@ -85,11 +90,18 @@ onUnmounted(() => {
     <div v-else-if="state.node.state === 'incompatible'" class="banner error">
       {{ state.node.message }} <button @click="restart">Restart daemon</button>
     </div>
-    <SettingsView v-if="state.settingsOpen" />
-    <!-- v-show keeps terminals attached while Settings is open. -->
-    <div v-show="!state.settingsOpen" class="main">
-      <TopBar />
-      <OuterLayout />
+    <div class="workbench" :style="{ gridTemplateColumns: columns }">
+      <template v-if="sidebar.open">
+        <Sidebar />
+        <PaneHandle side="left" :width="sidebar.width" @resize="sidebar.width = clampWidth($event)" @reset="sidebar.width = SIDEBAR.initial" />
+      </template>
+      <SettingsView v-if="state.settingsOpen" />
+      <!-- v-show keeps terminals attached while Settings is open. -->
+      <main v-show="!state.settingsOpen" class="main">
+        <TopBar />
+        <MainDock v-if="selectedTask" :key="`${selectedTask.id}-${layoutEpoch}`" :task="selectedTask" />
+        <p v-else class="empty">Select a task, or create one with + Task.</p>
+      </main>
     </div>
     <NewTaskDialog v-if="state.newTaskFor !== null" :project-id="state.newTaskFor" @close="state.newTaskFor = null" />
     <AddProjectDialog v-if="state.projectDialog" />

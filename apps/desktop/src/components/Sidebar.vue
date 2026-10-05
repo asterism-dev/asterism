@@ -164,7 +164,7 @@ function taskMenu(e: MouseEvent, t: Task) {
 </template>
 
 <style scoped>
-.sidebar { flex: 1; background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+.sidebar { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
 .sidebar-scroll { flex: 1; overflow-y: auto; padding: 8px 6px; }
 .row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; min-height: 28px; }
 .row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
