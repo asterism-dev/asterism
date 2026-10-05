@@ -111,6 +111,8 @@ impl Daemon {
 
     pub fn with_options(paths: Paths, options: DaemonOptions) -> Result<Arc<Self>> {
         paths.ensure_dirs()?;
+        // Moved to plugins/data/claude/ with the Claude plugin.
+        let _ = std::fs::remove_file(paths.home.join("claude-settings.json"));
         let store = Store::open(&paths.db())?;
         let (events, _) = broadcast::channel(1024);
         let runtime = Runtime {

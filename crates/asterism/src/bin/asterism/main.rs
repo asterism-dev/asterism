@@ -530,7 +530,10 @@ async fn plugin_config(client: &Client, json: bool, name: String, key: Option<St
     let spec = settings.schema.iter().find(|s| s.key == key).ok_or_else(|| invalid(format!("{name} has no setting {key:?}")))?;
     let new = match (clear, spec.kind, value) {
         (true, _, _) => serde_json::Value::Null,
-        (false, SettingType::Secret, None) => serde_json::Value::String(read_secret(&spec.title)?),
+        (false, SettingType::Secret, None) => match read_secret(&spec.title)? {
+            secret if secret.is_empty() => return Err(invalid("a secret cannot be empty; use --clear to remove it".into())),
+            secret => serde_json::Value::String(secret),
+        },
         (false, SettingType::Secret, Some(_)) => return Err(invalid("secrets are read from the terminal; omit the value".into())),
         (false, SettingType::Bool, Some(v)) => serde_json::Value::Bool(v.parse().map_err(|_| invalid(format!("{key}: expected true or false")))?),
         (false, SettingType::Number, Some(v)) => serde_json::from_str::<serde_json::Number>(&v)

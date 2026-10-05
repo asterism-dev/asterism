@@ -68,6 +68,11 @@ fn config_sets_values_and_masks_secrets() {
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 
+    let mut empty = node.command(&["plugin", "config", "echo", "token"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    empty.stdin.take().unwrap().write_all(b"\n").unwrap();
+    let out = empty.wait_with_output().unwrap();
+    assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains("cannot be empty"));
+
     let shown = node.cmd(&["plugin", "config", "echo"]);
     let text = String::from_utf8_lossy(&shown.stdout);
     assert!(text.contains("region = \"us\"") && text.contains("token = <set>") && !text.contains("s3cret"), "{text}");

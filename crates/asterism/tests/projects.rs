@@ -259,3 +259,12 @@ async fn existing_target_directory_is_left_untouched() {
     assert_eq!(err.kind, ErrorKind::InvalidParams);
     assert_eq!(std::fs::read_to_string(dir.join("marker")).unwrap(), "mine");
 }
+
+#[tokio::test]
+async fn startup_removes_the_obsolete_claude_settings_file() {
+    let home = tempfile::tempdir().unwrap();
+    let stale = home.path().join("claude-settings.json");
+    std::fs::write(&stale, "{}").unwrap();
+    Daemon::with_options(Paths { home: home.path().to_path_buf() }, common::daemon_options()).unwrap();
+    assert!(!stale.exists());
+}
