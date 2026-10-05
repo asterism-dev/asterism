@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
 import { repoNameError, targetPath, visibilityChoices } from '../projects';
 import { state, toast } from '../store';
@@ -61,22 +61,25 @@ async function create() {
     error.value = errorMessage(e);
   } finally {
     busy.value = false;
+    if (error.value) {
+      await nextTick();
+      input.value?.focus();
+    }
   }
 }
 </script>
 
 <template>
-  <div class="modal-backdrop" @click.self="!busy && emit('close')" @keydown.esc="!busy && emit('close')">
+  <div class="modal-backdrop" tabindex="-1" @click.self="!busy && emit('close')" @keydown.esc="!busy && emit('close')">
     <form class="modal" @submit.prevent="create">
       <h2>New repository</h2>
       <label>Name <input ref="input" v-model="name" placeholder="my-service" spellcheck="false" :disabled="busy" /></label>
       <p v-if="nameError" class="error">{{ nameError }}</p>
-      <div class="segmented" role="radiogroup" aria-label="Where">
-        <button type="button" role="radio" :aria-checked="!onGithub" :class="{ active: !onGithub }" :disabled="busy" @click="onGithub = false">Local only</button>
+      <div class="segmented" role="group" aria-label="Where">
+        <button type="button" :aria-pressed="!onGithub" :class="{ active: !onGithub }" :disabled="busy" @click="onGithub = false">Local only</button>
         <button
           type="button"
-          role="radio"
-          :aria-checked="onGithub"
+          :aria-pressed="onGithub"
           :class="{ active: onGithub }"
           :disabled="busy || !status?.logged_in"
           @click="onGithub = true"

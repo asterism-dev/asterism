@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
 import { sourceOwnerRepo, targetPath } from '../projects';
 import { state, toast } from '../store';
@@ -27,11 +27,14 @@ const shown = computed(() => {
 
 async function loadRepos() {
   repos.value = [];
-  if (!owner.value) return;
+  error.value = null;
+  const o = owner.value;
+  if (!o) return;
   try {
-    repos.value = await api.githubRepos(owner.value);
+    const list = await api.githubRepos(o);
+    if (owner.value === o) repos.value = list;
   } catch (e) {
-    error.value = errorMessage(e);
+    if (owner.value === o) error.value = errorMessage(e);
   }
 }
 
@@ -65,12 +68,16 @@ async function clone() {
     error.value = errorMessage(e);
   } finally {
     busy.value = false;
+    if (error.value) {
+      await nextTick();
+      input.value?.focus();
+    }
   }
 }
 </script>
 
 <template>
-  <div class="modal-backdrop" @click.self="!busy && emit('close')" @keydown.esc="!busy && emit('close')">
+  <div class="modal-backdrop" tabindex="-1" @click.self="!busy && emit('close')" @keydown.esc="!busy && emit('close')">
     <form class="modal" @submit.prevent="clone">
       <h2>Clone repository</h2>
       <label>Repository <input ref="input" v-model="source" placeholder="owner/repo or https://… / git@…" spellcheck="false" :disabled="busy" /></label>
@@ -81,7 +88,7 @@ async function clone() {
             <option v-for="o in owners" :key="o" :value="o">{{ o }}</option>
           </select>
         </label>
-        <input v-model="filter" placeholder="Filter repositories" :disabled="busy" />
+        <input v-model="filter" placeholder="Filter repositories" aria-label="Filter repositories" :disabled="busy" @keydown.enter.prevent />
         <ul class="repo-list">
           <li v-for="r in shown" :key="r.name_with_owner">
             <button type="button" :disabled="busy" @click="source = r.name_with_owner">
