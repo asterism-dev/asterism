@@ -861,7 +861,7 @@ mod tests {
         let path = get("PATH");
         assert_eq!(path.len(), 1);
         let bin_dir = tool_path().unwrap().0;
-        assert!(Path::new(&path[0]).starts_with(&bin_dir));
+        assert_eq!(std::env::split_paths(&path[0]).next().unwrap(), bin_dir);
         assert_eq!(get("ASTERISM_HOME"), [paths.home.display().to_string()]);
         assert_eq!(get("ASTERISM_SOCKET"), [paths.socket().display().to_string()]);
         assert!(get("ASTERISM_CLI")[0].ends_with("/asterism"));
