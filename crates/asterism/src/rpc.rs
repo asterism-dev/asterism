@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use asterism_proto::rpc::{ErrorKind, Request, Response, RpcError};
@@ -18,6 +18,7 @@ use tokio::task::{JoinHandle, JoinSet};
 use crate::daemon::Daemon;
 use crate::error::{Error, Result};
 use crate::lock;
+use crate::plugins::process::HostFn;
 
 const MAX_OUTPUT_FRAME: usize = 64 * 1024;
 // Bounded so a client that stops reading backs up into the broadcast channels, which drop on lag.
@@ -143,7 +144,6 @@ async fn blocking(f: impl FnOnce() -> Result<Value> + Send + 'static) -> Result<
 async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result<Value> {
     let raw = request.params;
     match request.method.as_str() {
-        method::HELLO => to_value(daemon.hello(params(raw)?)?),
         method::SHUTDOWN => {
             let daemon = daemon.clone();
             tokio::spawn(async move {
@@ -157,6 +157,18 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
             conn.replace_forwarder("subscribe".into(), forwarder);
             Ok(Value::Null)
         }
+        method::SESSION_DETACH => {
+            conn.stop_forwarder(&format!("attach:{}", params::<SessionIdParams>(raw)?.session_id));
+            Ok(Value::Null)
+        }
+        other => dispatch_method(daemon, other, raw).await,
+    }
+}
+
+/// Every method that does not need the client connection; plugins reach these through the host API.
+pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value) -> Result<Value> {
+    match method_name {
+        method::HELLO => to_value(daemon.hello(params(raw)?)?),
         method::PROJECT_LIST => to_value(daemon.projects()?),
         method::PROJECT_ADD => to_value(daemon.add_project(&params::<ProjectAddParams>(raw)?.path)?),
         method::PROJECT_REMOVE => {
@@ -279,10 +291,6 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
             Ok(Value::Null)
         }
         method::SESSION_READ => to_value(daemon.read(params(raw)?)?),
-        method::SESSION_DETACH => {
-            conn.stop_forwarder(&format!("attach:{}", params::<SessionIdParams>(raw)?.session_id));
-            Ok(Value::Null)
-        }
         method::SESSION_WAIT => to_value(SessionWaitResult { status: daemon.wait(params(raw)?).await? }),
         method::SESSION_HOOK => {
             daemon.hook(params(raw)?)?;
@@ -290,6 +298,23 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
         }
         other => Err(Error::new(ErrorKind::MethodNotFound, format!("unknown method {other}"))),
     }
+}
+
+const HOST_DENIED: &[&str] = &[method::SHUTDOWN, method::SUBSCRIBE, method::SESSION_ATTACH, method::SESSION_DETACH];
+
+pub fn host_fn(daemon: Weak<Daemon>) -> HostFn {
+    Arc::new(move |method_name: String, params: Value| {
+        let daemon = daemon.clone();
+        Box::pin(async move {
+            if method_name.starts_with("plugin.") || HOST_DENIED.contains(&method_name.as_str()) {
+                return Err(RpcError::new(ErrorKind::MethodNotFound, format!("{method_name} is not available to plugins")));
+            }
+            let Some(daemon) = daemon.upgrade() else {
+                return Err(RpcError::new(ErrorKind::Internal, "the daemon is shutting down"));
+            };
+            dispatch_method(&daemon, &method_name, params).await.map_err(Into::into)
+        })
+    })
 }
 
 async fn forward_events(mut rx: broadcast::Receiver<Event>, out: mpsc::Sender<String>) {

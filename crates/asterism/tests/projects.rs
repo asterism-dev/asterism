@@ -45,7 +45,7 @@ fn setup(create_fails: bool) -> Env {
     let gh = fake_gh(home.path(), create_fails);
     let daemon = Daemon::with_options(
         Paths { home: home.path().join("h") },
-        DaemonOptions { gh_bin: gh, git_env: git_env() },
+        DaemonOptions { gh_bin: gh, git_env: git_env(), ..common::daemon_options() },
     )
     .unwrap();
     Env { home, daemon }

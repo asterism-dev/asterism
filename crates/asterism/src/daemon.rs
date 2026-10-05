@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
 use asterism_proto::PROTO_VERSION;
+use serde_json::Value;
 use tokio::sync::{broadcast, watch, Notify};
 
 use crate::agent_settings;
@@ -14,6 +15,9 @@ use crate::agents::{self, AgentProfile};
 use crate::config::{self, Config};
 use crate::error::{Error, Result};
 use crate::paths::Paths;
+use crate::plugins::process::{self, HostFn};
+use crate::plugins::registry::Status;
+use crate::plugins::{settings, PluginSet, Runtime};
 use crate::proc_stats::{self, CpuTracker};
 use crate::session::{Pty, Snapshot, SpawnSpec, SCROLLBACK_LINES};
 use crate::store::Store;
@@ -37,12 +41,50 @@ struct LiveSession {
 pub struct DaemonOptions {
     pub gh_bin: PathBuf,
     pub git_env: Vec<(String, String)>,
+    /// Where built-in plugin backends live; defaults to the daemon's own directory.
+    pub builtin_plugins_dir: Option<PathBuf>,
+    /// Extra environment for plugin backends, after the inherited one.
+    pub plugin_env: Vec<(String, String)>,
+    pub plugin_call_timeout: Duration,
+    pub plugin_idle: Duration,
 }
 
 impl Default for DaemonOptions {
     fn default() -> Self {
-        Self { gh_bin: PathBuf::from("gh"), git_env: Vec::new() }
+        Self {
+            gh_bin: PathBuf::from("gh"),
+            git_env: Vec::new(),
+            builtin_plugins_dir: None,
+            plugin_env: Vec::new(),
+            plugin_call_timeout: process::CALL_TIMEOUT,
+            plugin_idle: process::IDLE_TIMEOUT,
+        }
     }
+}
+
+/// The daemon's directory (bundled sidecars) followed by the inherited PATH.
+fn tool_path() -> Result<(PathBuf, String)> {
+    let bin_dir = std::env::current_exe()?.parent().map(Path::to_path_buf).unwrap_or_default();
+    let inherited = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default();
+    let path = std::env::join_paths(std::iter::once(bin_dir.clone()).chain(inherited))
+        .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+    Ok((bin_dir, path.to_string_lossy().into_owned()))
+}
+
+fn plugin_env(paths: &Paths, extra: &[(String, String)]) -> Result<Vec<(String, String)>> {
+    let (bin_dir, path) = tool_path()?;
+    let mut env: Vec<(String, String)> = std::env::vars_os()
+        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
+        .filter(|(k, _)| k != "PATH" && !config::removed_by_default(k))
+        .collect();
+    env.extend([
+        ("PATH".to_string(), path),
+        ("ASTERISM_HOME".to_string(), paths.home.display().to_string()),
+        ("ASTERISM_SOCKET".to_string(), paths.socket().display().to_string()),
+        ("ASTERISM_CLI".to_string(), bin_dir.join("asterism").display().to_string()),
+    ]);
+    env.extend(extra.iter().cloned());
+    Ok(env)
 }
 
 pub struct Daemon {
@@ -53,6 +95,12 @@ pub struct Daemon {
     events: broadcast::Sender<Event>,
     shutdown: Notify,
     cpu: Mutex<CpuTracker>,
+    plugins: RwLock<Arc<PluginSet>>,
+    #[allow(dead_code)]
+    host: HostFn,
+    runtime: Runtime,
+    #[allow(dead_code)]
+    builtin_dir: PathBuf,
 }
 
 impl Daemon {
@@ -65,15 +113,61 @@ impl Daemon {
         agent_settings::write_claude_settings(&paths)?;
         let store = Store::open(&paths.db())?;
         let (events, _) = broadcast::channel(1024);
-        Ok(Arc::new(Self {
-            options,
-            paths,
-            store: Mutex::new(store),
-            live: Mutex::new(HashMap::new()),
-            events,
-            shutdown: Notify::new(),
-            cpu: Mutex::new(CpuTracker::default()),
+        let runtime = Runtime {
+            env: plugin_env(&paths, &options.plugin_env)?,
+            call_timeout: options.plugin_call_timeout,
+            idle: options.plugin_idle,
+        };
+        let builtin_dir = match &options.builtin_plugins_dir {
+            Some(dir) => dir.clone(),
+            None => tool_path()?.0,
+        };
+        Ok(Arc::new_cyclic(move |daemon| {
+            let host = crate::rpc::host_fn(daemon.clone());
+            let plugins = PluginSet::load(&paths, &builtin_dir, &runtime, &host);
+            Self {
+                options,
+                paths,
+                store: Mutex::new(store),
+                live: Mutex::new(HashMap::new()),
+                events,
+                shutdown: Notify::new(),
+                cpu: Mutex::new(CpuTracker::default()),
+                plugins: RwLock::new(Arc::new(plugins)),
+                host,
+                runtime,
+                builtin_dir,
+            }
         }))
+    }
+
+    pub fn plugin_set(&self) -> Arc<PluginSet> {
+        self.plugins.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+    }
+
+    pub fn call_timeout(&self) -> Duration {
+        self.runtime.call_timeout
+    }
+
+    pub async fn plugin_call(&self, plugin: &str, method: &str, params: Value, timeout: Option<Duration>) -> Result<Value> {
+        let set = self.plugin_set();
+        let unavailable = |reason: String| Error::new(ErrorKind::PluginError, format!("plugin {plugin} {reason}"));
+        let entry = set.registry.get(plugin).ok_or_else(|| unavailable("is not installed".into()))?;
+        if let Status::Broken(reason) = &entry.status {
+            return Err(unavailable(format!("is broken: {reason}")));
+        }
+        if let Some(manifest) = &entry.manifest {
+            let missing = settings::missing(&self.paths, plugin, &manifest.settings)?;
+            if !missing.is_empty() {
+                return Err(Error::new(
+                    ErrorKind::PluginError,
+                    format!("{plugin}: {} is not set, see Settings → Plugins", missing.join(", ")),
+                ));
+            }
+        }
+        let backend = set.backend(plugin).cloned().ok_or_else(|| unavailable("has no backend".into()))?;
+        drop(set);
+        backend.call(method, params, timeout).await
     }
 
     pub fn paths(&self) -> &Paths {
@@ -464,12 +558,9 @@ impl Daemon {
         kind: &SessionKind,
     ) -> Result<()> {
         let policy = Config::load(&self.paths.config())?.env_policy(config::agent_key(kind));
-        let bin_dir = std::env::current_exe()?.parent().map(Path::to_path_buf).unwrap_or_default();
-        let inherited_path = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>());
-        let path = std::env::join_paths(std::iter::once(bin_dir.clone()).chain(inherited_path.unwrap_or_default()))
-            .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+        let (bin_dir, path) = tool_path()?;
         let fixed = [
-            ("PATH".to_string(), path.to_string_lossy().into_owned()),
+            ("PATH".to_string(), path),
             ("ASTERISM_HOME".to_string(), self.paths.home.display().to_string()),
             ("ASTERISM_SOCKET".to_string(), self.paths.socket().display().to_string()),
             ("ASTERISM_CLI".to_string(), bin_dir.join("asterism").display().to_string()),

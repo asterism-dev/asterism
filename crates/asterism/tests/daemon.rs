@@ -20,7 +20,7 @@ fn setup() -> Env {
     let home = tempfile::tempdir().unwrap();
     let repo = tempfile::tempdir().unwrap();
     init_repo(repo.path());
-    let daemon = Daemon::new(Paths { home: home.path().to_path_buf() }).unwrap();
+    let daemon = Daemon::with_options(Paths { home: home.path().to_path_buf() }, common::daemon_options()).unwrap();
     Env { home, repo, daemon }
 }
 
@@ -256,7 +256,7 @@ async fn restart_marks_non_resumable_sessions_exited() {
     let session = start(&env, &task, sh("sleep 30"));
     assert_eq!(env.daemon.session(session.id).unwrap().status, SessionStatus::Working);
 
-    let restarted = Daemon::new(Paths { home: env.home.path().to_path_buf() }).unwrap();
+    let restarted = Daemon::with_options(Paths { home: env.home.path().to_path_buf() }, common::daemon_options()).unwrap();
     restarted.recover().unwrap();
     assert_eq!(restarted.session(session.id).unwrap().status, SessionStatus::Exited);
     env.daemon.kill_session(session.id).unwrap();
