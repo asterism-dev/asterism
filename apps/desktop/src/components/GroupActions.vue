@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { DockviewApi, IDockviewGroupPanel } from 'dockview-vue';
+import { Plus } from 'lucide-vue-next';
 import { addTool, paneState } from '../dock/main';
 import type { ToolPane } from '../dock/model';
 import { newSessionMenu } from '../sessionActions';
@@ -18,7 +19,7 @@ function open(e: MouseEvent) {
 </script>
 
 <template>
-  <button class="new-session" title="New tab" aria-label="New tab" @pointerdown.stop @click.stop="open">+</button>
+  <button class="new-session" title="New tab" aria-label="New tab" @pointerdown.stop @click.stop="open"><Plus /></button>
 </template>
 
 <style scoped>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { X } from 'lucide-vue-next';
 import { computed, ref, watch } from 'vue';
 import { api, errorMessage, RpcError } from '../api';
 import {
@@ -85,7 +86,7 @@ watch(() => props.agent, load, { immediate: true });
       <h3>Parameters</h3>
       <div v-for="(_, i) in form.args" :key="i" class="settings-row">
         <input v-model="form.args[i]" placeholder="--model" spellcheck="false" />
-        <button title="Remove" @click="form.args.splice(i, 1)">×</button>
+        <button title="Remove" aria-label="Remove" @click="form.args.splice(i, 1)"><X /></button>
       </div>
       <button @click="form.args.push('')">+ Parameter</button>
       <p class="muted mono">{{ commandPreview(agent, form) }}</p>
@@ -97,13 +98,13 @@ watch(() => props.agent, load, { immediate: true });
       <div v-for="(row, i) in form.set" :key="i" class="settings-row">
         <input v-model="row.key" placeholder="NAME" spellcheck="false" />
         <input v-model="row.value" placeholder="value" spellcheck="false" />
-        <button title="Remove" @click="form.set.splice(i, 1)">×</button>
+        <button title="Remove" aria-label="Remove" @click="form.set.splice(i, 1)"><X /></button>
       </div>
       <button @click="form.set.push({ key: '', value: '' })">+ Variable</button>
       <h4>Remove inherited</h4>
       <div v-for="(_, i) in form.remove" :key="i" class="settings-row">
         <input v-model="form.remove[i]" placeholder="AWS_*" spellcheck="false" />
-        <button title="Remove" @click="form.remove.splice(i, 1)">×</button>
+        <button title="Remove" aria-label="Remove" @click="form.remove.splice(i, 1)"><X /></button>
       </div>
       <button @click="form.remove.push('')">+ Pattern</button>
       <p v-if="errors.env" class="error">{{ errors.env }}</p>

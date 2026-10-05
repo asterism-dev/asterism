@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ask } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
+import { ArrowDownUp, ChevronDown, ChevronRight, Plus, Settings } from 'lucide-vue-next';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, errorMessage, RpcError } from '../api';
 import {
@@ -124,8 +125,8 @@ function taskMenu(e: MouseEvent, t: Task) {
         <span class="name">{{ nodeName }}</span>
         <span v-if="!connected" class="muted offline-label" :title="offlineLabel">{{ offlineLabel }}</span>
         <button v-if="waiting.length" class="badge" @click="jump">{{ waiting.length }} waiting</button>
-        <button class="add" :title="`Sort: ${SORT_LABELS[sortMode]}`" aria-label="Sort projects and tasks" @click.stop="sortMenu">⇅</button>
-        <button class="add" title="Add project" @click="state.projectDialog = 'folder'">+</button>
+        <button class="add" :title="`Sort: ${SORT_LABELS[sortMode]}`" aria-label="Sort projects and tasks" @click.stop="sortMenu"><ArrowDownUp /></button>
+        <button class="add" title="Add project" aria-label="Add project" @click="state.projectDialog = 'folder'"><Plus /></button>
       </div>
       <div v-for="p in projects" :key="p.id" class="project" :class="{ offline: !connected }">
         <div class="row project-row" @contextmenu="projectMenu($event, p)">
@@ -135,9 +136,9 @@ function taskMenu(e: MouseEvent, t: Task) {
             :aria-expanded="!state.collapsed[p.id]"
             :aria-label="state.collapsed[p.id] ? `Expand ${p.name}` : `Collapse ${p.name}`"
             @click="toggle(p)"
-          >{{ state.collapsed[p.id] ? '▸' : '▾' }}</button>
+          ><ChevronRight v-if="state.collapsed[p.id]" /><ChevronDown v-else /></button>
           <span class="name" @click="toggle(p)">{{ p.name }}</span>
-          <button class="hover-action" title="New task" @click="state.newTaskFor = p.id">+ Task</button>
+          <button class="hover-action" title="New task" @click="state.newTaskFor = p.id"><Plus />Task</button>
         </div>
         <template v-if="!state.collapsed[p.id]">
           <div
@@ -159,7 +160,7 @@ function taskMenu(e: MouseEvent, t: Task) {
       </div>
       <p v-if="connected && !state.projects.length" class="hint">Click + to add, clone or create a project.</p>
     </div>
-    <button class="settings-button" :class="{ active: state.settingsOpen }" @click="state.settingsOpen = true">⚙ Settings</button>
+    <button class="settings-button" :class="{ active: state.settingsOpen }" @click="state.settingsOpen = true"><Settings />Settings</button>
   </aside>
 </template>
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { DockviewApi, DockviewPanelApi } from 'dockview-vue';
+import { X } from 'lucide-vue-next';
 import { computed } from 'vue';
 import { dockFloating, floatUnlocked } from '../dock/main';
 import { closeSession } from '../sessionActions';
@@ -39,7 +40,7 @@ function menu(e: MouseEvent) {
   <div class="pane-tab" :class="{ exited: session?.status === 'exited' }" @contextmenu.prevent.stop="menu">
     <StatusIndicator v-if="session" :status="session.status" show-all />
     <span>{{ label }}</span>
-    <button class="close" :aria-label="`Close ${label}`" :title="`Close ${label}`" @pointerdown.stop @click.stop="close">×</button>
+    <button class="close" :aria-label="`Close ${label}`" :title="`Close ${label}`" @pointerdown.stop @click.stop="close"><X /></button>
   </div>
 </template>
 

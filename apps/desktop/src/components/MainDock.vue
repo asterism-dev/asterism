@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { DockviewVue, themeLight, type DockviewApi, type DockviewReadyEvent, type VueComponent } from 'dockview-vue';
+import { Plus } from 'lucide-vue-next';
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { addTool, attachMain, detachMain, floatUnlocked, keepSizesOnRemove, saveLayout, takePlacement } from '../dock/main';
 import { TEMPLATE_KEY, parseWorkspace, placementPosition, reconcile, sessionIdOf, sessionPanelId, workspaceKey } from '../dock/model';
@@ -110,7 +111,7 @@ onUnmounted(() => {
       @ready="onReady"
     />
     <div v-if="!panelCount" class="workspace-empty">
-      <button class="primary" @click="newSessionMenu($event, task.id)">+ New session</button>
+      <button class="primary" @click="newSessionMenu($event, task.id)"><Plus />New session</button>
       <p class="muted">Start an agent or a terminal.</p>
     </div>
   </div>

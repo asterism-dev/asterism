@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ask } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
+import { Activity, FolderOpen, GitCompare, Lock, LockOpen, PanelLeftClose, PanelLeftOpen, RotateCcw, Settings } from 'lucide-vue-next';
 import { computed } from 'vue';
 import { errorMessage } from '../api';
 import { floatUnlocked, mainApi, paneState, resetLayout as resetMainLayout, setFloatUnlocked, togglePane } from '../dock/main';
@@ -23,7 +24,9 @@ function copyBranch() {
 
 <template>
   <header class="top-bar">
-    <button class="icon" :aria-pressed="sidebar.open" title="Toggle projects" @click="sidebar.open = !sidebar.open">◧</button>
+    <button class="icon" :aria-pressed="sidebar.open" :title="sidebar.open ? 'Hide projects' : 'Show projects'" @click="sidebar.open = !sidebar.open">
+      <PanelLeftClose v-if="sidebar.open" /><PanelLeftOpen v-else />
+    </button>
     <div class="location">
       <template v-if="task">
         <span class="repo">{{ repo }}</span>
@@ -31,18 +34,18 @@ function copyBranch() {
         <button class="branch" title="Copy branch name" @click="copyBranch">{{ task.branch }}</button>
       </template>
     </div>
-    <button v-if="task" @click="revealItemInDir(task.worktree_path).catch((e) => toast(errorMessage(e)))">Reveal worktree</button>
-    <button :disabled="!mainApi" :class="{ active: paneState('diff') === 'front' }" @click="togglePane('diff')">Diff</button>
-    <button :disabled="!mainApi" :class="{ active: paneState('activity') === 'front' }" @click="togglePane('activity')">Activity Monitor</button>
+    <button v-if="task" @click="revealItemInDir(task.worktree_path).catch((e) => toast(errorMessage(e)))"><FolderOpen />Reveal worktree</button>
+    <button :disabled="!mainApi" :class="{ active: paneState('diff') === 'front' }" @click="togglePane('diff')"><GitCompare />Diff</button>
+    <button :disabled="!mainApi" :class="{ active: paneState('activity') === 'front' }" @click="togglePane('activity')"><Activity />Activity Monitor</button>
     <button
       class="icon"
       :disabled="!mainApi"
       :aria-pressed="floatUnlocked"
       :title="floatUnlocked ? 'Free mode on: tabs can float (click to lock)' : 'Free mode off (click to let tabs float)'"
       @click="setFloatUnlocked(!floatUnlocked)"
-    >{{ floatUnlocked ? '🔓' : '🔒' }}</button>
-    <button class="icon" :disabled="!mainApi" title="Reset layout" aria-label="Reset layout" @click="resetLayout">⟲</button>
-    <button class="icon" title="Settings" aria-label="Settings" @click="state.settingsOpen = true">⚙</button>
+    ><LockOpen v-if="floatUnlocked" /><Lock v-else /></button>
+    <button class="icon" :disabled="!mainApi" title="Reset layout" aria-label="Reset layout" @click="resetLayout"><RotateCcw /></button>
+    <button class="icon" title="Settings" aria-label="Settings" @click="state.settingsOpen = true"><Settings /></button>
   </header>
 </template>
 
