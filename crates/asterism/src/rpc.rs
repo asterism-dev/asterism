@@ -219,9 +219,21 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
         }
         method::TASK_LIST => to_value(daemon.tasks(params(raw)?)?),
         method::TASK_CREATE => to_value(daemon.create_task(params(raw)?)?),
-        method::TASK_ARCHIVE => {
-            let p: TaskArchiveParams = params(raw)?;
-            to_value(daemon.archive_task(p.task_id, p.force)?)
+        method::TASK_ARCHIVE => to_value(daemon.archive_task(params::<TaskArchiveParams>(raw)?.task_id)?),
+        method::TASK_RESTORE => {
+            let daemon = daemon.clone();
+            let task_id = params::<TaskIdParams>(raw)?.task_id;
+            blocking(move || to_value(daemon.restore_task(task_id)?)).await
+        }
+        method::TASK_DELETE_CHECK => {
+            let daemon = daemon.clone();
+            let task_id = params::<TaskIdParams>(raw)?.task_id;
+            blocking(move || to_value(daemon.delete_check(task_id)?)).await
+        }
+        method::TASK_DELETE => {
+            let daemon = daemon.clone();
+            let p: TaskDeleteParams = params(raw)?;
+            blocking(move || to_value(daemon.delete_task(p.task_id, p.delete_branch)?)).await
         }
         method::TASK_DIFF => to_value(daemon.diff(params::<TaskIdParams>(raw)?.task_id)?),
         method::SESSION_LIST => to_value(daemon.sessions(params::<SessionListParams>(raw)?.task_id)?),

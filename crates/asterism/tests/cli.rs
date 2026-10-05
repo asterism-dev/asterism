@@ -55,16 +55,18 @@ fn wait_timeout_is_an_error() {
 }
 
 #[test]
-fn archive_dirty_task_needs_force() {
+fn archive_restore_and_delete_from_the_cli() {
     let node = Node::new();
-    let created = node.json(&["task", "new", "dirty"]);
+    let created = node.json(&["task", "new", "lifecycle"]);
     let id = created["task"]["id"].to_string();
-    std::fs::write(Path::new(created["task"]["worktree_path"].as_str().unwrap()).join("wip.txt"), "x").unwrap();
+    let worktree = created["task"]["worktree_path"].as_str().unwrap().to_string();
+    std::fs::write(Path::new(&worktree).join("wip.txt"), "x").unwrap();
 
-    let out = node.cmd(&["task", "archive", &id]);
-    assert_eq!(out.status.code(), Some(1));
-    assert!(stderr(&out).contains("DirtyWorktree"), "{}", stderr(&out));
-    assert_eq!(node.json(&["task", "archive", &id, "--force"])["archived"], true);
+    assert_eq!(node.json(&["task", "archive", &id])["archived"], true);
+    assert!(Path::new(&worktree).join("wip.txt").exists());
+    assert_eq!(node.json(&["task", "restore", &id])["archived"], false);
+    node.json(&["task", "delete", &id, "--delete-branch"]);
+    assert!(!Path::new(&worktree).exists());
 }
 
 #[test]

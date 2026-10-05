@@ -271,30 +271,94 @@ impl Daemon {
         Ok(self.store().tasks(params.project_id, params.include_archived)?)
     }
 
-    pub fn archive_task(&self, task_id: i64, force: bool) -> Result<Task> {
+    /// Stops the task's sessions; worktree, uncommitted changes and branch stay.
+    pub fn archive_task(&self, task_id: i64) -> Result<Task> {
         let task = self.task(task_id)?;
         if task.archived {
             return Ok(task);
         }
-        let worktree = PathBuf::from(&task.worktree_path);
-        if !force && git::is_dirty(&worktree)? {
-            return Err(Error::new(
-                ErrorKind::DirtyWorktree,
-                format!("task {task_id} has uncommitted changes; archive with force to discard them"),
-            ));
-        }
-        let sessions = self.store().sessions(Some(task_id))?;
-        for stored in sessions {
+        for stored in self.store().sessions(Some(task_id))? {
             if let Ok(live) = self.live(stored.session.id) {
                 let _ = live.pty.kill();
             }
         }
-        let project = self.store().project(task.project_id)?.ok_or_else(|| not_found("project", task.project_id))?;
-        git::remove_worktree(Path::new(&project.path), &worktree, force)?;
         self.store().set_task_archived(task_id)?;
         let task = self.task(task_id)?;
         self.emit(Event::TaskChanged(task.clone()));
         Ok(task)
+    }
+
+    pub fn restore_task(&self, task_id: i64) -> Result<Task> {
+        let task = self.task(task_id)?;
+        if !task.archived {
+            return Ok(task);
+        }
+        let worktree = PathBuf::from(&task.worktree_path);
+        // Tasks archived before archiving kept worktrees have to get theirs back from the branch.
+        if !worktree.exists() {
+            let repo = self.project_path(task.project_id)?;
+            if !git::branch_exists(&repo, &task.branch) {
+                return Err(Error::new(ErrorKind::NotFound, format!("branch {} no longer exists", task.branch)));
+            }
+            git::add_existing_worktree(&repo, &worktree, &task.branch)?;
+        }
+        self.store().set_task_active(task_id)?;
+        let task = self.task(task_id)?;
+        self.emit(Event::TaskChanged(task.clone()));
+        Ok(task)
+    }
+
+    pub fn delete_check(&self, task_id: i64) -> Result<TaskDeleteCheck> {
+        let task = self.task(task_id)?;
+        let repo = self.project_path(task.project_id)?;
+        let worktree = Path::new(&task.worktree_path);
+        let branch_exists = git::branch_exists(&repo, &task.branch);
+        Ok(TaskDeleteCheck {
+            dirty: worktree.exists() && git::is_dirty(worktree).unwrap_or(false),
+            unmerged_commits: if branch_exists { git::unmerged_commits(&repo, &task.base_branch, &task.branch) } else { 0 },
+            branch: task.branch,
+            branch_exists,
+        })
+    }
+
+    pub fn delete_task(&self, task_id: i64, delete_branch: bool) -> Result<TaskDeleteResult> {
+        let task = self.task(task_id)?;
+        let repo = self.project_path(task.project_id)?;
+        let sessions = self.store().sessions(Some(task_id))?;
+        for stored in &sessions {
+            // Taken out first so the status forwarder sees it gone and reports nothing after `session.removed`.
+            let live = lock(&self.live).remove(&stored.session.id);
+            if let Some(live) = live {
+                let _ = live.pty.force_kill();
+            }
+        }
+        let mut warnings = Vec::new();
+        let worktree = Path::new(&task.worktree_path);
+        if worktree.exists() {
+            if let Err(e) = git::remove_worktree(&repo, worktree, true) {
+                warnings.push(e.message);
+            }
+        }
+        if delete_branch && git::branch_exists(&repo, &task.branch) {
+            if let Err(e) = git::delete_branch(&repo, &task.branch) {
+                warnings.push(e.message);
+            }
+        }
+        {
+            let store = self.store();
+            store.delete_task_sessions(task_id)?;
+            store.delete_task(task_id)?;
+        }
+        for stored in sessions {
+            self.emit(Event::SessionRemoved { session_id: stored.session.id });
+        }
+        self.emit(Event::TaskRemoved { task_id });
+        Ok(TaskDeleteResult { warning: (!warnings.is_empty()).then(|| warnings.join("; ")) })
+    }
+
+    fn project_path(&self, project_id: i64) -> Result<PathBuf> {
+        let project = self.store().project(project_id)?.ok_or_else(|| not_found("project", project_id))?;
+        Ok(PathBuf::from(project.path))
     }
 
     pub fn diff(&self, task_id: i64) -> Result<TaskDiffResult> {

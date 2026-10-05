@@ -15,6 +15,9 @@ pub mod method {
     pub const TASK_CREATE: &str = "task.create";
     pub const TASK_ARCHIVE: &str = "task.archive";
     pub const TASK_DIFF: &str = "task.diff";
+    pub const TASK_RESTORE: &str = "task.restore";
+    pub const TASK_DELETE_CHECK: &str = "task.delete_check";
+    pub const TASK_DELETE: &str = "task.delete";
     pub const SESSION_LIST: &str = "session.list";
     pub const SESSION_START: &str = "session.start";
     pub const SESSION_KILL: &str = "session.kill";
@@ -248,8 +251,30 @@ pub struct TaskIdParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskArchiveParams {
     pub task_id: i64,
+    /// Ignored since archiving keeps the worktree; kept so older clients still deserialize.
     #[serde(default)]
     pub force: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskDeleteParams {
+    pub task_id: i64,
+    #[serde(default)]
+    pub delete_branch: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskDeleteCheck {
+    pub dirty: bool,
+    pub branch: String,
+    pub branch_exists: bool,
+    /// Commits on the branch that are not on its base branch.
+    pub unmerged_commits: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskDeleteResult {
+    pub warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -426,6 +451,8 @@ pub enum Event {
     SessionRemoved { session_id: i64 },
     #[serde(rename = "task.changed")]
     TaskChanged(Task),
+    #[serde(rename = "task.removed")]
+    TaskRemoved { task_id: i64 },
     #[serde(rename = "project.changed")]
     ProjectChanged(Project),
     #[serde(rename = "project.removed")]

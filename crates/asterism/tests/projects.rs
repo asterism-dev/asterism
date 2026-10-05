@@ -150,7 +150,7 @@ async fn worktrees_are_grouped_by_owner_and_root_changes_keep_existing_tasks() {
 
     std::fs::write(Path::new(&first.worktree_path).join("new.txt"), "x\n").unwrap();
     assert!(env.daemon.diff(first.id).unwrap().patch.contains("+x"));
-    env.daemon.archive_task(first.id, true).unwrap();
+    env.daemon.delete_task(first.id, false).unwrap();
     assert!(!Path::new(&first.worktree_path).exists());
 }
 

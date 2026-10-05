@@ -94,10 +94,14 @@ enum TaskCmd {
         #[arg(long)]
         all: bool,
     },
-    Archive {
+    /// Stop the task's sessions; worktree and branch stay.
+    Archive { id: i64 },
+    Restore { id: i64 },
+    /// Delete the task and its worktree, optionally its branch too.
+    Delete {
         id: i64,
         #[arg(long)]
-        force: bool,
+        delete_branch: bool,
     },
     /// Show the task's changes against its base branch.
     Diff { id: Option<i64> },
@@ -234,9 +238,17 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
                 client.call(method::TASK_LIST, TaskListParams { project_id, include_archived: all }).await?;
             print(json, &tasks, || lines(&tasks, task_line));
         }
-        Cmd::Task(TaskCmd::Archive { id, force }) => {
-            let task: Task = client.call(method::TASK_ARCHIVE, TaskArchiveParams { task_id: id, force }).await?;
+        Cmd::Task(TaskCmd::Archive { id }) => {
+            let task: Task = client.call(method::TASK_ARCHIVE, TaskArchiveParams { task_id: id, force: false }).await?;
             print(json, &task, || task_line(&task));
+        }
+        Cmd::Task(TaskCmd::Restore { id }) => {
+            let task: Task = client.call(method::TASK_RESTORE, TaskIdParams { task_id: id }).await?;
+            print(json, &task, || task_line(&task));
+        }
+        Cmd::Task(TaskCmd::Delete { id, delete_branch }) => {
+            let result: TaskDeleteResult = client.call(method::TASK_DELETE, TaskDeleteParams { task_id: id, delete_branch }).await?;
+            print(json, &result, || result.warning.clone().unwrap_or_else(|| format!("deleted task {id}")));
         }
         Cmd::Task(TaskCmd::Diff { id }) => {
             let diff: TaskDiffResult = client.call(method::TASK_DIFF, TaskIdParams { task_id: resolve_task(id)? }).await?;

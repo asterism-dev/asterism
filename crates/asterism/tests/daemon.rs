@@ -127,16 +127,86 @@ async fn hooks_override_the_heuristic() {
 }
 
 #[tokio::test]
-async fn archive_refuses_dirty_worktrees_unless_forced() {
+async fn archive_keeps_worktree_changes_and_restore_brings_the_task_back() {
     let env = setup();
     let task = new_task(&env, "dirty");
-    std::fs::write(Path::new(&task.worktree_path).join("scratch.txt"), "wip").unwrap();
-    assert_eq!(env.daemon.archive_task(task.id, false).unwrap_err().kind, ErrorKind::DirtyWorktree);
+    let scratch = Path::new(&task.worktree_path).join("scratch.txt");
+    std::fs::write(&scratch, "wip").unwrap();
 
-    let archived = env.daemon.archive_task(task.id, true).unwrap();
+    let archived = env.daemon.archive_task(task.id).unwrap();
     assert!(archived.archived);
-    assert!(!Path::new(&task.worktree_path).exists());
-    run_git(env.repo.path(), &["rev-parse", "--verify", &task.branch]);
+    assert_eq!(std::fs::read_to_string(&scratch).unwrap(), "wip");
+
+    let restored = env.daemon.restore_task(task.id).unwrap();
+    assert!(!restored.archived);
+    assert_eq!(std::fs::read_to_string(&scratch).unwrap(), "wip");
+}
+
+#[tokio::test]
+async fn restore_recreates_a_removed_worktree_from_its_branch() {
+    let env = setup();
+    let task = new_task(&env, "legacy");
+    env.daemon.archive_task(task.id).unwrap();
+    run_git(env.repo.path(), &["worktree", "remove", "--force", &task.worktree_path]);
+
+    env.daemon.restore_task(task.id).unwrap();
+    assert!(Path::new(&task.worktree_path).join("README.md").exists());
+}
+
+#[tokio::test]
+async fn restore_fails_cleanly_without_the_branch() {
+    let env = setup();
+    let task = new_task(&env, "gone");
+    env.daemon.archive_task(task.id).unwrap();
+    run_git(env.repo.path(), &["worktree", "remove", "--force", &task.worktree_path]);
+    run_git(env.repo.path(), &["branch", "-D", &task.branch]);
+
+    assert_eq!(env.daemon.restore_task(task.id).unwrap_err().kind, ErrorKind::NotFound);
+    assert!(env.daemon.task(task.id).unwrap().archived);
+}
+
+#[tokio::test]
+async fn delete_check_reports_dirty_and_unmerged_work() {
+    let env = setup();
+    let task = new_task(&env, "check");
+    let clean = env.daemon.delete_check(task.id).unwrap();
+    assert_eq!(clean, TaskDeleteCheck { dirty: false, branch: task.branch.clone(), branch_exists: true, unmerged_commits: 0 });
+
+    let wt = Path::new(&task.worktree_path);
+    std::fs::write(wt.join("new.txt"), "x").unwrap();
+    run_git(wt, &["add", "."]);
+    run_git(wt, &["commit", "-qm", "work"]);
+    std::fs::write(wt.join("more.txt"), "y").unwrap();
+    let busy = env.daemon.delete_check(task.id).unwrap();
+    assert!(busy.dirty);
+    assert_eq!(busy.unmerged_commits, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn delete_removes_sessions_worktree_and_optionally_the_branch() {
+    let env = setup();
+    let keep = new_task(&env, "keep branch");
+    let session = start(&env, &keep, sh("sleep 30"));
+    let mut events = env.daemon.subscribe();
+    assert_eq!(env.daemon.delete_task(keep.id, false).unwrap(), TaskDeleteResult { warning: None });
+    assert!(!Path::new(&keep.worktree_path).exists());
+    run_git(env.repo.path(), &["rev-parse", "--verify", &keep.branch]);
+    assert_eq!(env.daemon.task(keep.id).unwrap_err().kind, ErrorKind::NotFound);
+    assert!(env.daemon.sessions(Some(keep.id)).unwrap().is_empty());
+    let mut saw = (false, false);
+    while let Ok(event) = events.try_recv() {
+        saw.0 |= matches!(event, Event::SessionRemoved { session_id } if session_id == session.id);
+        saw.1 |= matches!(event, Event::TaskRemoved { task_id } if task_id == keep.id);
+    }
+    assert_eq!(saw, (true, true));
+
+    let drop = new_task(&env, "drop branch");
+    env.daemon.delete_task(drop.id, true).unwrap();
+    let out = std::process::Command::new("git")
+        .args(["-C", &env.repo.path().display().to_string(), "rev-parse", "--verify", "--quiet", &drop.branch])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
 }
 
 #[tokio::test]
@@ -165,7 +235,7 @@ async fn project_with_active_tasks_cannot_be_removed() {
     let env = setup();
     let task = new_task(&env, "keep");
     assert_eq!(env.daemon.remove_project(task.project_id).unwrap_err().kind, ErrorKind::InvalidParams);
-    env.daemon.archive_task(task.id, true).unwrap();
+    env.daemon.archive_task(task.id).unwrap();
     env.daemon.remove_project(task.project_id).unwrap();
 }
 
@@ -173,7 +243,7 @@ async fn project_with_active_tasks_cannot_be_removed() {
 async fn task_ids_are_not_reused_after_project_removal() {
     let env = setup();
     let first = new_task(&env, "again");
-    env.daemon.archive_task(first.id, true).unwrap();
+    env.daemon.archive_task(first.id).unwrap();
     env.daemon.remove_project(first.project_id).unwrap();
     let second = new_task(&env, "again");
     assert_ne!(first.branch, second.branch);

@@ -152,6 +152,16 @@ impl Store {
         Ok(())
     }
 
+    pub fn set_task_active(&self, id: i64) -> rusqlite::Result<()> {
+        self.conn.execute("UPDATE tasks SET archived = 0 WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn delete_task_sessions(&self, task_id: i64) -> rusqlite::Result<()> {
+        self.conn.execute("DELETE FROM sessions WHERE task_id = ?1", [task_id])?;
+        Ok(())
+    }
+
     pub fn set_task_archived(&self, id: i64) -> rusqlite::Result<()> {
         self.conn.execute("UPDATE tasks SET archived = 1 WHERE id = ?1", [id])?;
         Ok(())

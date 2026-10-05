@@ -60,6 +60,26 @@ pub fn remove_worktree(repo: &Path, worktree: &Path, force: bool) -> Result<()> 
     git(repo, &args).map(|_| ())
 }
 
+pub fn branch_exists(repo: &Path, branch: &str) -> bool {
+    git(repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).is_ok()
+}
+
+/// Commits on `branch` that are not on `base`; 0 when either is missing.
+pub fn unmerged_commits(repo: &Path, base: &str, branch: &str) -> u32 {
+    git(repo, &["rev-list", "--count", &format!("{base}..{branch}")])
+        .ok()
+        .and_then(|out| out.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+pub fn delete_branch(repo: &Path, branch: &str) -> Result<()> {
+    git(repo, &["branch", "-D", branch]).map(|_| ())
+}
+
+pub fn add_existing_worktree(repo: &Path, path: &Path, branch: &str) -> Result<()> {
+    git(repo, &["worktree", "add", "-q", &path.to_string_lossy(), branch]).map(|_| ())
+}
+
 pub fn diff(worktree: &Path, base: &str) -> Result<String> {
     let merge_base = git(worktree, &["merge-base", base, "HEAD"])?;
     let mut patch = git(worktree, &["diff", "--no-color", "--no-ext-diff", merge_base.trim()])?;
