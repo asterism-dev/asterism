@@ -43,6 +43,8 @@ def handle(request):
     method, params, rid = request["method"], request.get("params") or {}, request["id"]
     mode = os.environ.get("FIXTURE_MODE", "")
     if method == "initialize":
+        if mode == "crash-init":
+            os._exit(3)
         if mode == "hang-init":
             time.sleep(60)
         record("init " + json.dumps(params.get("settings", {}), sort_keys=True))

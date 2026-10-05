@@ -58,6 +58,12 @@ impl Running {
     }
 }
 
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.kill();
+    }
+}
+
 type Handles = (mpsc::UnboundedSender<String>, Pending, u64, Arc<AtomicBool>);
 
 struct Reader {
@@ -155,17 +161,13 @@ impl Backend {
     }
 
     pub async fn stop(&self) {
-        if let Some(mut running) = self.running.lock().await.take() {
-            running.kill();
-        }
+        self.running.lock().await.take();
     }
 
     async fn stop_generation(&self, generation: u64) {
         let mut running = self.running.lock().await;
         if running.as_ref().is_some_and(|r| r.generation == generation) {
-            if let Some(mut r) = running.take() {
-                r.kill();
-            }
+            running.take();
         }
     }
 
@@ -184,21 +186,24 @@ impl Backend {
     /// The lock is held through the handshake so no request overtakes `initialize`.
     async fn ensure_running(self: &Arc<Self>) -> Result<Handles> {
         let mut running = self.running.lock().await;
+        if let Some(reason) = self.failing() {
+            return Err(self.error(reason));
+        }
         if let Some(r) = running.as_ref().filter(|r| r.alive.load(Ordering::SeqCst)) {
             return Ok((r.out.clone(), r.pending.clone(), r.generation, r.alive.clone()));
         }
         let started = self.spawn()?;
         let handles = (started.out.clone(), started.pending.clone(), started.generation, started.alive.clone());
-        *running = Some(started);
         if let Err(e) = self.handshake(&handles.0, &handles.1, &handles.3).await {
-            if let Some(mut r) = running.take() {
-                r.kill();
-            }
-            if self.failing().is_none() {
+            // A process that already exited was counted by its reader.
+            let still_alive = handles.3.load(Ordering::SeqCst);
+            drop(started);
+            if still_alive && self.failing().is_none() {
                 self.record_crash();
             }
             return Err(e);
         }
+        *running = Some(started);
         Ok(handles)
     }
 

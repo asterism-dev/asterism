@@ -87,7 +87,7 @@ async fn capability_mismatch_marks_the_backend_failing() {
 
 #[tokio::test]
 async fn slow_calls_time_out_without_killing_the_backend() {
-    let f = Fixture::new("", "command,forge", Duration::from_millis(200), Duration::from_secs(60));
+    let f = Fixture::new("", "command,forge", Duration::from_secs(5), Duration::from_secs(60));
     let err = f.backend.call("echo.sleep", json!({"ms": 2000}), Some(Duration::from_millis(200))).await.unwrap_err();
     assert_eq!(err.kind, ErrorKind::Timeout);
     assert!(f.backend.call("forge.status", json!({}), Some(Duration::from_secs(5))).await.is_ok());
@@ -189,4 +189,54 @@ async fn cancelling_an_untimed_call_kills_the_backend() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(stopped);
+}
+
+async fn wait_for(mut condition: impl FnMut() -> bool) {
+    for _ in 0..100 {
+        if condition() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("condition not met in time");
+}
+
+#[tokio::test]
+async fn crashing_during_initialize_counts_once_per_attempt() {
+    let f = Fixture::new("crash-init", "command,forge", Duration::from_secs(5), Duration::from_secs(60));
+    for _ in 0..3 {
+        f.call("forge.status", json!({})).await.unwrap_err();
+    }
+    wait_for(|| f.backend.failing().is_some()).await;
+    assert_eq!(f.starts(), 3);
+    f.call("forge.status", json!({})).await.unwrap_err();
+    assert_eq!(f.starts(), 3);
+}
+
+#[tokio::test]
+async fn concurrent_capability_mismatch_starts_one_process() {
+    let f = Fixture::new("", "forge", Duration::from_secs(5), Duration::from_secs(60));
+    let mut set = tokio::task::JoinSet::new();
+    for _ in 0..5 {
+        let backend = f.backend.clone();
+        set.spawn(async move { backend.call("forge.status", json!({}), Some(Duration::from_secs(5))).await });
+    }
+    while let Some(result) = set.join_next().await {
+        result.unwrap().unwrap_err();
+    }
+    assert_eq!(f.starts(), 1);
+}
+
+#[tokio::test]
+async fn cancelling_during_the_handshake_does_not_leave_a_process_behind() {
+    let f = Fixture::new("hang-init", "command,forge", Duration::from_secs(10), Duration::from_secs(60));
+    let backend = f.backend.clone();
+    let call = tokio::spawn(async move { backend.call("forge.status", json!({}), Some(Duration::from_secs(10))).await });
+    wait_for(|| f.starts() == 1).await;
+    call.abort();
+    let backend = f.backend.clone();
+    let second = tokio::spawn(async move { backend.call("forge.status", json!({}), Some(Duration::from_secs(10))).await });
+    wait_for(|| f.starts() == 2).await;
+    second.abort();
+    assert!(!f.backend.is_running().await);
 }
