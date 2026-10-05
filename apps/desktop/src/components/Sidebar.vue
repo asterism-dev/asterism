@@ -4,15 +4,16 @@ import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, errorMessage, RpcError } from '../api';
 import {
-  addSession, isConnected, nextWaiting, selectSession, showMenu, state, taskStatus, toast,
+  isConnected, nextWaiting, selectSession, showMenu, state, taskStatus, toast,
   waitingSessions,
 } from '../store';
 import {
   loadCollapsed, loadSortMode, relativeTime, saveCollapsed, saveSortMode, sortProjects, sortTasks, type SortMode,
 } from '../projects';
 import { leaveSettings } from '../settingsGuard';
+import { startSession } from '../sessionActions';
 import StatusIndicator from './StatusIndicator.vue';
-import type { Project, SessionKind, Task } from '../types';
+import type { Project, Task } from '../types';
 
 const connected = computed(() => isConnected(state.node));
 const nodeName = computed(() => ('hello' in state.node ? state.node.hello.hostname : 'This computer'));
@@ -69,10 +70,6 @@ async function archive(task: Task) {
   }
 }
 
-function start(task: Task, kind: SessionKind) {
-  api.startSession(task.id, kind).then((s) => addSession(state, s)).catch(report);
-}
-
 function openTask(t: Task) {
   leaveSettings().then((left) => { if (left) state.selectedTaskId = t.id; }).catch(report);
 }
@@ -112,8 +109,8 @@ function projectMenu(e: MouseEvent, p: Project) {
 function taskMenu(e: MouseEvent, t: Task) {
   const agents = 'hello' in state.node ? state.node.hello.agents.filter((a) => a.available) : [];
   showMenu(e, [
-    ...agents.map((a) => ({ label: `New ${a.name} session`, action: () => start(t, { type: 'agent', name: a.name }) })),
-    { label: 'New shell', action: () => start(t, { type: 'shell' }) },
+    ...agents.map((a) => ({ label: `New ${a.name} session`, action: () => startSession(t.id, { type: 'agent', name: a.name }) })),
+    { label: 'New shell', action: () => startSession(t.id, { type: 'shell' }) },
     { label: 'Reveal worktree', action: () => revealItemInDir(t.worktree_path).catch(report) },
     { label: 'Archive task', danger: true, action: () => archive(t) },
   ]);

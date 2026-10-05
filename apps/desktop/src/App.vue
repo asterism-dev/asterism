@@ -7,6 +7,7 @@ import { api, errorMessage } from './api';
 import OuterLayout from './components/OuterLayout.vue';
 import TopBar from './components/TopBar.vue';
 import { togglePane } from './dock/outer';
+import { pruneWorkspaces } from './dock/workspace';
 import AddProjectDialog from './components/AddProjectDialog.vue';
 import ContextMenu from './components/ContextMenu.vue';
 import NewTaskDialog from './components/NewTaskDialog.vue';
@@ -30,7 +31,9 @@ async function notify(session: Session) {
 function onStatus(status: NodeStatus) {
   const wasConnected = isConnected(state.node);
   state.node = status;
-  if (!wasConnected && isConnected(status)) refresh().catch((e) => toast(errorMessage(e)));
+  if (!wasConnected && isConnected(status)) {
+    refresh().then(() => pruneWorkspaces(state.tasks.map((t) => t.id))).catch((e) => toast(errorMessage(e)));
+  }
 }
 
 function onKey(e: KeyboardEvent) {

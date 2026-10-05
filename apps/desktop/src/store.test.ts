@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  activeTab, aggregate, applyEvent, initialState, moveTab, nextWaiting, selectSession, taskSessions, taskStatus, waitingSessions,
+  activeTab, aggregate, applyEvent, initialState, nextWaiting, selectSession, taskSessions, taskStatus, waitingSessions,
 } from './store';
 import type { Session, SessionStatus, Task } from './types';
 
@@ -74,14 +74,10 @@ describe('applyEvent', () => {
 });
 
 describe('tabs and waiting sessions', () => {
-  it('orders tabs by drag order, then by id', () => {
+  it('lists a task\'s sessions by id', () => {
     const s = initialState();
     s.sessions = [session(1, 7), session(2, 7), session(3, 7), session(4, 8)];
     expect(taskSessions(s, 7).map((x) => x.id)).toEqual([1, 2, 3]);
-    moveTab(s, 7, 3, 1);
-    expect(taskSessions(s, 7).map((x) => x.id)).toEqual([3, 1, 2]);
-    moveTab(s, 7, 3, 2);
-    expect(taskSessions(s, 7).map((x) => x.id)).toEqual([1, 3, 2]);
   });
 
   it('cycles through waiting sessions of known tasks', () => {

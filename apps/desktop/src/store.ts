@@ -83,13 +83,6 @@ export function activeTab(s: State, taskId: number): Tab {
   return sessions.find((x) => x.status !== 'exited')?.id ?? sessions[0]?.id ?? null;
 }
 
-export function moveTab(s: State, taskId: number, draggedId: number, targetId: number) {
-  const ids = taskSessions(s, taskId).map((x) => x.id).filter((id) => id !== draggedId);
-  const at = ids.indexOf(targetId);
-  ids.splice(at === -1 ? ids.length : at, 0, draggedId);
-  s.tabOrder[taskId] = ids;
-}
-
 export function waitingSessions(s: State): Session[] {
   const known = new Set(s.tasks.map((t) => t.id));
   return s.sessions.filter((x) => x.status === 'waiting_input' && known.has(x.task_id)).sort((a, b) => a.id - b.id);

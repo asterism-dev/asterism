@@ -4,6 +4,7 @@ import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { computed } from 'vue';
 import { errorMessage } from '../api';
 import { paneState, resetOuterLayout, togglePane } from '../dock/outer';
+import { clearWorkspaces } from '../dock/workspace';
 import { state, toast } from '../store';
 
 const task = computed(() => state.tasks.find((t) => t.id === state.selectedTaskId) ?? null);
@@ -11,7 +12,9 @@ const repo = computed(() => state.projects.find((p) => p.id === task.value?.proj
 
 async function resetLayout() {
   const confirmed = await ask('Reset the layout of all panes to the default?', { title: 'Reset layout', kind: 'warning' });
-  if (confirmed) resetOuterLayout();
+  if (!confirmed) return;
+  resetOuterLayout();
+  clearWorkspaces();
 }
 
 function copyBranch() {
