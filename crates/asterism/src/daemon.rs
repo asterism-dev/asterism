@@ -71,11 +71,13 @@ fn tool_path() -> Result<(PathBuf, String)> {
     Ok((bin_dir, path.to_string_lossy().into_owned()))
 }
 
+const PLUGIN_FIXED_ENV: &[&str] = &["PATH", "ASTERISM_HOME", "ASTERISM_SOCKET", "ASTERISM_CLI"];
+
 fn plugin_env(paths: &Paths, extra: &[(String, String)]) -> Result<Vec<(String, String)>> {
     let (bin_dir, path) = tool_path()?;
     let mut env: Vec<(String, String)> = std::env::vars_os()
         .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
-        .filter(|(k, _)| k != "PATH" && !config::removed_by_default(k))
+        .filter(|(k, _)| !PLUGIN_FIXED_ENV.contains(&k.as_str()) && !config::removed_by_default(k))
         .collect();
     env.extend([
         ("PATH".to_string(), path),
@@ -862,11 +864,10 @@ mod tests {
         assert_eq!(path.len(), 1);
         let bin_dir = tool_path().unwrap().0;
         assert_eq!(std::env::split_paths(&path[0]).next().unwrap(), bin_dir);
-        // Inherited values may precede ours; the last one wins when the process starts.
-        assert_eq!(get("ASTERISM_HOME").last(), Some(&paths.home.display().to_string()));
-        assert_eq!(get("ASTERISM_SOCKET").last(), Some(&paths.socket().display().to_string()));
-        assert!(get("ASTERISM_CLI").last().unwrap().ends_with("/asterism"));
-        let position = |key: &str| env.iter().rposition(|(k, _)| k == key).unwrap();
+        assert_eq!(get("ASTERISM_HOME"), [paths.home.display().to_string()]);
+        assert_eq!(get("ASTERISM_SOCKET"), [paths.socket().display().to_string()]);
+        assert!(get("ASTERISM_CLI")[0].ends_with("/asterism"));
+        let position = |key: &str| env.iter().position(|(k, _)| k == key).unwrap();
         assert_eq!(get("EXTRA"), ["1"]);
         assert!(position("EXTRA") > position("ASTERISM_CLI"));
     }
