@@ -162,6 +162,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "asterism-plugin"
+version = "0.2.0"
+dependencies = [
+ "asterism-proto",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "asterism-proto"
 version = "0.2.0"
 dependencies = [
