@@ -106,6 +106,7 @@ onUnmounted(() => {
       :tab-components="tabComponents"
       :left-header-actions-component="groupActions"
       :disable-floating-groups="!floatUnlocked"
+      floating-group-drag-handle="tabbar"
       @ready="onReady"
     />
     <div v-if="!panelCount" class="workspace-empty">

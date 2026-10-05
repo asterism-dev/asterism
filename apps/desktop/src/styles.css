@@ -41,6 +41,8 @@ body.resizing { cursor: col-resize; user-select: none; }
   --dv-drag-over-background-color: color-mix(in srgb, var(--accent) 20%, transparent);
   --dv-drag-over-border-color: var(--accent);
   --dv-icon-hover-background-color: var(--select);
+  --dv-floating-border: 1px solid var(--border);
+  --dv-floating-box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 .empty, .hint, .muted { color: var(--muted); }
 .empty { margin: auto; }
