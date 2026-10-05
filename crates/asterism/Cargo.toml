@@ -19,6 +19,10 @@ path = "src/bin/asterism/main.rs"
 name = "asterism-plugin-github"
 path = "src/bin/asterism-plugin-github/main.rs"
 
+[[bin]]
+name = "asterism-plugin-claude"
+path = "src/bin/asterism-plugin-claude/main.rs"
+
 [dependencies]
 asterism-plugin = { path = "../asterism-plugin" }
 asterism-proto = { path = "../asterism-proto" }
