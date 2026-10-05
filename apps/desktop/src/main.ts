@@ -1,5 +1,6 @@
 import { createApp } from 'vue';
 import App from './App.vue';
+import 'dockview-vue/dist/styles/dockview.css';
 import './styles.css';
 import { initTheme } from './theme';
 
