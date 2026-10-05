@@ -24,7 +24,7 @@ const offlineLabel = computed(() => {
 const tasksOf = (p: Project) => state.tasks.filter((t) => t.project_id === p.id);
 const report = (e: unknown) => toast(errorMessage(e));
 
-async function addProject() {
+async function addFolder() {
   const path = await open({ directory: true, multiple: false });
   if (typeof path === 'string') api.addProject(path).catch(report);
 }
@@ -67,10 +67,20 @@ async function removeProject(p: Project) {
   if (confirmed) api.removeProject(p.id).catch(report);
 }
 
+function addProjectMenu(e: MouseEvent) {
+  showMenu(e, [
+    { label: 'Add folder…', action: addFolder },
+    { label: 'Clone repository…', action: () => (state.projectDialog = 'clone') },
+    { label: 'New repository…', action: () => (state.projectDialog = 'create') },
+  ]);
+}
+
 function nodeMenu(e: MouseEvent) {
   showMenu(e, [
     { label: 'Settings…', action: () => (state.settingsOpen = true) },
-    { label: 'Add project…', action: addProject },
+    { label: 'Add folder…', action: addFolder },
+    { label: 'Clone repository…', action: () => (state.projectDialog = 'clone') },
+    { label: 'New repository…', action: () => (state.projectDialog = 'create') },
     { label: 'Restart daemon', danger: true, action: restartDaemon },
   ]);
 }
@@ -102,7 +112,7 @@ function taskMenu(e: MouseEvent, t: Task) {
         <span class="name">{{ nodeName }}</span>
         <span v-if="!connected" class="muted offline-label" :title="offlineLabel">{{ offlineLabel }}</span>
         <button v-if="waiting.length" class="badge" @click="jump">{{ waiting.length }} waiting</button>
-        <button class="add" title="Add project" @click="addProject">+</button>
+        <button class="add" title="Add project" @click="addProjectMenu">+</button>
       </div>
       <div v-for="p in state.projects" :key="p.id" class="project" :class="{ offline: !connected }">
         <div class="row project-row" @contextmenu="projectMenu($event, p)">
@@ -123,7 +133,7 @@ function taskMenu(e: MouseEvent, t: Task) {
           <button class="hover-action" title="Archive task" @click.stop="archive(t)">Archive</button>
         </div>
       </div>
-      <p v-if="connected && !state.projects.length" class="hint">Drop a git repository onto the window, or click + to add a project.</p>
+      <p v-if="connected && !state.projects.length" class="hint">Drop a git repository onto the window, or click + to add, clone or create a project.</p>
     </div>
     <button class="settings-button" :class="{ active: state.settingsOpen }" @click="state.settingsOpen = true">⚙ Settings</button>
   </aside>
