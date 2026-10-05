@@ -862,10 +862,11 @@ mod tests {
         assert_eq!(path.len(), 1);
         let bin_dir = tool_path().unwrap().0;
         assert_eq!(std::env::split_paths(&path[0]).next().unwrap(), bin_dir);
-        assert_eq!(get("ASTERISM_HOME"), [paths.home.display().to_string()]);
-        assert_eq!(get("ASTERISM_SOCKET"), [paths.socket().display().to_string()]);
-        assert!(get("ASTERISM_CLI")[0].ends_with("/asterism"));
-        let position = |key: &str| env.iter().position(|(k, _)| k == key).unwrap();
+        // Inherited values may precede ours; the last one wins when the process starts.
+        assert_eq!(get("ASTERISM_HOME").last(), Some(&paths.home.display().to_string()));
+        assert_eq!(get("ASTERISM_SOCKET").last(), Some(&paths.socket().display().to_string()));
+        assert!(get("ASTERISM_CLI").last().unwrap().ends_with("/asterism"));
+        let position = |key: &str| env.iter().rposition(|(k, _)| k == key).unwrap();
         assert_eq!(get("EXTRA"), ["1"]);
         assert!(position("EXTRA") > position("ASTERISM_CLI"));
     }
