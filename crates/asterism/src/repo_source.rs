@@ -39,9 +39,23 @@ fn url_path(url: &str) -> Option<&str> {
     }
 }
 
+fn is_github(url: &str) -> bool {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = rest.split(['/', ':']).next().unwrap_or("");
+    authority.rsplit('@').next() == Some("github.com")
+}
+
 pub fn owner_repo_from_url(url: &str) -> Option<(String, String)> {
-    let path = url_path(url.trim())?;
+    let url = url.trim();
+    let path = url_path(url)?;
     let path = path.trim_end_matches('/');
+    if is_github(url) {
+        // GitHub web URLs like /acme/api/tree/main: owner and repo are the first two segments.
+        let mut segments = path.split('/').filter(|s| !s.is_empty());
+        let owner = segments.next()?;
+        let repo = segments.next()?;
+        return Some((owner.to_string(), repo.strip_suffix(".git").unwrap_or(repo).to_string()));
+    }
     let path = path.strip_suffix(".git").unwrap_or(path);
     let mut segments = path.rsplit('/').filter(|s| !s.is_empty());
     let repo = segments.next()?;
@@ -51,6 +65,9 @@ pub fn owner_repo_from_url(url: &str) -> Option<(String, String)> {
 
 pub fn parse_source(source: &str) -> Result<RepoSource> {
     let source = source.trim();
+    if source.starts_with('-') || source.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(invalid(format!("invalid source {source:?}")));
+    }
     if source.contains("://") || source.contains(':') {
         let (owner, repo) =
             owner_repo_from_url(source).ok_or_else(|| invalid(format!("cannot read owner/repo from {source:?}")))?;
@@ -97,7 +114,8 @@ mod tests {
 
     #[test]
     fn rejects_traversal_and_bad_names() {
-        for bad in ["", "acme", "acme/", "/abs/path", "acme/..", "../x", "a/b/c", "acme/-rf", "https://host/only", "acme/a b"] {
+        for bad in ["", "acme", "acme/", "/abs/path", "acme/..", "../x", "a/b/c", "acme/-rf", "https://host/only", "acme/a b",
+            "--upload-pack=evil:a/b", "-x:a/b", "git@host:a/b c", "https://github.com/a\tx/b"] {
             assert!(parse_source(bad).is_err(), "{bad}");
         }
         assert!(check_name("repository name", "ok.name_1-x").is_ok());
@@ -110,6 +128,9 @@ mod tests {
     fn owner_and_repo_from_remote_urls() {
         assert_eq!(owner_repo_from_url("git@github.com:acme/api.git"), Some(("acme".into(), "api".into())));
         assert_eq!(owner_repo_from_url("https://github.com/acme/api"), Some(("acme".into(), "api".into())));
+        assert_eq!(owner_repo_from_url("https://github.com/acme/api/tree/main"), Some(("acme".into(), "api".into())));
+        assert_eq!(owner_repo_from_url("ssh://git@github.com/acme/api.git"), Some(("acme".into(), "api".into())));
+        assert_eq!(owner_repo_from_url("ssh://git@gitlab.com/group/sub/tool"), Some(("sub".into(), "tool".into())));
         assert_eq!(owner_repo_from_url("/local/bare.git"), None);
         assert_eq!(owner_repo_from_url("garbage"), None);
     }

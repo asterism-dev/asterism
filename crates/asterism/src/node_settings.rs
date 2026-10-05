@@ -53,6 +53,7 @@ pub fn load(paths: &Paths) -> Result<NodeConfigInfo> {
     Ok(NodeConfigInfo { config, defaults })
 }
 
+/// Also creates both directories, so a successful validation leaves them in place.
 pub fn validate(config: &NodeConfig) -> Result<()> {
     for (label, value) in [("repositories", &config.paths.repos), ("worktrees", &config.paths.worktrees)] {
         let path = expand_home(value).map_err(|e| invalid(format!("{label}: {}", e.message)))?;
