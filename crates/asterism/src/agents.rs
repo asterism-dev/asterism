@@ -15,7 +15,9 @@ pub fn static_argv(agent: &AgentDecl, mode: LaunchMode, args: &[String], prompt:
             match token.as_str() {
                 "{binary}" => argv.push(agent.binary.clone()),
                 "{args...}" => argv.extend(args.iter().cloned()),
-                other => argv.push(other.replace("{prompt}", prompt.unwrap_or_default()).replace("{agent_ref}", agent_ref.unwrap_or_default())),
+                "{prompt}" => argv.push(prompt.unwrap_or_default().to_string()),
+                "{agent_ref}" => argv.push(agent_ref.unwrap_or_default().to_string()),
+                other => argv.push(other.to_string()),
             }
         }
     };
@@ -64,6 +66,12 @@ mod tests {
         assert_eq!(static_argv(&aider(), LaunchMode::Resume, &[], None, Some("r1")).unwrap(), ["aider", "--restore", "r1"]);
         let no_resume = AgentDecl { resume: vec![], ..aider() };
         assert_eq!(static_argv(&no_resume, LaunchMode::Resume, &[], None, Some("r1")), None);
+    }
+
+    #[test]
+    fn placeholders_are_whole_tokens_only() {
+        let prompt = "use {agent_ref} and {binary}";
+        assert_eq!(static_argv(&aider(), LaunchMode::Start, &[], Some(prompt), Some("r1")).unwrap(), ["aider", "--message", prompt]);
     }
 
     #[test]

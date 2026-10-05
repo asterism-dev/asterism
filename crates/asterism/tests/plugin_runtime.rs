@@ -36,9 +36,12 @@ impl Fixture {
             ("FIXTURE_CAPS".to_string(), caps.to_string()),
             ("FIXTURE_LOG".to_string(), log.display().to_string()),
         ];
+        let backend_py = fixture_dir().join("backend.py").display().to_string();
+        // Logs the spawn before Python boots, so a fast kill cannot hide it.
+        let argv = ["/bin/sh", "-c", "echo spawn $$ >> \"$FIXTURE_LOG\"; exec \"$0\"", backend_py.as_str()].map(String::from).to_vec();
         let config = BackendConfig {
             plugin: "echo".into(),
-            argv: vec![fixture_dir().join("backend.py").display().to_string()],
+            argv,
             dir: fixture_dir(),
             data_dir: dir.path().join("data"),
             env,
@@ -60,6 +63,10 @@ impl Fixture {
 
     fn starts(&self) -> usize {
         self.log().lines().filter(|l| l.starts_with("start ")).count()
+    }
+
+    fn spawns(&self) -> usize {
+        self.log().lines().filter(|l| l.starts_with("spawn ")).count()
     }
 
     async fn call(&self, method: &str, params: Value) -> asterism_core::error::Result<Value> {
@@ -156,7 +163,7 @@ async fn hanging_initialize_times_out_and_retries() {
         assert_eq!(f.call("forge.status", json!({})).await.unwrap_err().kind, ErrorKind::Timeout);
         assert!(started.elapsed() < Duration::from_secs(3));
     }
-    assert_eq!(f.starts(), 2);
+    assert_eq!(f.spawns(), 2);
 }
 
 #[tokio::test]

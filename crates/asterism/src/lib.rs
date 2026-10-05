@@ -45,7 +45,12 @@ pub async fn run(paths: Paths) -> io::Result<()> {
     }
     let daemon = Daemon::new(paths).map_err(io::Error::other)?;
     let listener = UnixListener::bind(&socket)?;
-    daemon.recover().await.map_err(io::Error::other)?;
+    let recovering = daemon.clone();
+    tokio::spawn(async move {
+        if let Err(e) = recovering.recover().await {
+            eprintln!("asterismd: session recovery failed: {e}");
+        }
+    });
     tokio::select! {
         _ = rpc::serve(daemon.clone(), listener) => {}
         _ = daemon.shutdown_requested() => {}

@@ -65,3 +65,30 @@ async fn static_agents_start_from_their_template_with_configured_args() {
     let err = daemon.set_agent_config("echo-agent", &AgentConfig { mcp: Some(serde_json::json!({})), ..Default::default() }).unwrap_err();
     assert_eq!(err.kind, asterism_proto::rpc::ErrorKind::InvalidParams);
 }
+
+#[tokio::test]
+async fn claude_resume_argv_ends_with_the_agent_ref() {
+    let home = tempfile::tempdir().unwrap();
+    let daemon = daemon(home.path());
+    let (argv, _env) = daemon.agent_argv("claude", LaunchMode::Resume, None, Some("abc")).await.unwrap().unwrap();
+    assert_eq!(argv[argv.len() - 2..], ["--resume".to_string(), "abc".into()]);
+}
+
+#[tokio::test]
+async fn sessions_of_a_removed_agent_plugin_are_marked_exited_on_recover() {
+    let home = tempfile::tempdir().unwrap();
+    let repo = tempfile::tempdir().unwrap();
+    init_repo(repo.path());
+    let first = daemon(home.path());
+    let project = first.add_project(&repo.path().display().to_string()).unwrap();
+    let params = TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: Some("echo-agent".into()) };
+    let session = first.create_task(params).await.unwrap().session.unwrap();
+
+    let paths = Paths { home: home.path().join("h") };
+    std::fs::remove_file(paths.plugin_links()).unwrap();
+    let second = Daemon::with_options(paths, common::daemon_options()).unwrap();
+    second.recover().await.unwrap();
+    assert_eq!(second.session(session.id).unwrap().status, SessionStatus::Exited);
+    assert!(second.read(SessionReadParams { session_id: session.id, lines: 5 }).is_ok());
+    first.kill_session(session.id).unwrap();
+}
