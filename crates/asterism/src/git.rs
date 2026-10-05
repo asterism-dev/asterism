@@ -89,11 +89,29 @@ pub fn truncate(message: &str) -> String {
     }
 }
 
-/// Clones must never wait for a password prompt nobody can answer.
+const DEFAULT_SSH_COMMAND: &str = "ssh -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4";
+
+fn has_ssh_command_config(extra: &GitEnv) -> bool {
+    Command::new("git")
+        .args(["config", "--get", "core.sshCommand"])
+        .envs(extra.iter().map(|(k, v)| (k, v)))
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+/// Clones must never wait for a password prompt nobody can answer, nor hang on a stalled network.
 pub fn clone_env(extra: &GitEnv) -> Vec<(String, String)> {
-    let mut env = vec![("GIT_TERMINAL_PROMPT".to_string(), "0".to_string())];
-    if std::env::var_os("GIT_SSH_COMMAND").is_none() {
-        env.push(("GIT_SSH_COMMAND".to_string(), "ssh -o BatchMode=yes".to_string()));
+    let mut env = vec![
+        ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
+        ("GCM_INTERACTIVE".to_string(), "never".to_string()),
+        ("GIT_HTTP_LOW_SPEED_LIMIT".to_string(), "1000".to_string()),
+        ("GIT_HTTP_LOW_SPEED_TIME".to_string(), "60".to_string()),
+    ];
+    let user_ssh = extra.iter().any(|(k, _)| k == "GIT_SSH_COMMAND") || std::env::var_os("GIT_SSH_COMMAND").is_some();
+    if !user_ssh && !has_ssh_command_config(extra) {
+        env.push(("GIT_SSH_COMMAND".to_string(), DEFAULT_SSH_COMMAND.to_string()));
     }
     env.extend(extra.iter().cloned());
     env
@@ -149,10 +167,28 @@ mod tests {
     #[test]
     fn clone_env_is_non_interactive() {
         let env = clone_env(&[]);
-        assert!(env.contains(&("GIT_TERMINAL_PROMPT".into(), "0".into())));
-        if std::env::var_os("GIT_SSH_COMMAND").is_none() {
-            assert!(env.iter().any(|(k, v)| k == "GIT_SSH_COMMAND" && v.contains("BatchMode=yes")));
+        for pair in [("GIT_TERMINAL_PROMPT", "0"), ("GCM_INTERACTIVE", "never"), ("GIT_HTTP_LOW_SPEED_LIMIT", "1000"), ("GIT_HTTP_LOW_SPEED_TIME", "60")] {
+            assert!(env.contains(&(pair.0.into(), pair.1.into())), "{pair:?}");
         }
+        let ssh = env.iter().find(|(k, _)| k == "GIT_SSH_COMMAND").map(|(_, v)| v.as_str());
+        match std::env::var_os("GIT_SSH_COMMAND") {
+            None => {
+                let ssh = ssh.unwrap_or_default();
+                assert!(ssh.contains("BatchMode=yes") && ssh.contains("ConnectTimeout=30") && ssh.contains("ServerAliveCountMax=4"));
+            }
+            Some(_) => assert_eq!(ssh, None),
+        }
+    }
+
+    #[test]
+    fn clone_env_respects_core_ssh_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("gitconfig");
+        std::fs::write(&config, "[core]\n\tsshCommand = ssh -i /key\n").unwrap();
+        let mut extra = isolated();
+        extra.retain(|(k, _)| k != "GIT_CONFIG_GLOBAL");
+        extra.push(("GIT_CONFIG_GLOBAL".into(), config.display().to_string()));
+        assert!(!clone_env(&extra).iter().any(|(k, _)| k == "GIT_SSH_COMMAND"));
     }
 
     #[test]

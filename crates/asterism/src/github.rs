@@ -1,5 +1,7 @@
+use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
 
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::{GithubRepo, GithubStatus, GithubTarget, Visibility};
@@ -9,6 +11,7 @@ use crate::error::{Error, Result};
 use crate::git;
 
 const REPO_LIMIT: &str = "200";
+const METADATA_TIMEOUT: Duration = Duration::from_secs(20);
 
 fn run(gh: &Path, args: &[&str], extra: &git::GitEnv) -> Result<String> {
     let out = Command::new(gh)
@@ -24,16 +27,69 @@ fn run(gh: &Path, args: &[&str], extra: &git::GitEnv) -> Result<String> {
     }
 }
 
+fn read_pipe(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<String> {
+    std::thread::spawn(move || {
+        let mut buf = String::new();
+        if let Some(mut pipe) = pipe {
+            let mut bytes = Vec::new();
+            let _ = pipe.read_to_end(&mut bytes);
+            buf = String::from_utf8_lossy(&bytes).into_owned();
+        }
+        buf
+    })
+}
+
+fn wait_with_timeout(child: &mut Child, timeout: Duration) -> Result<Option<std::process::ExitStatus>> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn run_with_timeout(gh: &Path, args: &[&str], timeout: Duration) -> Result<String> {
+    let mut child = Command::new(gh)
+        .args(args)
+        .envs(git::clone_env(&[]).iter().map(|(k, v)| (k, v)))
+        .env("GH_PROMPT_DISABLED", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stdout = read_pipe(child.stdout.take());
+    let stderr = read_pipe(child.stderr.take());
+    let Some(status) = wait_with_timeout(&mut child, timeout)? else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(Error::new(ErrorKind::Git, format!("gh timed out after {}s", timeout.as_secs())));
+    };
+    let (stdout, stderr) = (stdout.join().unwrap_or_default(), stderr.join().unwrap_or_default());
+    if status.success() {
+        Ok(stdout)
+    } else {
+        Err(Error::new(ErrorKind::Git, git::truncate(&stderr)))
+    }
+}
+
+fn metadata(gh: &Path, args: &[&str]) -> Result<String> {
+    run_with_timeout(gh, args, METADATA_TIMEOUT)
+}
+
 pub fn status(gh: &Path) -> GithubStatus {
-    if run(gh, &["--version"], &[]).is_err() {
+    if metadata(gh, &["--version"]).is_err() {
         return GithubStatus { error: Some("the GitHub CLI (gh) is not installed".into()), ..Default::default() };
     }
-    match run(gh, &["api", "user", "--jq", ".login"], &[]) {
+    match metadata(gh, &["api", "user", "--jq", ".login"]) {
         Ok(login) => GithubStatus {
             available: true,
             logged_in: true,
             login: Some(login.trim().to_string()),
-            orgs: run(gh, &["api", "user/orgs", "--jq", ".[].login"], &[])
+            orgs: metadata(gh, &["api", "user/orgs", "--paginate", "--jq", ".[].login"])
                 .map(|out| out.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect())
                 .unwrap_or_default(),
             error: None,
@@ -43,7 +99,7 @@ pub fn status(gh: &Path) -> GithubStatus {
 }
 
 pub fn repos(gh: &Path, owner: &str) -> Result<Vec<GithubRepo>> {
-    let out = run(gh, &["repo", "list", owner, "--json", "nameWithOwner,description,isPrivate", "--limit", REPO_LIMIT], &[])?;
+    let out = metadata(gh, &["repo", "list", owner, "--json", "nameWithOwner,description,isPrivate", "--limit", REPO_LIMIT])?;
     let items: Vec<Value> =
         serde_json::from_str(&out).map_err(|e| Error::new(ErrorKind::Internal, format!("unexpected gh output: {e}")))?;
     Ok(items
@@ -119,6 +175,18 @@ exit 0
 
         let missing = super::status(Path::new("/definitely/not/gh"));
         assert!(!missing.available && !missing.logged_in);
+    }
+
+    #[test]
+    fn slow_gh_is_killed_on_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("gh");
+        std::fs::write(&bin, "#!/bin/sh\nexec sleep 30\n").unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let started = Instant::now();
+        let err = run_with_timeout(&bin, &["api", "user"], Duration::from_millis(200)).unwrap_err();
+        assert!(err.message.starts_with("gh timed out after"), "{}", err.message);
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[test]
