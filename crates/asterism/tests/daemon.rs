@@ -269,8 +269,8 @@ async fn agent_env_policy_from_node_config_applies_to_sessions() {
 #[tokio::test]
 async fn broken_node_config_fails_session_start_with_a_clear_error() {
     let env = setup();
-    std::fs::write(env.home.path().join("config.toml"), "[agents.command\n").unwrap();
     let task = new_task(&env, "broken config");
+    std::fs::write(env.home.path().join("config.toml"), "[agents.command\n").unwrap();
     let err = env.daemon
         .start_session(SessionStartParams { task_id: task.id, kind: sh("true"), prompt: None })
         .unwrap_err();

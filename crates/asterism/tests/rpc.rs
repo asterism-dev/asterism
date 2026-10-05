@@ -319,3 +319,19 @@ async fn agent_config_and_session_remove_are_routed() {
     let err = client.call::<_, ()>(method::SESSION_REMOVE, SessionIdParams { session_id: 42 }).await.unwrap_err();
     assert_eq!(rpc_kind(err), ErrorKind::NotFound);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_and_path_methods_are_routed() {
+    let (_home, socket) = start_daemon().await;
+    let client = client(&socket).await;
+    let info: NodeConfigInfo = client.call(method::NODE_CONFIG_GET, serde_json::Value::Null).await.unwrap();
+    assert_eq!(info.config.paths, info.defaults);
+    let err = client
+        .call::<_, ()>(method::NODE_CONFIG_SET, NodeConfigSetParams { config: NodeConfig { paths: PathSettings { repos: "rel".into(), worktrees: "rel".into() } } })
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
+    let err = client.call::<_, Project>(method::PROJECT_CLONE, ProjectCloneParams { source: "nope".into() }).await.unwrap_err();
+    assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
+    let _: GithubStatus = client.call(method::GITHUB_STATUS, serde_json::Value::Null).await.unwrap();
+}

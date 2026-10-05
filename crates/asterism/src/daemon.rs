@@ -16,7 +16,8 @@ use crate::error::{Error, Result};
 use crate::paths::Paths;
 use crate::session::{Pty, Snapshot, SpawnSpec, SCROLLBACK_LINES};
 use crate::store::Store;
-use crate::{git, lock, status};
+use crate::node_settings::LOCAL_OWNER;
+use crate::{git, github, lock, node_settings, repo_source, status};
 
 const DEFAULT_ROWS: u16 = 40;
 const DEFAULT_COLS: u16 = 120;
@@ -31,7 +32,20 @@ struct LiveSession {
     hooks_active: Arc<AtomicBool>,
 }
 
+/// Overridable external tools; tests inject a fake `gh` and an isolated git environment.
+pub struct DaemonOptions {
+    pub gh_bin: PathBuf,
+    pub git_env: Vec<(String, String)>,
+}
+
+impl Default for DaemonOptions {
+    fn default() -> Self {
+        Self { gh_bin: PathBuf::from("gh"), git_env: Vec::new() }
+    }
+}
+
 pub struct Daemon {
+    options: DaemonOptions,
     paths: Paths,
     store: Mutex<Store>,
     live: Mutex<HashMap<i64, Arc<LiveSession>>>,
@@ -41,11 +55,16 @@ pub struct Daemon {
 
 impl Daemon {
     pub fn new(paths: Paths) -> Result<Arc<Self>> {
+        Self::with_options(paths, DaemonOptions::default())
+    }
+
+    pub fn with_options(paths: Paths, options: DaemonOptions) -> Result<Arc<Self>> {
         paths.ensure_dirs()?;
         agent_settings::write_claude_settings(&paths)?;
         let store = Store::open(&paths.db())?;
         let (events, _) = broadcast::channel(1024);
         Ok(Arc::new(Self {
+            options,
             paths,
             store: Mutex::new(store),
             live: Mutex::new(HashMap::new()),
@@ -122,6 +141,86 @@ impl Daemon {
         Ok(())
     }
 
+    pub fn node_config(&self) -> Result<NodeConfigInfo> {
+        node_settings::load(&self.paths)
+    }
+
+    pub fn set_node_config(&self, config: &NodeConfig) -> Result<()> {
+        node_settings::save(&self.paths, config)
+    }
+
+    pub fn github_status(&self) -> GithubStatus {
+        github::status(&self.options.gh_bin)
+    }
+
+    pub fn github_repos(&self, owner: &str) -> Result<Vec<GithubRepo>> {
+        repo_source::check_name("owner", owner)?;
+        github::repos(&self.options.gh_bin, owner)
+    }
+
+    fn new_repo_dir(&self, owner: &str, name: &str) -> Result<PathBuf> {
+        let dir = node_settings::repos_dir(&self.paths)?.join(owner).join(name);
+        if dir.exists() {
+            return Err(Error::new(ErrorKind::InvalidParams, format!("{} already exists", dir.display())));
+        }
+        if let Some(parent) = dir.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        Ok(dir)
+    }
+
+    pub fn clone_project(&self, source: &str) -> Result<Project> {
+        let source = repo_source::parse_source(source)?;
+        let target = self.new_repo_dir(&source.owner, &source.repo)?;
+        let env = &self.options.git_env;
+        let cloned = match &source.url {
+            Some(url) => git::clone_url(url, &target, env),
+            None if self.github_status().logged_in => {
+                github::clone(&self.options.gh_bin, &source.owner, &source.repo, &target, env)
+            }
+            None => git::clone_url(&format!("https://github.com/{}/{}.git", source.owner, source.repo), &target, env),
+        };
+        if let Err(e) = cloned {
+            // A half-cloned directory would block the next attempt.
+            let _ = std::fs::remove_dir_all(&target);
+            return Err(e);
+        }
+        self.add_project(&target.to_string_lossy())
+    }
+
+    pub fn create_project(&self, params: &ProjectCreateParams) -> Result<ProjectCreateResult> {
+        repo_source::check_name("repository name", &params.name)?;
+        let owner = match &params.github {
+            Some(target) => {
+                let status = self.github_status();
+                if !status.logged_in {
+                    return Err(Error::new(ErrorKind::InvalidParams, "the GitHub CLI is not logged in; run `gh auth login`"));
+                }
+                let is_user = status.login.as_deref() == Some(target.owner.as_str());
+                if !is_user && !status.orgs.contains(&target.owner) {
+                    return Err(Error::new(ErrorKind::InvalidParams, format!("{} is not you or one of your organizations", target.owner)));
+                }
+                if is_user && target.visibility == Visibility::Internal {
+                    return Err(Error::new(ErrorKind::InvalidParams, "internal visibility needs an organization owner"));
+                }
+                target.owner.clone()
+            }
+            None => LOCAL_OWNER.to_string(),
+        };
+        let dir = self.new_repo_dir(&owner, &params.name)?;
+        if let Err(e) = git::init_with_readme(&dir, &params.name, &self.options.git_env) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(e);
+        }
+        let project = self.add_project(&dir.to_string_lossy())?;
+        let github_error = params
+            .github
+            .as_ref()
+            .and_then(|target| github::create(&self.options.gh_bin, target, &params.name, &dir, &self.options.git_env).err())
+            .map(|e| e.message);
+        Ok(ProjectCreateResult { project, github_error })
+    }
+
     pub fn create_task(self: &Arc<Self>, params: TaskCreateParams) -> Result<TaskCreateResult> {
         if let Some(name) = &params.agent {
             self.agent(name)?;
@@ -132,7 +231,9 @@ impl Daemon {
         let id = self.store().insert_task(project.id, &params.title, params.prompt.as_deref(), &base)?;
         let slug = slugify(id, &params.title);
         let branch = format!("asterism/{slug}");
-        let worktree = self.paths.worktrees().join(format!("{}-{}", project.id, project.name)).join(&slug);
+        let origin = git::remote_url(&repo, "origin");
+        let (owner, repo_name) = node_settings::layout_owner_repo(origin.as_deref(), &project.name);
+        let worktree = node_settings::worktrees_dir(&self.paths)?.join(owner).join(repo_name).join(&slug);
         if let Err(e) = git::add_worktree(&repo, &branch, &worktree, &base) {
             self.store().delete_task(id)?;
             return Err(e);

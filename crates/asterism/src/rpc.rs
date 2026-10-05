@@ -163,6 +163,34 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
             daemon.remove_project(params::<ProjectIdParams>(raw)?.project_id)?;
             Ok(Value::Null)
         }
+        method::NODE_CONFIG_GET => {
+            let daemon = daemon.clone();
+            blocking(move || to_value(daemon.node_config()?)).await
+        }
+        method::NODE_CONFIG_SET => {
+            let daemon = daemon.clone();
+            blocking(move || {
+                daemon.set_node_config(&params::<NodeConfigSetParams>(raw)?.config)?;
+                Ok(Value::Null)
+            })
+            .await
+        }
+        method::GITHUB_STATUS => {
+            let daemon = daemon.clone();
+            blocking(move || to_value(daemon.github_status())).await
+        }
+        method::GITHUB_REPOS => {
+            let daemon = daemon.clone();
+            blocking(move || to_value(daemon.github_repos(&params::<GithubOwnerParams>(raw)?.owner)?)).await
+        }
+        method::PROJECT_CLONE => {
+            let daemon = daemon.clone();
+            blocking(move || to_value(daemon.clone_project(&params::<ProjectCloneParams>(raw)?.source)?)).await
+        }
+        method::PROJECT_CREATE => {
+            let daemon = daemon.clone();
+            blocking(move || to_value(daemon.create_project(&params::<ProjectCreateParams>(raw)?)?)).await
+        }
         method::AGENT_CONFIG_GET => {
             let daemon = daemon.clone();
             blocking(move || to_value(daemon.agent_config(&params::<AgentParams>(raw)?.agent)?)).await
