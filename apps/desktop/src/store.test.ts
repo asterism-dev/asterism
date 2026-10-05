@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  activeTab, aggregate, applyEvent, initialState, moveTab, nextWaiting, nodeAggregateStatus, projectStatus, taskSessions, taskStatus, waitingSessions,
+  activeTab, aggregate, applyEvent, initialState, moveTab, nextWaiting, nodeAggregateStatus, projectStatus, selectSession, taskSessions, taskStatus, waitingSessions,
 } from './store';
 import type { Session, SessionStatus, Task } from './types';
 
@@ -124,5 +124,16 @@ describe('session removal', () => {
     expect(s.selectedTab[1]).toBeUndefined();
     expect(activeTab(s, 1)).toBe(11);
     expect(applyEvent(s, { method: 'session.removed', params: { session_id: 99 } })).toBeNull();
+  });
+});
+
+describe('collapsed projects', () => {
+  it('expands the project of a session that is jumped to', () => {
+    const s = initialState();
+    s.tasks = [task(1, 7)];
+    s.collapsed[7] = true;
+    selectSession(s, session(10, 1, 'waiting_input'));
+    expect(s.collapsed[7]).toBeUndefined();
+    expect(s.selectedTaskId).toBe(1);
   });
 });

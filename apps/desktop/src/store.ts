@@ -19,6 +19,8 @@ export interface State {
   newTaskFor: number | null;
   settingsOpen: boolean;
   settingsDirty: boolean;
+  collapsed: Record<number, boolean>;
+  projectDialog: 'clone' | 'create' | null;
 }
 
 export function initialState(): State {
@@ -35,6 +37,8 @@ export function initialState(): State {
     newTaskFor: null,
     settingsOpen: false,
     settingsDirty: false,
+    collapsed: {},
+    projectDialog: null,
   };
 }
 
@@ -111,6 +115,8 @@ export function nextWaiting(s: State): Session | null {
 export function selectSession(s: State, session: Session) {
   s.selectedTaskId = session.task_id;
   s.selectedTab[session.task_id] = session.id;
+  const projectId = s.tasks.find((t) => t.id === session.task_id)?.project_id;
+  if (projectId !== undefined) delete s.collapsed[projectId];
 }
 
 function upsert<T extends { id: number }>(list: T[], item: T) {

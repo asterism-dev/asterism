@@ -1,6 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type {
-  AgentConfig, AgentConfigRaw, NodeStatus, Project, Session, SessionAttachResult, SessionKind, SessionReadResult, Task, TaskCreateResult,
+  AgentConfig, AgentConfigRaw, GithubRepo, GithubStatus, GithubTarget, NodeConfig, NodeConfigInfo, NodeStatus, Project, ProjectCreateResult, Session, SessionAttachResult, SessionKind, SessionReadResult, Task, TaskCreateResult,
   TaskDiffResult,
 } from './types';
 
@@ -87,4 +87,11 @@ export const api = {
   agentConfigRaw: (agent: string) => call<AgentConfigRaw>('agent_config.get_raw', { agent }),
   setAgentConfig: (agent: string, config: AgentConfig) => call<null>('agent_config.set', { agent, config }),
   removeSession: (sessionId: number) => call<null>('session.remove', { session_id: sessionId }),
+  nodeConfig: () => call<NodeConfigInfo>('node_config.get'),
+  setNodeConfig: (config: NodeConfig) => call<null>('node_config.set', { config }),
+  githubStatus: () => call<GithubStatus>('github.status'),
+  githubRepos: (owner: string) => call<GithubRepo[]>('github.repos', { owner }),
+  cloneProject: (source: string) => call<Project>('project.clone', { source }),
+  createProject: (name: string, github: GithubTarget | null) =>
+    call<ProjectCreateResult>('project.create', { name, github }),
 };

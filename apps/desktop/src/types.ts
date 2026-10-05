@@ -52,3 +52,12 @@ export interface TaskCreateResult { task: Task; session: Session | null }
 export interface TaskDiffResult { patch: string }
 export interface SessionAttachResult { snapshot: string; rows: number; cols: number }
 export interface SessionReadResult { text: string }
+
+export interface PathSettings { repos: string; worktrees: string }
+export interface NodeConfig { paths: PathSettings }
+export interface NodeConfigInfo { config: NodeConfig; defaults: PathSettings }
+export interface GithubStatus { available: boolean; logged_in: boolean; login: string | null; orgs: string[]; error: string | null }
+export interface GithubRepo { name_with_owner: string; description: string | null; private: boolean }
+export type Visibility = 'public' | 'private' | 'internal';
+export interface GithubTarget { owner: string; visibility: Visibility }
+export interface ProjectCreateResult { project: Project; github_error: string | null }
