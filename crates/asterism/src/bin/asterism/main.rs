@@ -1,5 +1,4 @@
 use std::fs::OpenOptions;
-use std::io::IsTerminal;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -13,7 +12,6 @@ use asterism_proto::types::{method, *};
 use asterism_proto::PROTO_VERSION;
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
-use tokio::io::AsyncReadExt;
 use tokio::net::UnixStream;
 
 const SPAWN_ATTEMPTS: u32 = 60;
@@ -62,8 +60,13 @@ enum Cmd {
     },
     /// Bridge stdin/stdout to the local daemon socket.
     Attach,
-    /// Report an agent hook event for the current session; never fails.
-    Hook { event: HookArg },
+    /// Report a normalized agent hook event for the current session; never fails.
+    Hook {
+        event: HookArg,
+        /// The agent's own session id, used to resume after a daemon restart.
+        #[arg(long)]
+        agent_ref: Option<String>,
+    },
     #[command(subcommand)]
     Daemon(DaemonCmd),
 }
@@ -181,9 +184,8 @@ async fn main() {
         Err(_) if std::env::args().nth(1).as_deref() == Some("hook") => std::process::exit(0),
         Err(err) => err.exit(),
     };
-    if let Cmd::Hook { event } = cli.command {
-        let _ = tokio::time::timeout(HOOK_TIMEOUT, hook(event)).await;
-        // A pending stdin read would otherwise stall runtime shutdown.
+    if let Cmd::Hook { event, agent_ref } = cli.command {
+        let _ = tokio::time::timeout(HOOK_TIMEOUT, hook(event, agent_ref)).await;
         std::process::exit(0);
     }
     if let Err(e) = run(cli).await {
@@ -385,24 +387,12 @@ async fn attach() -> std::io::Result<()> {
 }
 
 /// Runs inside agent hooks: must never fail, block, or start a daemon.
-async fn hook(event: HookArg) {
+async fn hook(event: HookArg, agent_ref: Option<String>) {
     let Some(session_id) = env_id("ASTERISM_SESSION") else { return };
-    let mut input = String::new();
-    if !std::io::stdin().is_terminal() {
-        let _ = tokio::io::stdin().read_to_string(&mut input).await;
-    }
-    let payload = serde_json::from_str::<serde_json::Value>(&input).unwrap_or_default();
-    let agent_ref = payload["session_id"].as_str().map(String::from);
-    let message = payload["message"].as_str().unwrap_or_default().to_lowercase();
-    // ponytail: matches Claude's idle-prompt Notification text; verify against real Claude and update if it changes.
-    let event = match event {
-        HookArg::Notification if message.contains("waiting for your input") => HookEvent::Stop,
-        other => other.into(),
-    };
     let Ok(stream) = UnixStream::connect(socket_path()).await else { return };
     let (reader, writer) = stream.into_split();
     let client = Client::new(reader, writer);
-    let params = SessionHookParams { session_id, event, agent_ref };
+    let params = SessionHookParams { session_id, event: event.into(), agent_ref };
     let _ = client.call::<_, ()>(method::SESSION_HOOK, params).await;
 }
 

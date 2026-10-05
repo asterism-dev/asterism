@@ -5,20 +5,17 @@ use std::sync::Mutex;
 
 use asterism_proto::paths::Paths;
 use asterism_proto::rpc::ErrorKind;
-use asterism_proto::types::{AgentConfig, AgentConfigRaw, EnvSettings, SessionKind};
+use asterism_plugin::protocol::LaunchSettings;
+use asterism_proto::types::{AgentConfig, AgentConfigRaw, AgentSettingKind, EnvSettings};
 use serde_json::Value;
 
-use crate::agents::{self, AgentProfile, Launch};
 use crate::config::{Config, EnvPolicy};
 use crate::error::{Error, Result};
+use crate::plugins::registry::Registry;
 
 /// Serialises settings writers: config.toml is read-modify-write and the temp names must not collide.
 pub(crate) static SAVE_LOCK: Mutex<()> = Mutex::new(());
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// Flags that would override or break asterism's own launch.
-const RESERVED_ARGS: &[&str] = &["--", "--settings", "--mcp-config", "--resume", "-r", "--continue", "-c", "--print", "-p"];
-const RESERVED_PREFIXES: &[&str] = &["--settings=", "--mcp-config=", "--resume="];
 
 /// Session kinds that only take environment settings.
 pub const BASE_AGENTS: &[&str] = &["shell", "command"];
@@ -28,8 +25,8 @@ fn invalid(message: impl Into<String>) -> Error {
 }
 
 /// Only known agent keys may name settings files, which also rules out path traversal.
-pub fn check_agent(agent: &str) -> Result<()> {
-    if BASE_AGENTS.contains(&agent) || agents::profile(agent).is_some() {
+pub fn check_agent(registry: &Registry, agent: &str) -> Result<()> {
+    if BASE_AGENTS.contains(&agent) || registry.agent(agent).is_some() {
         Ok(())
     } else {
         Err(invalid(format!("unknown agent {agent:?}")))
@@ -51,8 +48,8 @@ fn read_json(path: &Path) -> Result<Option<Value>> {
     }
 }
 
-pub fn load(paths: &Paths, agent: &str) -> Result<AgentConfig> {
-    check_agent(agent)?;
+pub fn load(paths: &Paths, registry: &Registry, agent: &str) -> Result<AgentConfig> {
+    check_agent(registry, agent)?;
     let entry = Config::load(&paths.config())?.agents.remove(agent).unwrap_or_default();
     Ok(AgentConfig {
         args: entry.args,
@@ -62,8 +59,8 @@ pub fn load(paths: &Paths, agent: &str) -> Result<AgentConfig> {
     })
 }
 
-pub fn load_raw(paths: &Paths, agent: &str) -> Result<AgentConfigRaw> {
-    check_agent(agent)?;
+pub fn load_raw(paths: &Paths, registry: &Registry, agent: &str) -> Result<AgentConfigRaw> {
+    check_agent(registry, agent)?;
     let entry = Config::load(&paths.config())?.agents.remove(agent).unwrap_or_default();
     Ok(AgentConfigRaw {
         args: entry.args,
@@ -73,8 +70,8 @@ pub fn load_raw(paths: &Paths, agent: &str) -> Result<AgentConfigRaw> {
     })
 }
 
-pub fn validate(agent: &str, config: &AgentConfig) -> Result<()> {
-    check_agent(agent)?;
+pub fn validate(registry: &Registry, agent: &str, config: &AgentConfig) -> Result<()> {
+    check_agent(registry, agent)?;
     if BASE_AGENTS.contains(&agent) && (!config.args.is_empty() || config.mcp.is_some() || config.hooks.is_some()) {
         return Err(invalid(format!("{agent} sessions only support environment settings")));
     }
@@ -84,8 +81,23 @@ pub fn validate(agent: &str, config: &AgentConfig) -> Result<()> {
     if config.args.iter().any(|arg| arg.trim().is_empty()) {
         return Err(invalid("parameters must not be blank"));
     }
-    if let Some(arg) = config.args.iter().find(|a| RESERVED_ARGS.contains(&a.as_str()) || RESERVED_PREFIXES.iter().any(|p| a.starts_with(p))) {
-        return Err(invalid(format!("parameter {arg:?} is managed by asterism and cannot be set")));
+    let decl = registry.agent(agent).map(|(_, decl)| decl);
+    if let Some(decl) = decl {
+        for (used, kind, what) in [
+            (!config.args.is_empty(), AgentSettingKind::Args, "parameters"),
+            (config.mcp.is_some(), AgentSettingKind::Mcp, "MCP servers"),
+            (config.hooks.is_some(), AgentSettingKind::Hooks, "hooks"),
+        ] {
+            if used && !decl.settings.contains(&kind) {
+                return Err(invalid(format!("{agent} does not support {what}")));
+            }
+        }
+        let reserved = |arg: &str| {
+            decl.reserved_args.iter().any(|r| if r.ends_with('=') { arg.starts_with(r.as_str()) } else { arg == r })
+        };
+        if let Some(arg) = config.args.iter().find(|a| reserved(a)) {
+            return Err(invalid(format!("parameter {arg:?} is managed by asterism and cannot be set")));
+        }
     }
     if let Some(name) = config.env.set.keys().find(|name| name.is_empty() || name.contains(['=', '\0'])) {
         return Err(invalid(format!("invalid environment variable name {name:?}")));
@@ -121,8 +133,8 @@ fn validate_hooks(hooks: &Value) -> Result<()> {
     Ok(())
 }
 
-pub fn save(paths: &Paths, agent: &str, config: &AgentConfig) -> Result<()> {
-    validate(agent, config)?;
+pub fn save(paths: &Paths, registry: &Registry, agent: &str, config: &AgentConfig) -> Result<()> {
+    validate(registry, agent, config)?;
     let _guard = crate::lock(&SAVE_LOCK);
     let mut file = Config::load(&paths.config())?;
     let entry = file.agents.entry(agent.to_string()).or_default();
@@ -133,9 +145,6 @@ pub fn save(paths: &Paths, agent: &str, config: &AgentConfig) -> Result<()> {
     write_atomic(&paths.config(), &text)?;
     write_or_remove(&paths.agent_mcp(agent), config.mcp.as_ref())?;
     write_or_remove(&paths.agent_hooks(agent), config.hooks.as_ref())?;
-    if agents::profile(agent).is_some() {
-        write_claude_settings_locked(paths)?;
-    }
     Ok(())
 }
 
@@ -166,87 +175,33 @@ pub fn write_atomic(path: &Path, contents: &str) -> Result<()> {
     Ok(result?)
 }
 
-/// asterism's status hooks followed by the user's hooks, per event.
-pub fn merged_claude_settings(user_hooks: Option<&Value>) -> Value {
-    let mut settings = agents::claude_settings();
-    let extra = user_hooks.and_then(|h| h.get("hooks")).and_then(Value::as_object);
-    if let (Some(target), Some(extra)) = (settings["hooks"].as_object_mut(), extra) {
-        for (event, entries) in extra {
-            let list = target.entry(event.clone()).or_insert_with(|| Value::Array(Vec::new()));
-            if let (Some(list), Some(entries)) = (list.as_array_mut(), entries.as_array()) {
-                list.extend(entries.iter().cloned());
-            }
-        }
-    }
-    settings
-}
-
-/// Rewrites the `--settings` file at daemon start; a broken hooks.json falls back to the status hooks alone.
-pub fn write_claude_settings(paths: &Paths) -> Result<()> {
-    let _guard = crate::lock(&SAVE_LOCK);
-    let user = read_json(&paths.agent_hooks(agents::CLAUDE.name)).unwrap_or_else(|e| {
-        eprintln!("asterismd: ignoring custom Claude hooks: {}", e.message);
-        None
-    });
-    write_merged_settings(paths, user.as_ref())
-}
-
-fn write_claude_settings_locked(paths: &Paths) -> Result<()> {
-    write_merged_settings(paths, read_json(&paths.agent_hooks(agents::CLAUDE.name))?.as_ref())
-}
-
-fn write_merged_settings(paths: &Paths, user_hooks: Option<&Value>) -> Result<()> {
-    write_atomic(&paths.claude_settings(), &merged_claude_settings(user_hooks).to_string())
-}
-
-pub fn launch(paths: &Paths, profile: &AgentProfile) -> Result<Launch> {
-    launch_with(paths, profile, false)
-}
-
-/// Lenient launches skip broken hooks.json / mcp.json instead of failing, so a daemon restart can still resume sessions.
-fn launch_with(paths: &Paths, profile: &AgentProfile, lenient: bool) -> Result<Launch> {
-    let args = Config::load(&paths.config())?.agents.remove(profile.name).map(|a| a.args).unwrap_or_default();
-    let mcp = paths.agent_mcp(profile.name);
-    let has_mcp = match read_json(&mcp) {
-        Ok(value) => value.is_some(),
+/// What `agent.prepare` needs; a lenient read (resume after restart) skips broken files instead of failing.
+pub fn launch_settings(paths: &Paths, agent: &str, lenient: bool) -> Result<LaunchSettings> {
+    let args = Config::load(&paths.config())?.agents.remove(agent).map(|a| a.args).unwrap_or_default();
+    let tolerate = |path: &Path, read: Result<Option<Value>>| match read {
         Err(e) if lenient => {
-            eprintln!("asterismd: resuming without {}: {}", mcp.display(), e.message);
-            false
+            eprintln!("asterismd: resuming without {}: {}", path.display(), e.message);
+            Ok(None)
         }
-        Err(e) => return Err(e),
+        other => other,
     };
-    // Hand-edited hooks.json must reach this start; a strict launch fails on a broken one rather than dropping it.
-    {
-        let _guard = crate::lock(&SAVE_LOCK);
-        let hooks_path = paths.agent_hooks(agents::CLAUDE.name);
-        let user = match read_json(&hooks_path) {
-            Ok(user) => user,
-            Err(e) if lenient => {
-                eprintln!("asterismd: resuming with status hooks only, ignoring {}: {}", hooks_path.display(), e.message);
-                None
-            }
-            Err(e) => return Err(e),
-        };
-        write_merged_settings(paths, user.as_ref())?;
-    }
-    Ok(Launch { settings: paths.claude_settings(), mcp_config: has_mcp.then_some(mcp), args })
-}
-
-pub fn start_argv(paths: &Paths, profile: &AgentProfile, prompt: Option<&str>) -> Result<Vec<String>> {
-    Ok(profile.start_argv(&launch(paths, profile)?, prompt))
-}
-
-/// The resume command for an agent session with a stored agent reference; `None` when not resumable.
-pub fn resume_argv(paths: &Paths, kind: &SessionKind, agent_ref: Option<&str>) -> Result<Option<Vec<String>>> {
-    let (SessionKind::Agent { name }, Some(agent_ref)) = (kind, agent_ref) else { return Ok(None) };
-    let Some(profile) = agents::profile(name) else { return Ok(None) };
-    Ok(Some(profile.resume_argv(&launch_with(paths, profile, true)?, agent_ref)))
+    let mcp_path = paths.agent_mcp(agent);
+    let has_mcp = tolerate(&mcp_path, read_json(&mcp_path))?.is_some();
+    let hooks_path = paths.agent_hooks(agent);
+    let hooks = tolerate(&hooks_path, read_json(&hooks_path))?;
+    Ok(LaunchSettings { args, mcp_config: has_mcp.then(|| mcp_path.display().to_string()), hooks })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    use crate::plugins::registry::Sources;
+
+    fn registry() -> Registry {
+        Registry::discover(&Sources::default())
+    }
 
     fn temp_paths() -> (tempfile::TempDir, Paths) {
         let dir = tempfile::tempdir().unwrap();
@@ -270,37 +225,37 @@ mod tests {
     #[test]
     fn save_and_load_roundtrip() {
         let (_dir, paths) = temp_paths();
-        save(&paths, "claude", &claude_config()).unwrap();
-        assert_eq!(load(&paths, "claude").unwrap(), claude_config());
+        save(&paths, &registry(), "claude", &claude_config()).unwrap();
+        assert_eq!(load(&paths, &registry(), "claude").unwrap(), claude_config());
         assert!(paths.agent_mcp("claude").exists());
 
         let mut cleared = claude_config();
         cleared.mcp = None;
-        save(&paths, "claude", &cleared).unwrap();
+        save(&paths, &registry(), "claude", &cleared).unwrap();
         assert!(!paths.agent_mcp("claude").exists());
-        assert_eq!(load(&paths, "claude").unwrap().mcp, None);
+        assert_eq!(load(&paths, &registry(), "claude").unwrap().mcp, None);
     }
 
     #[test]
     fn missing_files_load_as_defaults() {
         let (_dir, paths) = temp_paths();
-        assert_eq!(load(&paths, "claude").unwrap(), AgentConfig::default());
-        assert_eq!(load(&paths, "shell").unwrap(), AgentConfig::default());
+        assert_eq!(load(&paths, &registry(), "claude").unwrap(), AgentConfig::default());
+        assert_eq!(load(&paths, &registry(), "shell").unwrap(), AgentConfig::default());
     }
 
     #[test]
     fn unknown_agents_are_rejected() {
         let (_dir, paths) = temp_paths();
         for agent in ["../../x", "nope", ""] {
-            assert_eq!(load(&paths, agent).unwrap_err().kind, ErrorKind::InvalidParams);
-            assert_eq!(save(&paths, agent, &AgentConfig::default()).unwrap_err().kind, ErrorKind::InvalidParams);
+            assert_eq!(load(&paths, &registry(), agent).unwrap_err().kind, ErrorKind::InvalidParams);
+            assert_eq!(save(&paths, &registry(), agent, &AgentConfig::default()).unwrap_err().kind, ErrorKind::InvalidParams);
         }
     }
 
     #[test]
     fn invalid_settings_change_nothing() {
         let (_dir, paths) = temp_paths();
-        save(&paths, "claude", &claude_config()).unwrap();
+        save(&paths, &registry(), "claude", &claude_config()).unwrap();
         let config_before = std::fs::read_to_string(paths.config()).unwrap();
         let mcp_before = std::fs::read_to_string(paths.agent_mcp("claude")).unwrap();
         let hooks_before = std::fs::read_to_string(paths.agent_hooks("claude")).unwrap();
@@ -324,7 +279,7 @@ mod tests {
             .chain(reserved.map(|arg| AgentConfig { args: vec!["--model".into(), arg.into()], ..claude_config() }))
             .collect();
         for config in invalid {
-            assert_eq!(save(&paths, "claude", &config).unwrap_err().kind, ErrorKind::InvalidParams, "{config:?}");
+            assert_eq!(save(&paths, &registry(), "claude", &config).unwrap_err().kind, ErrorKind::InvalidParams, "{config:?}");
         }
         assert_eq!(std::fs::read_to_string(paths.config()).unwrap(), config_before);
         assert_eq!(std::fs::read_to_string(paths.agent_mcp("claude")).unwrap(), mcp_before);
@@ -346,7 +301,7 @@ mod tests {
                             env: EnvSettings { set: [(agent.to_string(), value)].into(), ..Default::default() },
                             ..Default::default()
                         };
-                        save(&paths, agent, &config).unwrap();
+                        save(&paths, &registry(), agent, &config).unwrap();
                     }
                 })
             })
@@ -354,8 +309,8 @@ mod tests {
         for t in threads {
             t.join().unwrap();
         }
-        assert!(load(&paths, "claude").unwrap().env.set["claude"].starts_with('c'));
-        assert!(load(&paths, "shell").unwrap().env.set["shell"].starts_with('s'));
+        assert!(load(&paths, &registry(), "claude").unwrap().env.set["claude"].starts_with('c'));
+        assert!(load(&paths, &registry(), "shell").unwrap().env.set["shell"].starts_with('s'));
         let temps = std::fs::read_dir(&paths.home).unwrap().filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().ends_with(".tmp")).count();
         assert_eq!(temps, 0);
     }
@@ -367,23 +322,24 @@ mod tests {
             env: EnvSettings { set: [("FOO".to_string(), "1".to_string())].into(), ..Default::default() },
             ..Default::default()
         };
-        save(&paths, "shell", &env_only).unwrap();
-        assert_eq!(load(&paths, "shell").unwrap(), env_only);
+        save(&paths, &registry(), "shell", &env_only).unwrap();
+        assert_eq!(load(&paths, &registry(), "shell").unwrap(), env_only);
         for config in [
             AgentConfig { args: vec!["-l".into()], ..Default::default() },
             AgentConfig { mcp: Some(json!({"mcpServers": {}})), ..Default::default() },
             AgentConfig { hooks: Some(json!({"hooks": {}})), ..Default::default() },
         ] {
-            assert_eq!(save(&paths, "command", &config).unwrap_err().kind, ErrorKind::InvalidParams);
+            assert_eq!(save(&paths, &registry(), "command", &config).unwrap_err().kind, ErrorKind::InvalidParams);
         }
     }
 
     #[test]
     fn saving_keeps_other_agents_settings() {
         let (_dir, paths) = temp_paths();
-        save(&paths, "claude", &claude_config()).unwrap();
+        save(&paths, &registry(), "claude", &claude_config()).unwrap();
         save(
             &paths,
+            &registry(),
             "shell",
             &AgentConfig {
                 env: EnvSettings { set: [("X".to_string(), "1".to_string())].into(), ..Default::default() },
@@ -391,121 +347,51 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(load(&paths, "claude").unwrap().args, ["--model", "opus"]);
+        assert_eq!(load(&paths, &registry(), "claude").unwrap().args, ["--model", "opus"]);
     }
 
     #[test]
-    fn merged_settings_append_user_hooks_after_status_hooks() {
-        let user = json!({"hooks": {
-            "Stop": [{"hooks": [{"type": "command", "command": "say done"}]}],
-            "SessionStart": [{"hooks": [{"type": "command", "command": "echo hi"}]}]
-        }});
-        let merged = merged_claude_settings(Some(&user));
-        let stop = merged["hooks"]["Stop"].as_array().unwrap();
-        assert_eq!(stop.len(), 2);
-        assert!(stop[0]["hooks"][0]["command"].as_str().unwrap().contains("hook stop"));
-        assert_eq!(stop[1]["hooks"][0]["command"], "say done");
-        assert_eq!(merged["hooks"]["SessionStart"][0]["hooks"][0]["command"], "echo hi");
-        assert_eq!(merged_claude_settings(None), agents::claude_settings());
-    }
-
-    #[test]
-    fn broken_hooks_file_falls_back_to_status_hooks() {
+    fn broken_hooks_file_fails_load_but_not_raw_load() {
         let (_dir, paths) = temp_paths();
         std::fs::create_dir_all(paths.agent_dir("claude")).unwrap();
         std::fs::write(paths.agent_hooks("claude"), "{ not json").unwrap();
-        write_claude_settings(&paths).unwrap();
-        let written: Value = serde_json::from_str(&std::fs::read_to_string(paths.claude_settings()).unwrap()).unwrap();
-        assert_eq!(written, agents::claude_settings());
-
-        let err = load(&paths, "claude").unwrap_err();
+        let err = load(&paths, &registry(), "claude").unwrap_err();
         assert_eq!(err.kind, ErrorKind::InvalidParams);
         assert!(err.message.contains("hooks.json"), "{}", err.message);
-        assert_eq!(load_raw(&paths, "claude").unwrap().hooks_text.as_deref(), Some("{ not json"));
+        assert_eq!(load_raw(&paths, &registry(), "claude").unwrap().hooks_text.as_deref(), Some("{ not json"));
     }
 
     #[test]
     fn raw_load_keeps_args_and_env_next_to_broken_files() {
         let (_dir, paths) = temp_paths();
-        save(&paths, "claude", &claude_config()).unwrap();
+        save(&paths, &registry(), "claude", &claude_config()).unwrap();
         std::fs::write(paths.agent_hooks("claude"), "{ not json").unwrap();
-        let raw = load_raw(&paths, "claude").unwrap();
+        let raw = load_raw(&paths, &registry(), "claude").unwrap();
         assert_eq!(raw.args, claude_config().args);
         assert_eq!(raw.env, claude_config().env);
         assert_eq!(raw.hooks_text.as_deref(), Some("{ not json"));
     }
 
     #[test]
-    fn broken_mcp_file_fails_the_launch() {
-        let (_dir, paths) = temp_paths();
-        save(&paths, "claude", &claude_config()).unwrap();
-        std::fs::write(paths.agent_mcp("claude"), "{ not json").unwrap();
-        let err = start_argv(&paths, &agents::CLAUDE, None).unwrap_err();
-        assert_eq!(err.kind, ErrorKind::InvalidParams);
-        assert!(err.message.contains("mcp.json"), "{}", err.message);
-    }
-
-    #[test]
-    fn resume_ignores_broken_hooks_but_start_fails() {
+    fn launch_settings_are_strict_on_start_and_lenient_on_resume() {
         let (_dir, paths) = temp_paths();
         std::fs::create_dir_all(paths.agent_dir("claude")).unwrap();
         std::fs::write(paths.agent_hooks("claude"), "{ not json").unwrap();
-        let kind = SessionKind::Agent { name: "claude".into() };
-        let argv = resume_argv(&paths, &kind, Some("ref")).unwrap().unwrap();
-        assert_eq!(&argv[argv.len() - 2..], ["--resume", "ref"]);
-        let written: Value = serde_json::from_str(&std::fs::read_to_string(paths.claude_settings()).unwrap()).unwrap();
-        assert_eq!(written, agents::claude_settings());
-
-        let err = start_argv(&paths, &agents::CLAUDE, None).unwrap_err();
-        assert_eq!(err.kind, ErrorKind::InvalidParams);
-        assert!(err.message.contains("hooks.json"), "{}", err.message);
+        std::fs::write(paths.agent_mcp("claude"), "{\"mcpServers\": {}}").unwrap();
+        assert_eq!(launch_settings(&paths, "claude", false).unwrap_err().kind, ErrorKind::InvalidParams);
+        let lenient = launch_settings(&paths, "claude", true).unwrap();
+        assert!(lenient.hooks.is_none());
+        assert_eq!(lenient.mcp_config.as_deref(), Some(paths.agent_mcp("claude").to_str().unwrap()));
     }
 
     #[test]
-    fn resume_omits_broken_mcp_but_start_fails() {
-        let (_dir, paths) = temp_paths();
-        std::fs::create_dir_all(paths.agent_dir("claude")).unwrap();
-        std::fs::write(paths.agent_mcp("claude"), "{ not json").unwrap();
-        let kind = SessionKind::Agent { name: "claude".into() };
-        let argv = resume_argv(&paths, &kind, Some("ref")).unwrap().unwrap();
-        assert!(!argv.iter().any(|a| a == "--mcp-config"));
-        assert!(start_argv(&paths, &agents::CLAUDE, None).is_err());
-    }
-
-    #[test]
-    fn launch_picks_up_hand_edited_hooks() {
-        let (_dir, paths) = temp_paths();
-        save(&paths, "claude", &claude_config()).unwrap();
-        std::fs::write(paths.agent_hooks("claude"), r#"{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "edited"}]}]}}"#).unwrap();
-        start_argv(&paths, &agents::CLAUDE, None).unwrap();
-        assert!(std::fs::read_to_string(paths.claude_settings()).unwrap().contains("edited"));
-
-        std::fs::write(paths.agent_hooks("claude"), "{ not json").unwrap();
-        let err = start_argv(&paths, &agents::CLAUDE, None).unwrap_err();
-        assert!(err.message.contains("hooks.json"), "{}", err.message);
-    }
-
-    #[test]
-    fn save_rewrites_the_merged_claude_settings() {
-        let (_dir, paths) = temp_paths();
-        save(&paths, "claude", &claude_config()).unwrap();
-        let written = std::fs::read_to_string(paths.claude_settings()).unwrap();
-        assert!(written.contains("say done"), "{written}");
-    }
-
-    #[test]
-    fn argv_uses_the_saved_launch_settings() {
-        let (_dir, paths) = temp_paths();
-        save(&paths, "claude", &claude_config()).unwrap();
-        let argv = start_argv(&paths, &agents::CLAUDE, Some("go")).unwrap();
-        assert!(argv.windows(2).any(|w| w[0] == "--mcp-config"));
-        assert_eq!(&argv[argv.len() - 4..], ["--model", "opus", "--", "go"]);
-
-        let kind = SessionKind::Agent { name: "claude".into() };
-        let resume = resume_argv(&paths, &kind, Some("ref")).unwrap().unwrap();
-        assert_eq!(&resume[resume.len() - 2..], ["--resume", "ref"]);
-        assert!(resume_argv(&paths, &kind, None).unwrap().is_none());
-        assert!(resume_argv(&paths, &SessionKind::Shell, Some("ref")).unwrap().is_none());
+    fn reserved_args_come_from_the_manifest() {
+        for arg in ["--settings", "--resume=abc", "-p"] {
+            let config = AgentConfig { args: vec![arg.into()], ..Default::default() };
+            assert!(validate(&registry(), "claude", &config).is_err(), "{arg}");
+        }
+        let fine = AgentConfig { args: vec!["--model".into(), "opus".into()], ..Default::default() };
+        assert!(validate(&registry(), "claude", &fine).is_ok());
     }
 
     #[test]

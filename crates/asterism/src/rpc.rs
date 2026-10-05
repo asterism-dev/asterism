@@ -228,6 +228,7 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
         }
         method::PROJECT_CLONE => to_value(daemon.clone_project(&params::<ProjectCloneParams>(raw)?.source).await?),
         method::PROJECT_CREATE => to_value(daemon.create_project(&params::<ProjectCreateParams>(raw)?).await?),
+        method::AGENT_LIST => to_value(daemon.agent_infos()),
         method::AGENT_CONFIG_GET => {
             let daemon = daemon.clone();
             blocking(move || to_value(daemon.agent_config(&params::<AgentParams>(raw)?.agent)?)).await
@@ -250,7 +251,7 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             Ok(Value::Null)
         }
         method::TASK_LIST => to_value(daemon.tasks(params(raw)?)?),
-        method::TASK_CREATE => to_value(daemon.create_task(params(raw)?)?),
+        method::TASK_CREATE => to_value(daemon.create_task(params(raw)?).await?),
         method::TASK_ARCHIVE => to_value(daemon.archive_task(params::<TaskArchiveParams>(raw)?.task_id)?),
         method::TASK_RESTORE => {
             let daemon = daemon.clone();
@@ -269,7 +270,7 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
         }
         method::TASK_DIFF => to_value(daemon.diff(params::<TaskIdParams>(raw)?.task_id)?),
         method::SESSION_LIST => to_value(daemon.sessions(params::<SessionListParams>(raw)?.task_id)?),
-        method::SESSION_START => to_value(daemon.start_session(params(raw)?)?),
+        method::SESSION_START => to_value(daemon.start_session(params(raw)?).await?),
         method::SESSION_KILL => {
             daemon.kill_session(params::<SessionIdParams>(raw)?.session_id)?;
             Ok(Value::Null)

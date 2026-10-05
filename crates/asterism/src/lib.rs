@@ -45,7 +45,7 @@ pub async fn run(paths: Paths) -> io::Result<()> {
     }
     let daemon = Daemon::new(paths).map_err(io::Error::other)?;
     let listener = UnixListener::bind(&socket)?;
-    daemon.recover().map_err(io::Error::other)?;
+    daemon.recover().await.map_err(io::Error::other)?;
     tokio::select! {
         _ = rpc::serve(daemon.clone(), listener) => {}
         _ = daemon.shutdown_requested() => {}

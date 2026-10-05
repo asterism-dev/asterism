@@ -28,10 +28,6 @@ impl Paths {
         self.home.join("worktrees")
     }
 
-    pub fn claude_settings(&self) -> PathBuf {
-        self.home.join("claude-settings.json")
-    }
-
     pub fn config(&self) -> PathBuf {
         self.home.join("config.toml")
     }

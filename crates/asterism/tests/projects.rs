@@ -139,19 +139,17 @@ async fn worktrees_are_grouped_by_owner_and_root_changes_keep_existing_tasks() {
     let url = bare_origin(env.home.path());
     let project = env.daemon.clone_project(&url).await.unwrap();
     let create = |title: &str| {
-        env.daemon
-            .create_task(TaskCreateParams { project_id: project.id, title: title.into(), prompt: None, agent: None })
-            .unwrap()
-            .task
+        let params = TaskCreateParams { project_id: project.id, title: title.into(), prompt: None, agent: None };
+        async { env.daemon.create_task(params).await.unwrap().task }
     };
-    let first = create("first");
+    let first = create("first").await;
     assert!(Path::new(&first.worktree_path).starts_with(env.home.path().join("h/worktrees/acme/demo")), "{}", first.worktree_path);
 
     let elsewhere = env.home.path().join("other-trees");
     let mut config = env.daemon.node_config().unwrap().config;
     config.paths.worktrees = elsewhere.display().to_string();
     env.daemon.set_node_config(&config).unwrap();
-    let second = create("second");
+    let second = create("second").await;
     assert!(Path::new(&second.worktree_path).starts_with(elsewhere.join("acme/demo")), "{}", second.worktree_path);
 
     std::fs::write(Path::new(&first.worktree_path).join("new.txt"), "x\n").unwrap();
@@ -170,6 +168,7 @@ async fn local_projects_without_remote_use_local_owner() {
     let task = env
         .daemon
         .create_task(TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: None })
+        .await
         .unwrap()
         .task;
     assert!(Path::new(&task.worktree_path).starts_with(env.home.path().join("h/worktrees/local/plain")), "{}", task.worktree_path);
@@ -228,7 +227,7 @@ async fn broken_config_leaves_no_orphan_task() {
     let project = env.daemon.add_project(&repo.display().to_string()).unwrap();
     std::fs::write(env.home.path().join("h/config.toml"), "[paths\n").unwrap();
     let params = TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: None };
-    assert!(env.daemon.create_task(params).is_err());
+    assert!(env.daemon.create_task(params).await.is_err());
     assert!(env.daemon.tasks(TaskListParams { project_id: Some(project.id), include_archived: true }).unwrap().is_empty());
 }
 

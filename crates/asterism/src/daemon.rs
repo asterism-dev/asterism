@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
-use asterism_plugin::protocol::{self, CloneParams, CreateRemoteParams, ListReposParams, ResolveOwnerParams, ResolveOwnerResult};
+use asterism_plugin::protocol::{self, CloneParams, CreateRemoteParams, LaunchMode, ListReposParams, PrepareParams, PrepareResult, ResolveOwnerParams, ResolveOwnerResult};
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
 use asterism_proto::PROTO_VERSION;
@@ -13,10 +13,11 @@ use serde_json::Value;
 use tokio::sync::{broadcast, watch, Notify};
 
 use crate::agent_settings;
-use crate::agents::{self, AgentProfile};
+use crate::agents;
 use crate::config::{self, Config};
 use crate::error::{Error, Result};
 use crate::paths::Paths;
+use crate::plugins::manifest::{AgentDecl, LaunchKind};
 use crate::plugins::process::{self, HostFn};
 use crate::plugins::registry::Status;
 use crate::plugins::{settings, PluginSet, Runtime};
@@ -112,7 +113,6 @@ impl Daemon {
 
     pub fn with_options(paths: Paths, options: DaemonOptions) -> Result<Arc<Self>> {
         paths.ensure_dirs()?;
-        agent_settings::write_claude_settings(&paths)?;
         let store = Store::open(&paths.db())?;
         let (events, _) = broadcast::channel(1024);
         let runtime = Runtime {
@@ -209,16 +209,7 @@ impl Daemon {
             pid: std::process::id(),
             hostname: gethostname::gethostname().to_string_lossy().into_owned(),
             os: std::env::consts::OS.into(),
-            agents: agents::PROFILES
-                .iter()
-                .map(|p| AgentInfo {
-                    name: p.name.into(),
-                    available: p.is_available(),
-                    display_name: "Claude Code".into(),
-                    settings: vec![AgentSettingKind::Args, AgentSettingKind::Mcp, AgentSettingKind::Hooks],
-                    plugin: "claude".into(),
-                })
-                .collect(),
+            agents: self.agent_infos(),
         })
     }
 
@@ -390,9 +381,9 @@ impl Daemon {
         Ok(ProjectCreateResult { project, remote_error })
     }
 
-    pub fn create_task(self: &Arc<Self>, params: TaskCreateParams) -> Result<TaskCreateResult> {
+    pub async fn create_task(self: &Arc<Self>, params: TaskCreateParams) -> Result<TaskCreateResult> {
         if let Some(name) = &params.agent {
-            self.agent(name)?;
+            self.ensure_agent_available(name)?;
         }
         let project = self.store().project(params.project_id)?.ok_or_else(|| not_found("project", params.project_id))?;
         let repo = PathBuf::from(&project.path);
@@ -417,7 +408,7 @@ impl Daemon {
                 task_id: id,
                 kind: SessionKind::Agent { name },
                 prompt: params.prompt,
-            })?),
+            }).await?),
             None => None,
         };
         Ok(TaskCreateResult { task, session })
@@ -578,29 +569,92 @@ impl Daemon {
         Ok(TaskDiffResult { patch: git::diff(Path::new(&task.worktree_path), &task.base_branch)? })
     }
 
-    fn agent(&self, name: &str) -> Result<&'static AgentProfile> {
-        agents::profile(name).filter(|p| p.is_available()).ok_or_else(|| {
-            Error::new(ErrorKind::AgentUnavailable, format!("agent {name} is not installed on this node"))
-        })
+    pub fn agent_infos(&self) -> Vec<AgentInfo> {
+        let set = self.plugin_set();
+        set.registry
+            .agents()
+            .map(|(plugin, agent)| AgentInfo {
+                name: agent.id.clone(),
+                available: agents::on_path(&agent.binary),
+                display_name: agent.display_name().to_string(),
+                settings: agent.settings.clone(),
+                plugin: plugin.name.clone(),
+            })
+            .collect()
     }
 
-    pub fn start_session(self: &Arc<Self>, params: SessionStartParams) -> Result<Session> {
+    fn agent_decl(&self, name: &str) -> Result<(String, AgentDecl)> {
+        let set = self.plugin_set();
+        let (plugin, decl) = set
+            .registry
+            .agent(name)
+            .ok_or_else(|| Error::new(ErrorKind::AgentUnavailable, format!("agent {name} is not installed on this node")))?;
+        Ok((plugin.name.clone(), decl.clone()))
+    }
+
+    fn ensure_agent_available(&self, name: &str) -> Result<()> {
+        let (_, decl) = self.agent_decl(name)?;
+        if agents::on_path(&decl.binary) {
+            Ok(())
+        } else {
+            Err(Error::new(ErrorKind::AgentUnavailable, format!("agent {name} is not installed on this node")))
+        }
+    }
+
+    /// The argv and extra env for an agent session; `None` when the agent cannot resume.
+    pub async fn agent_argv(
+        &self,
+        name: &str,
+        mode: LaunchMode,
+        prompt: Option<&str>,
+        agent_ref: Option<&str>,
+    ) -> Result<Option<(Vec<String>, Vec<(String, String)>)>> {
+        let (plugin, decl) = self.agent_decl(name)?;
+        let settings = agent_settings::launch_settings(&self.paths, name, mode == LaunchMode::Resume)?;
+        match decl.launch {
+            LaunchKind::Static => Ok(agents::static_argv(&decl, mode, &settings.args, prompt, agent_ref).map(|argv| (argv, Vec::new()))),
+            LaunchKind::Backend => {
+                if mode == LaunchMode::Resume && agent_ref.is_none() {
+                    return Ok(None);
+                }
+                let params = PrepareParams {
+                    agent: name.to_string(),
+                    mode,
+                    prompt: prompt.map(String::from),
+                    agent_ref: agent_ref.map(String::from),
+                    settings,
+                };
+                let params = serde_json::to_value(params).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+                let reply = self.plugin_call(&plugin, protocol::method::AGENT_PREPARE, params, Some(self.call_timeout())).await?;
+                let prepared: PrepareResult = serde_json::from_value(reply)
+                    .map_err(|e| Error::new(ErrorKind::PluginError, format!("{plugin}: unexpected agent.prepare reply: {e}")))?;
+                if prepared.argv.is_empty() {
+                    return Err(Error::new(ErrorKind::PluginError, format!("{plugin}: agent.prepare returned an empty command")));
+                }
+                Ok(Some((prepared.argv, prepared.env)))
+            }
+        }
+    }
+
+    pub async fn start_session(self: &Arc<Self>, params: SessionStartParams) -> Result<Session> {
         let task = self.task(params.task_id)?;
         if task.archived {
             return Err(Error::new(ErrorKind::InvalidParams, format!("task {} is archived", task.id)));
         }
-        let argv = match &params.kind {
+        let (argv, extra_env) = match &params.kind {
             SessionKind::Agent { name } => {
-                agent_settings::start_argv(&self.paths, self.agent(name)?, params.prompt.as_deref())?
+                self.ensure_agent_available(name)?;
+                let launched = self.agent_argv(name, LaunchMode::Start, params.prompt.as_deref(), None).await?;
+                launched.ok_or_else(|| Error::new(ErrorKind::PluginError, format!("agent {name} has no start command")))?
             }
-            SessionKind::Shell => vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())],
-            SessionKind::Command { argv } if !argv.is_empty() => argv.clone(),
+            SessionKind::Shell => (vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())], Vec::new()),
+            SessionKind::Command { argv } if !argv.is_empty() => (argv.clone(), Vec::new()),
             SessionKind::Command { .. } => {
                 return Err(Error::new(ErrorKind::InvalidParams, "command argv must not be empty"));
             }
         };
         let id = self.store().insert_session(task.id, &params.kind, SessionStatus::Working)?;
-        if let Err(e) = self.spawn_live(id, &task, argv, &params.kind) {
+        if let Err(e) = self.spawn_live(id, &task, argv, extra_env, &params.kind) {
             self.store().set_session_status(id, SessionStatus::Exited)?;
             return Err(e);
         }
@@ -615,9 +669,11 @@ impl Daemon {
         id: i64,
         task: &Task,
         argv: Vec<String>,
+        extra_env: Vec<(String, String)>,
         kind: &SessionKind,
     ) -> Result<()> {
-        let policy = Config::load(&self.paths.config())?.env_policy(config::agent_key(kind));
+        let mut policy = Config::load(&self.paths.config())?.env_policy(config::agent_key(kind));
+        policy.set.extend(extra_env);
         let (bin_dir, path) = tool_path()?;
         let fixed = [
             ("PATH".to_string(), path),
@@ -643,7 +699,11 @@ impl Daemon {
             hooks_active: Arc::new(AtomicBool::new(false)),
         });
         lock(&self.live).insert(id, live.clone());
-        tokio::spawn(status::track(pty.clone(), agents::waiting_patterns(kind), live.status.clone(), live.hooks_active.clone()));
+        let waiting_patterns: Arc<[String]> = match kind {
+            SessionKind::Agent { name } => self.agent_decl(name).map(|(_, d)| d.waiting_patterns).unwrap_or_default().into(),
+            _ => Arc::from(Vec::new()),
+        };
+        tokio::spawn(status::track(pty.clone(), waiting_patterns, live.status.clone(), live.hooks_active.clone()));
 
         let daemon = self.clone();
         let task_id = task.id;
@@ -717,15 +777,15 @@ impl Daemon {
     }
 
     pub fn agent_config(&self, agent: &str) -> Result<AgentConfig> {
-        agent_settings::load(&self.paths, agent)
+        agent_settings::load(&self.paths, &self.plugin_set().registry, agent)
     }
 
     pub fn agent_config_raw(&self, agent: &str) -> Result<AgentConfigRaw> {
-        agent_settings::load_raw(&self.paths, agent)
+        agent_settings::load_raw(&self.paths, &self.plugin_set().registry, agent)
     }
 
     pub fn set_agent_config(&self, agent: &str, config: &AgentConfig) -> Result<()> {
-        agent_settings::save(&self.paths, agent, config)
+        agent_settings::save(&self.paths, &self.plugin_set().registry, agent, config)
     }
 
     /// Stops the session if it still runs, then forgets it entirely.
@@ -815,7 +875,7 @@ impl Daemon {
         Ok(())
     }
 
-    pub fn recover(self: &Arc<Self>) -> Result<()> {
+    pub async fn recover(self: &Arc<Self>) -> Result<()> {
         let stored = self.store().sessions(None)?;
         for crate::store::StoredSession { session, agent_ref } in stored {
             if session.status == SessionStatus::Exited {
@@ -823,9 +883,13 @@ impl Daemon {
             }
             let resumed = match self.task(session.task_id) {
                 Ok(task) if !task.archived => {
-                    match agent_settings::resume_argv(&self.paths, &session.kind, agent_ref.as_deref()) {
-                        Ok(Some(argv)) => {
-                            let spawned = self.spawn_live(session.id, &task, argv, &session.kind);
+                    let resume = match &session.kind {
+                        SessionKind::Agent { name } => self.agent_argv(name, LaunchMode::Resume, None, agent_ref.as_deref()).await,
+                        _ => Ok(None),
+                    };
+                    match resume {
+                        Ok(Some((argv, env))) => {
+                            let spawned = self.spawn_live(session.id, &task, argv, env, &session.kind);
                             if let Err(e) = &spawned {
                                 eprintln!("asterismd: could not resume session {}: {e}", session.id);
                             }

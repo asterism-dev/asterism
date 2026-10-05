@@ -1,137 +1,69 @@
-use std::path::PathBuf;
+use asterism_plugin::protocol::LaunchMode;
 
-use asterism_proto::types::SessionKind;
-use serde_json::{json, Value};
-
-pub struct AgentProfile {
-    pub name: &'static str,
-    pub binary: &'static str,
-    /// Screen text meaning the agent is blocked on the user; used when hooks are unavailable.
-    pub waiting_patterns: &'static [&'static str],
-}
-
-pub const CLAUDE: AgentProfile = AgentProfile {
-    name: "claude",
-    binary: "claude",
-    waiting_patterns: &["Do you want to", "❯ 1. Yes"],
-};
-
-pub const PROFILES: &[AgentProfile] = &[CLAUDE];
-
-pub fn profile(name: &str) -> Option<&'static AgentProfile> {
-    PROFILES.iter().find(|p| p.name == name)
-}
-
-/// Everything Claude is launched with besides the prompt or resume reference.
-pub struct Launch {
-    pub settings: PathBuf,
-    pub mcp_config: Option<PathBuf>,
-    pub args: Vec<String>,
-}
-
-impl AgentProfile {
-    fn base_argv(&self, launch: &Launch) -> Vec<String> {
-        let mut argv = vec![self.binary.to_string(), "--settings".into(), launch.settings.display().to_string()];
-        if let Some(mcp) = &launch.mcp_config {
-            argv.extend(["--mcp-config".to_string(), mcp.display().to_string()]);
-        }
-        argv.extend(launch.args.iter().cloned());
-        argv
-    }
-
-    pub fn start_argv(&self, launch: &Launch, prompt: Option<&str>) -> Vec<String> {
-        let mut argv = self.base_argv(launch);
-        if let Some(prompt) = prompt {
-            argv.extend(["--".to_string(), prompt.to_string()]);
-        }
-        argv
-    }
-
-    pub fn resume_argv(&self, launch: &Launch, agent_ref: &str) -> Vec<String> {
-        let mut argv = self.base_argv(launch);
-        argv.extend(["--resume".to_string(), agent_ref.to_string()]);
-        argv
-    }
-
-    pub fn is_available(&self) -> bool {
-        on_path(self.binary)
-    }
-}
-
-pub fn waiting_patterns(kind: &SessionKind) -> &'static [&'static str] {
-    match kind {
-        SessionKind::Agent { name } => profile(name).map_or(&[], |p| p.waiting_patterns),
-        _ => &[],
-    }
-}
+use crate::plugins::manifest::AgentDecl;
 
 pub fn on_path(binary: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(binary).is_file()))
 }
 
-/// Claude settings passed via `--settings`, so the user's own config is never modified.
-pub fn claude_settings() -> Value {
-    let hook = |arg: &str| {
-        json!([{ "hooks": [{ "type": "command", "command": format!("\"$ASTERISM_CLI\" hook {arg}") }] }])
-    };
-    json!({
-        "hooks": {
-            "UserPromptSubmit": hook("prompt-submit"),
-            "PreToolUse": hook("tool"),
-            "Stop": hook("stop"),
-            "Notification": hook("notification"),
+/// Expands a static agent's templates; `None` when it cannot resume.
+pub fn static_argv(agent: &AgentDecl, mode: LaunchMode, args: &[String], prompt: Option<&str>, agent_ref: Option<&str>) -> Option<Vec<String>> {
+    let mut argv = Vec::new();
+    let mut expand = |tokens: &[String]| {
+        for token in tokens {
+            match token.as_str() {
+                "{binary}" => argv.push(agent.binary.clone()),
+                "{args...}" => argv.extend(args.iter().cloned()),
+                other => argv.push(other.replace("{prompt}", prompt.unwrap_or_default()).replace("{agent_ref}", agent_ref.unwrap_or_default())),
+            }
         }
-    })
+    };
+    match mode {
+        LaunchMode::Start => {
+            expand(&agent.start);
+            if prompt.is_some() {
+                expand(&agent.prompt);
+            }
+        }
+        LaunchMode::Resume => {
+            if agent.resume.is_empty() || agent_ref.is_none() {
+                return None;
+            }
+            expand(&agent.resume);
+        }
+    }
+    Some(argv)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugins::manifest::LaunchKind;
 
-    #[test]
-    fn claude_argv_puts_settings_mcp_and_args_before_prompt_or_resume() {
-        let launch = Launch {
-            settings: "/h/claude-settings.json".into(),
-            mcp_config: Some("/h/agents/claude/mcp.json".into()),
-            args: vec!["--model".into(), "opus".into()],
-        };
-        assert_eq!(
-            CLAUDE.start_argv(&launch, Some("fix it")),
-            [
-                "claude", "--settings", "/h/claude-settings.json", "--mcp-config", "/h/agents/claude/mcp.json",
-                "--model", "opus", "--", "fix it",
-            ]
-        );
-        assert_eq!(
-            CLAUDE.resume_argv(&launch, "abc"),
-            [
-                "claude", "--settings", "/h/claude-settings.json", "--mcp-config", "/h/agents/claude/mcp.json",
-                "--model", "opus", "--resume", "abc",
-            ]
-        );
-        let plain = Launch { settings: "/s.json".into(), mcp_config: None, args: vec![] };
-        assert_eq!(CLAUDE.start_argv(&plain, None), ["claude", "--settings", "/s.json"]);
-    }
-
-    #[test]
-    fn waiting_patterns_come_from_the_profile() {
-        assert_eq!(waiting_patterns(&SessionKind::Agent { name: "claude".into() }), CLAUDE.waiting_patterns);
-        assert!(waiting_patterns(&SessionKind::Shell).is_empty());
-    }
-
-    #[test]
-    fn settings_route_every_hook_to_the_cli() {
-        let settings = claude_settings();
-        for (event, arg) in [
-            ("UserPromptSubmit", "prompt-submit"),
-            ("PreToolUse", "tool"),
-            ("Stop", "stop"),
-            ("Notification", "notification"),
-        ] {
-            let command = settings["hooks"][event][0]["hooks"][0]["command"].as_str().unwrap();
-            assert_eq!(command, format!("\"$ASTERISM_CLI\" hook {arg}"));
+    fn aider() -> AgentDecl {
+        AgentDecl {
+            id: "aider".into(),
+            display_name: None,
+            binary: "aider".into(),
+            launch: LaunchKind::Static,
+            waiting_patterns: vec![],
+            settings: vec![],
+            reserved_args: vec![],
+            start: vec!["{binary}".into(), "{args...}".into()],
+            prompt: vec!["--message".into(), "{prompt}".into()],
+            resume: vec!["{binary}".into(), "--restore".into(), "{agent_ref}".into()],
         }
+    }
+
+    #[test]
+    fn static_templates_expand_args_prompt_and_resume() {
+        let args = ["--model".to_string(), "x".into()];
+        assert_eq!(static_argv(&aider(), LaunchMode::Start, &args, Some("go"), None).unwrap(), ["aider", "--model", "x", "--message", "go"]);
+        assert_eq!(static_argv(&aider(), LaunchMode::Start, &[], None, None).unwrap(), ["aider"]);
+        assert_eq!(static_argv(&aider(), LaunchMode::Resume, &[], None, Some("r1")).unwrap(), ["aider", "--restore", "r1"]);
+        let no_resume = AgentDecl { resume: vec![], ..aider() };
+        assert_eq!(static_argv(&no_resume, LaunchMode::Resume, &[], None, Some("r1")), None);
     }
 
     #[test]
