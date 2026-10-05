@@ -70,17 +70,17 @@ fn bare_origin(dir: &Path) -> String {
 async fn clone_places_repo_under_owner_and_registers_it() {
     let env = setup(false);
     let url = bare_origin(env.home.path());
-    let project = env.daemon.clone_project(&url).await.unwrap();
+    let project = env.daemon.clone_project(&url, None).await.unwrap();
     let expected = env.home.path().join("h/repos/acme/demo");
     assert_eq!(Path::new(&project.path).canonicalize().unwrap(), expected.canonicalize().unwrap());
     assert!(expected.join("README.md").exists());
-    assert_eq!(env.daemon.clone_project(&url).await.unwrap_err().kind, ErrorKind::InvalidParams);
+    assert_eq!(env.daemon.clone_project(&url, None).await.unwrap_err().kind, ErrorKind::InvalidParams);
 }
 
 #[tokio::test]
 async fn failed_clone_removes_partial_target() {
     let env = setup(false);
-    let err = env.daemon.clone_project("file:///definitely/missing/acme/nothing.git").await.unwrap_err();
+    let err = env.daemon.clone_project("file:///definitely/missing/acme/nothing.git", None).await.unwrap_err();
     assert_eq!(err.kind, ErrorKind::Git);
     assert!(!env.home.path().join("h/repos/acme/nothing").exists());
 }
@@ -137,7 +137,7 @@ async fn remote_failure_keeps_local_repo() {
 async fn worktrees_are_grouped_by_owner_and_root_changes_keep_existing_tasks() {
     let env = setup(false);
     let url = bare_origin(env.home.path());
-    let project = env.daemon.clone_project(&url).await.unwrap();
+    let project = env.daemon.clone_project(&url, None).await.unwrap();
     let create = |title: &str| {
         let params = TaskCreateParams { project_id: project.id, title: title.into(), prompt: None, agent: None };
         async { env.daemon.create_task(params).await.unwrap().task }
@@ -202,7 +202,7 @@ async fn unknown_remote_owners_create_nothing() {
 async fn shorthand_clones_through_the_authenticated_forge() {
     let env = setup(false);
     bare_origin(env.home.path());
-    let project = env.daemon.clone_project("acme/demo").await.unwrap();
+    let project = env.daemon.clone_project("acme/demo", None).await.unwrap();
     let expected = env.home.path().join("h/repos/acme/demo");
     assert_eq!(Path::new(&project.path).canonicalize().unwrap(), expected.canonicalize().unwrap());
     assert!(expected.join("README.md").exists());
@@ -213,8 +213,26 @@ async fn shorthand_clones_through_the_authenticated_forge() {
 async fn shorthand_with_an_unknown_default_forge_cleans_up() {
     let env = setup(false);
     std::fs::write(env.home.path().join("h/config.toml"), "default_forge = \"nope\"\n").unwrap();
-    let err = env.daemon.clone_project("acme/demo").await.unwrap_err();
+    let err = env.daemon.clone_project("acme/demo", None).await.unwrap_err();
     assert_eq!(err.kind, ErrorKind::InvalidParams);
+    assert!(err.message.contains("default_forge \"nope\" in config.toml is not an installed forge"));
+    assert!(!env.home.path().join("h/repos/acme/demo").exists());
+}
+
+#[tokio::test]
+async fn shorthand_honours_an_explicit_forge() {
+    let env = setup(false);
+    bare_origin(env.home.path());
+    env.daemon.clone_project("acme/demo", Some("github")).await.unwrap();
+    assert!(env.home.path().join("h/repos/acme/demo/README.md").exists());
+}
+
+#[tokio::test]
+async fn shorthand_with_an_unknown_explicit_forge_cleans_up() {
+    let env = setup(false);
+    let err = env.daemon.clone_project("acme/demo", Some("nope")).await.unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
+    assert!(err.message.contains("not an installed forge"));
     assert!(!env.home.path().join("h/repos/acme/demo").exists());
 }
 

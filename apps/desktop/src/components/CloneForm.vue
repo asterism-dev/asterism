@@ -80,7 +80,7 @@ async function clone() {
   busy.value = true;
   error.value = null;
   try {
-    const project = await api.cloneProject(source.value.trim());
+    const project = await api.cloneProject(source.value.trim(), forge.value || undefined);
     delete state.collapsed[project.id];
     toast(`Cloned ${parsed.value.owner}/${parsed.value.repo}`);
     emit('close');

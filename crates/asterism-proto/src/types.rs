@@ -363,6 +363,9 @@ pub struct PluginSetSettingsParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectCloneParams {
     pub source: String,
+    /// Forge for an `owner/repo` shorthand; the default forge when absent.
+    #[serde(default)]
+    pub forge: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

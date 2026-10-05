@@ -242,7 +242,10 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             let p: ForgeOwnerParams = params(raw)?;
             to_value(daemon.forge_repos(&p.forge, &p.owner).await?)
         }
-        method::PROJECT_CLONE => to_value(daemon.clone_project(&params::<ProjectCloneParams>(raw)?.source).await?),
+        method::PROJECT_CLONE => {
+            let p = params::<ProjectCloneParams>(raw)?;
+            to_value(daemon.clone_project(&p.source, p.forge.as_deref()).await?)
+        }
         method::PROJECT_CREATE => to_value(daemon.create_project(&params::<ProjectCreateParams>(raw)?).await?),
         method::AGENT_LIST => to_value(daemon.agent_infos()),
         method::AGENT_CONFIG_GET => {

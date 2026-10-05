@@ -109,7 +109,7 @@ export const api = {
   forges: () => call<ForgeInfo[]>('forge.list'),
   forgeStatus: (forge: string) => call<ForgeStatus>('forge.status', { forge }),
   forgeRepos: (forge: string, owner: string) => call<ForgeRepo[]>('forge.repos', { forge, owner }),
-  cloneProject: (source: string) => call<Project>('project.clone', { source }),
+  cloneProject: (source: string, forge?: string) => call<Project>('project.clone', { source, forge }),
   createProject: (name: string, remote: RemoteTarget | null) =>
     call<ProjectCreateResult>('project.create', { name, remote }),
 };

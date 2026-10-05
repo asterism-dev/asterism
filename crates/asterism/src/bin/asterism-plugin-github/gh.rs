@@ -9,6 +9,8 @@ use serde_json::Value;
 
 const REPO_LIMIT: &str = "200";
 const METADATA_TIMEOUT: Duration = Duration::from_secs(20);
+// Stays under the daemon's 20 s call cap so status answers instead of timing out.
+const STATUS_BUDGET: Duration = Duration::from_secs(15);
 const MESSAGE_LIMIT: usize = 2_000;
 
 fn truncate(message: &str) -> String {
@@ -90,15 +92,17 @@ fn metadata(gh: &Path, args: &[&str]) -> Result<String, RpcError> {
 }
 
 pub fn status(gh: &Path) -> ForgeStatus {
-    if metadata(gh, &["--version"]).is_err() {
+    let deadline = Instant::now() + STATUS_BUDGET;
+    let call = |args: &[&str]| run_with_timeout(gh, args, deadline.saturating_duration_since(Instant::now()));
+    if call(&["--version"]).is_err() {
         return ForgeStatus { error: Some("the GitHub CLI (gh) is not installed".into()), ..Default::default() };
     }
-    match metadata(gh, &["api", "user", "--jq", ".login"]) {
+    match call(&["api", "user", "--jq", ".login"]) {
         Ok(login) => ForgeStatus {
             available: true,
             authenticated: true,
             account: Some(login.trim().to_string()),
-            owners: metadata(gh, &["api", "user/orgs", "--paginate", "--jq", ".[].login"])
+            owners: call(&["api", "user/orgs", "--paginate", "--jq", ".[].login"])
                 .map(|out| out.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect())
                 .unwrap_or_default(),
             error: None,

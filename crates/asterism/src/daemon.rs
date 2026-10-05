@@ -376,12 +376,21 @@ impl Daemon {
         self.forge_call(forge, protocol::method::FORGE_LIST_REPOS, params, Some(self.call_timeout())).await
     }
 
-    fn default_forge(&self) -> Result<String> {
-        let configured = Config::load(&self.paths.config())?.default_forge;
-        let first = || self.plugin_set().registry.forges().next().map(|(_, forge)| forge.id.clone());
-        configured
-            .or_else(first)
-            .ok_or_else(|| Error::new(ErrorKind::InvalidParams, "no forge is installed; clone by URL instead"))
+    fn resolve_forge(&self, explicit: Option<&str>) -> Result<String> {
+        let (id, origin) = match explicit {
+            Some(id) => (id.to_string(), ""),
+            None => match Config::load(&self.paths.config())?.default_forge {
+                Some(id) => (id, " in config.toml"),
+                None => {
+                    let first = self.plugin_set().registry.forges().next().map(|(_, forge)| forge.id.clone());
+                    return first.ok_or_else(|| Error::new(ErrorKind::InvalidParams, "no forge is installed; clone by URL instead"));
+                }
+            },
+        };
+        if self.plugin_set().registry.forge(&id).is_none() {
+            return Err(Error::new(ErrorKind::InvalidParams, format!("{}{id:?}{origin} is not an installed forge", if origin.is_empty() { "forge " } else { "default_forge " })));
+        }
+        Ok(id)
     }
 
     fn new_repo_dir(&self, owner: &str, name: &str) -> Result<PathBuf> {
@@ -399,12 +408,12 @@ impl Daemon {
         }
     }
 
-    pub async fn clone_project(self: &Arc<Self>, source: &str) -> Result<Project> {
+    pub async fn clone_project(self: &Arc<Self>, source: &str, forge: Option<&str>) -> Result<Project> {
         let source = repo_source::parse_source(source)?;
         let target = self.new_repo_dir(&source.owner, &source.repo)?;
         let cloned = match &source.url {
             Some(url) => self.git_clone(url.clone(), target.clone()).await,
-            None => self.clone_shorthand(&source.owner, &source.repo, &target).await,
+            None => self.clone_shorthand(forge, &source.owner, &source.repo, &target).await,
         };
         if let Err(e) = cloned {
             // A half-cloned directory would block the next attempt.
@@ -422,9 +431,9 @@ impl Daemon {
     }
 
     /// `owner/repo` goes to the default forge: its own clone when signed in, else anonymous HTTPS.
-    async fn clone_shorthand(&self, owner: &str, repo: &str, target: &Path) -> Result<()> {
-        let forge = self.default_forge()?;
-        if self.forge_status(&forge).await.is_ok_and(|s| s.authenticated) {
+    async fn clone_shorthand(&self, forge: Option<&str>, owner: &str, repo: &str, target: &Path) -> Result<()> {
+        let forge = self.resolve_forge(forge)?;
+        if forge_clone_wanted(self.forge_status(&forge).await)? {
             let params = CloneParams {
                 owner: owner.to_string(),
                 repo: repo.to_string(),
@@ -1108,5 +1117,22 @@ mod tests {
         assert_eq!(last_lines("a\nb\nc\n\n\n", 2), "b\nc");
         assert_eq!(last_lines("a", 10), "a");
         assert_eq!(last_lines("", 3), "");
+    }
+}
+
+// A status error must surface; only a signed-out forge falls back to anonymous HTTPS.
+fn forge_clone_wanted(status: Result<ForgeStatus>) -> Result<bool> {
+    status.map(|s| s.authenticated)
+}
+
+#[cfg(test)]
+mod forge_clone_tests {
+    use super::*;
+
+    #[test]
+    fn only_a_signed_out_status_falls_back() {
+        assert!(!forge_clone_wanted(Ok(ForgeStatus::default())).unwrap());
+        assert!(forge_clone_wanted(Ok(ForgeStatus { authenticated: true, ..Default::default() })).unwrap());
+        assert_eq!(forge_clone_wanted(Err(Error::new(ErrorKind::Timeout, "slow"))).unwrap_err().kind, ErrorKind::Timeout);
     }
 }

@@ -331,7 +331,7 @@ async fn project_and_path_methods_are_routed() {
         .await
         .unwrap_err();
     assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
-    let err = client.call::<_, Project>(method::PROJECT_CLONE, ProjectCloneParams { source: "nope".into() }).await.unwrap_err();
+    let err = client.call::<_, Project>(method::PROJECT_CLONE, ProjectCloneParams { source: "nope".into(), forge: None }).await.unwrap_err();
     assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
     let err = client.call::<_, Vec<ForgeRepo>>(method::FORGE_REPOS, ForgeOwnerParams { forge: "github".into(), owner: "-x".into() }).await.unwrap_err();
     assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
