@@ -77,7 +77,6 @@ async fn failed_clone_removes_partial_target() {
     let env = setup(false);
     let err = env.daemon.clone_project("file:///definitely/missing/acme/nothing.git").unwrap_err();
     assert_eq!(err.kind, ErrorKind::Git);
-    assert!(!env.home.path().join("h/repos/missing/acme").join("nothing").exists());
     assert!(!env.home.path().join("h/repos/acme/nothing").exists());
 }
 
@@ -171,4 +170,28 @@ async fn github_status_comes_from_gh() {
     let status = env.daemon.github_status();
     assert_eq!(status.login.as_deref(), Some("me"));
     assert_eq!(status.orgs, ["acme"]);
+}
+
+#[tokio::test]
+async fn broken_config_leaves_no_orphan_task() {
+    let env = setup(false);
+    let repo = env.home.path().join("plain");
+    std::fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+    let project = env.daemon.add_project(&repo.display().to_string()).unwrap();
+    std::fs::write(env.home.path().join("h/config.toml"), "[paths\n").unwrap();
+    let params = TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: None };
+    assert!(env.daemon.create_task(params).is_err());
+    assert!(env.daemon.tasks(TaskListParams { project_id: Some(project.id), include_archived: true }).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn existing_target_directory_is_left_untouched() {
+    let env = setup(false);
+    let dir = env.home.path().join("h/repos/local/notes");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("marker"), "mine").unwrap();
+    let err = env.daemon.create_project(&ProjectCreateParams { name: "notes".into(), github: None }).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
+    assert_eq!(std::fs::read_to_string(dir.join("marker")).unwrap(), "mine");
 }

@@ -98,6 +98,10 @@ pub fn status(gh: &Path) -> GithubStatus {
     }
 }
 
+pub fn logged_in(gh: &Path) -> bool {
+    metadata(gh, &["api", "user"]).is_ok()
+}
+
 pub fn repos(gh: &Path, owner: &str) -> Result<Vec<GithubRepo>> {
     let out = metadata(gh, &["repo", "list", owner, "--json", "nameWithOwner,description,isPrivate", "--limit", REPO_LIMIT])?;
     let items: Vec<Value> =

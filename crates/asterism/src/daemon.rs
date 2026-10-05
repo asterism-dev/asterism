@@ -160,13 +160,17 @@ impl Daemon {
 
     fn new_repo_dir(&self, owner: &str, name: &str) -> Result<PathBuf> {
         let dir = node_settings::repos_dir(&self.paths)?.join(owner).join(name);
-        if dir.exists() {
-            return Err(Error::new(ErrorKind::InvalidParams, format!("{} already exists", dir.display())));
-        }
         if let Some(parent) = dir.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        Ok(dir)
+        // create_dir is atomic, so concurrent requests cannot both claim (and later clean up) the same target.
+        match std::fs::create_dir(&dir) {
+            Ok(()) => Ok(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                Err(Error::new(ErrorKind::InvalidParams, format!("{} already exists", dir.display())))
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 
     pub fn clone_project(&self, source: &str) -> Result<Project> {
@@ -175,7 +179,7 @@ impl Daemon {
         let env = &self.options.git_env;
         let cloned = match &source.url {
             Some(url) => git::clone_url(url, &target, env),
-            None if self.github_status().logged_in => {
+            None if github::logged_in(&self.options.gh_bin) => {
                 github::clone(&self.options.gh_bin, &source.owner, &source.repo, &target, env)
             }
             None => git::clone_url(&format!("https://github.com/{}/{}.git", source.owner, source.repo), &target, env),
@@ -196,8 +200,8 @@ impl Daemon {
                 if !status.logged_in {
                     return Err(Error::new(ErrorKind::InvalidParams, "the GitHub CLI is not logged in; run `gh auth login`"));
                 }
-                let is_user = status.login.as_deref() == Some(target.owner.as_str());
-                if !is_user && !status.orgs.contains(&target.owner) {
+                let is_user = status.login.as_deref().is_some_and(|login| login.eq_ignore_ascii_case(&target.owner));
+                if !is_user && !status.orgs.iter().any(|org| org.eq_ignore_ascii_case(&target.owner)) {
                     return Err(Error::new(ErrorKind::InvalidParams, format!("{} is not you or one of your organizations", target.owner)));
                 }
                 if is_user && target.visibility == Visibility::Internal {
@@ -228,12 +232,13 @@ impl Daemon {
         let project = self.store().project(params.project_id)?.ok_or_else(|| not_found("project", params.project_id))?;
         let repo = PathBuf::from(&project.path);
         let base = git::base_ref(&repo)?;
+        let origin = git::remote_url(&repo, "origin");
+        let (owner, repo_name) = node_settings::layout_owner_repo(origin.as_deref(), &project.name);
+        let worktree_root = node_settings::worktrees_dir(&self.paths)?.join(owner).join(repo_name);
         let id = self.store().insert_task(project.id, &params.title, params.prompt.as_deref(), &base)?;
         let slug = slugify(id, &params.title);
         let branch = format!("asterism/{slug}");
-        let origin = git::remote_url(&repo, "origin");
-        let (owner, repo_name) = node_settings::layout_owner_repo(origin.as_deref(), &project.name);
-        let worktree = node_settings::worktrees_dir(&self.paths)?.join(owner).join(repo_name).join(&slug);
+        let worktree = worktree_root.join(&slug);
         if let Err(e) = git::add_worktree(&repo, &branch, &worktree, &base) {
             self.store().delete_task(id)?;
             return Err(e);

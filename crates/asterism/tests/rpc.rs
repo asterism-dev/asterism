@@ -333,5 +333,8 @@ async fn project_and_path_methods_are_routed() {
     assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
     let err = client.call::<_, Project>(method::PROJECT_CLONE, ProjectCloneParams { source: "nope".into() }).await.unwrap_err();
     assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
-    let _: GithubStatus = client.call(method::GITHUB_STATUS, serde_json::Value::Null).await.unwrap();
+    let err = client.call::<_, Vec<GithubRepo>>(method::GITHUB_REPOS, GithubOwnerParams { owner: "-x".into() }).await.unwrap_err();
+    assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
+    let err = client.call::<_, ProjectCreateResult>(method::PROJECT_CREATE, ProjectCreateParams { name: "../x".into(), github: None }).await.unwrap_err();
+    assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
 }
