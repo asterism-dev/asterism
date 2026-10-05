@@ -52,6 +52,15 @@ describe('applyEvent', () => {
     expect(s.projects).toHaveLength(1);
   });
 
+  it('leaves the project page when its project is removed', () => {
+    const s = initialState();
+    s.projectPage = 3;
+    applyEvent(s, { method: 'project.removed', params: { project_id: 4 } });
+    expect(s.projectPage).toBe(3);
+    applyEvent(s, { method: 'project.removed', params: { project_id: 3 } });
+    expect(s.projectPage).toBeNull();
+  });
+
   it('drops removed tasks and bumps the task version', () => {
     const s = initialState();
     s.tasks = [task(1)];

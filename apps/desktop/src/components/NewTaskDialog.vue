@@ -33,6 +33,7 @@ async function submit() {
       agent: agent.value || null,
     });
     addTask(state, created.task);
+    state.projectPage = null;
     state.selectedTaskId = created.task.id;
     delete state.collapsed[projectId.value];
     if (created.session) addSession(state, created.session);

@@ -172,6 +172,7 @@ export function applyEvent(s: State, event: NodeEvent): Session | null {
       upsert(s.projects, event.params);
       return null;
     case 'project.removed':
+      if (s.projectPage === event.params.project_id) s.projectPage = null;
       s.projects = s.projects.filter((p) => p.id !== event.params.project_id);
       for (const t of s.tasks.filter((t) => t.project_id === event.params.project_id)) dropTask(s, t.id);
       return null;

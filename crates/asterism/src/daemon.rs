@@ -294,12 +294,19 @@ impl Daemon {
             return Ok(task);
         }
         let worktree = PathBuf::from(&task.worktree_path);
-        // Tasks archived before archiving kept worktrees have to get theirs back from the branch.
-        if !worktree.exists() {
-            let repo = self.project_path(task.project_id)?;
-            if !git::branch_exists(&repo, &task.branch) {
-                return Err(Error::new(ErrorKind::NotFound, format!("branch {} no longer exists", task.branch)));
+        let repo = self.project_path(task.project_id)?;
+        if worktree.exists() {
+            let listed = git::worktrees(&repo)?.iter().any(|w| same_path(&w.path, &task.worktree_path));
+            if !listed {
+                return Err(Error::new(
+                    ErrorKind::InvalidParams,
+                    format!("{} exists but is not a worktree of this project; move it away to restore", task.worktree_path),
+                ));
             }
+        } else if !git::branch_exists(&repo, &task.branch) {
+            return Err(Error::new(ErrorKind::NotFound, format!("branch {} no longer exists", task.branch)));
+        } else {
+            // Tasks archived before archiving kept worktrees get theirs back from the branch.
             git::add_existing_worktree(&repo, &worktree, &task.branch)?;
         }
         self.store().set_task_active(task_id)?;

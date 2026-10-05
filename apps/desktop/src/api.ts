@@ -70,6 +70,7 @@ export const api = {
   addProject: (path: string) => call<Project>('project.add', { path }),
   removeProject: (projectId: number) => call<null>('project.remove', { project_id: projectId }),
   tasks: () => call<Task[]>('task.list', { include_archived: false }),
+  allTasks: () => call<Task[]>('task.list', { include_archived: true }),
   createTask: (p: { project_id: number; title: string; prompt: string | null; agent: string | null }) =>
     call<TaskCreateResult>('task.create', p),
   archiveTask: (taskId: number) => call<Task>('task.archive', { task_id: taskId }),

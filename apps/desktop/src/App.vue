@@ -36,7 +36,8 @@ function onStatus(status: NodeStatus) {
   const wasConnected = isConnected(state.node);
   state.node = status;
   if (!wasConnected && isConnected(status)) {
-    refresh().then(() => pruneLayouts(state.tasks.map((t) => t.id))).catch((e) => toast(errorMessage(e)));
+    // Archived tasks keep their layout for a later restore, so only deleted tasks are pruned.
+    refresh().then(() => api.allTasks()).then((all) => pruneLayouts(all.map((t) => t.id))).catch((e) => toast(errorMessage(e)));
   }
 }
 
@@ -65,7 +66,11 @@ onMounted(async () => {
   unlisteners.push(await listen<NodeStatus>('node-status', (e) => onStatus(e.payload)));
   unlisteners.push(
     await listen<NodeEvent>('node-event', (e) => {
-      const waiting = applyEvent(state, e.payload);
+      const event = e.payload;
+      const restored = event.method === 'task.changed' && !event.params.archived && !state.tasks.some((t) => t.id === event.params.id);
+      const waiting = applyEvent(state, event);
+      // Archiving dropped the task's sessions from the store; a restore needs them back.
+      if (restored) refresh().catch(() => {});
       if (waiting) notify(waiting).catch(() => {});
     }),
   );

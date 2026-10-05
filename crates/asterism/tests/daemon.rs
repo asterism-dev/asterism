@@ -482,3 +482,17 @@ async fn worktree_remove_only_takes_unlinked_listed_worktrees() {
     assert!(!foreign_path.exists());
     env.daemon.prune_worktrees(project.id).unwrap();
 }
+
+#[tokio::test]
+async fn restore_refuses_an_occupied_worktree_path() {
+    let env = setup();
+    let task = new_task(&env, "occupied");
+    env.daemon.archive_task(task.id).unwrap();
+    run_git(env.repo.path(), &["worktree", "remove", "--force", &task.worktree_path]);
+    std::fs::create_dir_all(&task.worktree_path).unwrap();
+
+    let err = env.daemon.restore_task(task.id).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
+    assert!(err.message.contains(&task.worktree_path), "{}", err.message);
+    assert!(env.daemon.task(task.id).unwrap().archived);
+}
