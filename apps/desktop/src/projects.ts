@@ -41,16 +41,27 @@ function urlPath(source: string): string | null {
   return null;
 }
 
-/** Mirrors the daemon's parser for previews; the daemon stays authoritative. */
+function isGithub(source: string): boolean {
+  const rest = source.indexOf('://') !== -1 ? source.slice(source.indexOf('://') + 3) : source;
+  const authority = rest.split(/[/:]/)[0] || '';
+  return authority.split('@').pop() === 'github.com';
+}
+
 export function sourceOwnerRepo(source: string): { owner: string; repo: string } | null {
   const trimmed = source.trim();
+  if (trimmed.startsWith('-') || /[\s\x00-\x1f\x7f]/.test(trimmed)) return null;
+
   let owner: string | undefined;
   let repo: string | undefined;
   const path = urlPath(trimmed);
   if (path !== null) {
     const segments = path.replace(/\/+$/, '').replace(/\.git$/, '').split('/').filter(Boolean);
-    [owner, repo] = segments.slice(-2);
     if (segments.length < 2) return null;
+    if (isGithub(trimmed)) {
+      [owner, repo] = segments.slice(0, 2);
+    } else {
+      [owner, repo] = segments.slice(-2);
+    }
   } else {
     const parts = trimmed.split('/');
     if (parts.length !== 2) return null;
@@ -65,5 +76,9 @@ export function targetPath(root: string, owner: string, repo: string): string {
 }
 
 export function visibilityChoices(owner: string, status: GithubStatus): Visibility[] {
-  return status.orgs.includes(owner) && owner !== status.login ? ['private', 'public', 'internal'] : ['private', 'public'];
+  const ownerLower = owner.toLowerCase();
+  const loginLower = status.login?.toLowerCase();
+  const isOrg = status.orgs.some((org) => org.toLowerCase() === ownerLower);
+  const isNotOwn = loginLower === null || ownerLower !== loginLower;
+  return isOrg && isNotOwn ? ['private', 'public', 'internal'] : ['private', 'public'];
 }
