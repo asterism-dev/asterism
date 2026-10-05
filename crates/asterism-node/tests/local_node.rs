@@ -31,6 +31,7 @@ impl TestNode {
             daemon_bin: daemon_bin(),
             path_env,
             bundled_version: bundled_version.into(),
+            bundled_build: asterism_proto::BUILD_ID.into(),
         };
         let node = LocalNode::new(config, sink.clone());
         let run = tokio::spawn(node.clone().run());
@@ -173,7 +174,7 @@ async fn version_mismatch_restarts_an_idle_daemon_once() {
 
     let test = TestNode::start(&home, "999.0.0", PathEnv::Inherit);
     match test.sink.wait_status(|s| matches!(s, NodeStatus::UpdateAvailable { .. })).await {
-        NodeStatus::UpdateAvailable { hello, bundled_version } => {
+        NodeStatus::UpdateAvailable { hello, bundled_version, .. } => {
             assert_ne!(hello.pid, old_pid, "idle daemon should have been replaced");
             assert_eq!(bundled_version, "999.0.0");
         }
@@ -257,7 +258,7 @@ async fn connected_status_is_published_only_once_calls_work() {
     let home = tempfile::tempdir().unwrap();
     let paths = Paths { home: home.path().join("h") };
     let sink = Arc::new(CallOnConnected { node: Default::default(), result: Default::default() });
-    let config = LocalNodeConfig { paths: paths.clone(), daemon_bin: daemon_bin(), path_env: PathEnv::Inherit, bundled_version: VERSION.into() };
+    let config = LocalNodeConfig { paths: paths.clone(), daemon_bin: daemon_bin(), path_env: PathEnv::Inherit, bundled_version: VERSION.into(), bundled_build: asterism_proto::BUILD_ID.into() };
     let node = LocalNode::new(config, sink.clone());
     let _ = sink.node.set(node.clone());
     let run = tokio::spawn(node.clone().run());

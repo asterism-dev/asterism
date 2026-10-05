@@ -107,6 +107,7 @@ impl Daemon {
         Ok(HelloResult {
             proto_version: PROTO_VERSION,
             daemon_version: env!("CARGO_PKG_VERSION").into(),
+            daemon_build: asterism_proto::BUILD_ID.into(),
             pid: std::process::id(),
             hostname: gethostname::gethostname().to_string_lossy().into_owned(),
             os: std::env::consts::OS.into(),

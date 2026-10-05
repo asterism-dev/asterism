@@ -37,7 +37,7 @@ pub trait NodeSink: Send + Sync + 'static {
 pub enum NodeStatus {
     Connecting,
     Connected { hello: HelloResult },
-    UpdateAvailable { hello: HelloResult, bundled_version: String },
+    UpdateAvailable { hello: HelloResult, bundled_version: String, bundled_build: String },
     Incompatible { message: String },
     Disconnected { reason: String },
 }
@@ -83,6 +83,7 @@ pub struct LocalNodeConfig {
     pub daemon_bin: PathBuf,
     pub path_env: PathEnv,
     pub bundled_version: String,
+    pub bundled_build: String,
 }
 
 enum Outcome {
@@ -246,7 +247,7 @@ impl LocalNode {
             Err(e) => return retry(e),
         };
 
-        let outdated = daemon_outdated(&hello.daemon_version, &config.bundled_version);
+        let outdated = daemon_outdated(&hello.daemon_version, &hello.daemon_build, &config.bundled_version, &config.bundled_build);
         let silent_restart = outdated
             && !self.restarted_for_update.load(Ordering::SeqCst)
             && !has_running_sessions(&client).await;
@@ -269,7 +270,11 @@ impl LocalNode {
         self.set_status(if !outdated {
             NodeStatus::Connected { hello }
         } else {
-            NodeStatus::UpdateAvailable { hello, bundled_version: config.bundled_version.clone() }
+            NodeStatus::UpdateAvailable {
+                hello,
+                bundled_version: config.bundled_version.clone(),
+                bundled_build: config.bundled_build.clone(),
+            }
         });
         while let Some(event) = events.recv().await {
             match event {
@@ -291,11 +296,12 @@ fn version_tuple(version: &str) -> Option<Vec<u64>> {
     version.split('.').map(|part| part.parse().ok()).collect()
 }
 
-/// A newer daemon is kept; versions that do not parse count as outdated unless identical.
-fn daemon_outdated(daemon: &str, bundled: &str) -> bool {
+/// A newer daemon is kept; at the same version a different build counts as outdated.
+fn daemon_outdated(daemon: &str, daemon_build: &str, bundled: &str, bundled_build: &str) -> bool {
     match (version_tuple(daemon), version_tuple(bundled)) {
-        (Some(d), Some(b)) => d < b,
-        _ => daemon != bundled,
+        (Some(d), Some(b)) if d != b => d < b,
+        (Some(_), Some(_)) => daemon_build != bundled_build,
+        _ => daemon != bundled || daemon_build != bundled_build,
     }
 }
 
@@ -326,11 +332,19 @@ mod tests {
 
     #[test]
     fn only_an_older_daemon_is_outdated() {
-        assert!(daemon_outdated("0.1.0", "0.2.0"));
-        assert!(daemon_outdated("0.9.0", "0.10.0"));
-        assert!(!daemon_outdated("0.2.0", "0.1.0"));
-        assert!(!daemon_outdated("0.1.0", "0.1.0"));
-        assert!(daemon_outdated("0.1.0-dev", "0.1.0"));
-        assert!(!daemon_outdated("0.1.0-dev", "0.1.0-dev"));
+        assert!(daemon_outdated("0.1.0", "b", "0.2.0", "b"));
+        assert!(daemon_outdated("0.9.0", "b", "0.10.0", "b"));
+        assert!(!daemon_outdated("0.2.0", "b", "0.1.0", "b"));
+        assert!(!daemon_outdated("0.1.0", "b", "0.1.0", "b"));
+        assert!(daemon_outdated("0.1.0-dev", "b", "0.1.0", "b"));
+        assert!(!daemon_outdated("0.1.0-dev", "b", "0.1.0-dev", "b"));
+    }
+
+    #[test]
+    fn same_version_from_another_build_is_outdated() {
+        assert!(daemon_outdated("0.2.0", "6cf7ac0", "0.2.0", "f81e486"));
+        assert!(daemon_outdated("0.2.0", "", "0.2.0", "f81e486"));
+        assert!(!daemon_outdated("0.3.0", "6cf7ac0", "0.2.0", "f81e486"));
+        assert!(daemon_outdated("0.1.0-dev", "a", "0.1.0-dev", "b"));
     }
 }

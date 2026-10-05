@@ -60,6 +60,9 @@ pub struct AgentInfo {
 pub struct HelloResult {
     pub proto_version: u32,
     pub daemon_version: String,
+    /// Empty from daemons that predate build ids.
+    #[serde(default)]
+    pub daemon_build: String,
     pub pid: u32,
     pub hostname: String,
     pub os: String,

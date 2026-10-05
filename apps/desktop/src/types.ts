@@ -27,6 +27,7 @@ export interface AgentInfo { name: string; available: boolean }
 export interface HelloResult {
   proto_version: number;
   daemon_version: string;
+  daemon_build: string;
   pid: number;
   hostname: string;
   os: string;
@@ -36,7 +37,7 @@ export interface HelloResult {
 export type NodeStatus =
   | { state: 'connecting' }
   | { state: 'connected'; hello: HelloResult }
-  | { state: 'update_available'; hello: HelloResult; bundled_version: string }
+  | { state: 'update_available'; hello: HelloResult; bundled_version: string; bundled_build: string }
   | { state: 'incompatible'; message: string }
   | { state: 'disconnected'; reason: string };
 

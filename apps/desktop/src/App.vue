@@ -81,7 +81,10 @@ onUnmounted(() => {
     <Sidebar />
     <main class="main">
       <div v-if="state.node.state === 'update_available'" class="banner">
-        Daemon update ready ({{ state.node.hello.daemon_version }} → {{ state.node.bundled_version }}).
+        <template v-if="state.node.hello.daemon_version === state.node.bundled_version">
+          Daemon is from another build ({{ state.node.hello.daemon_build || 'unknown' }} → {{ state.node.bundled_build }}).
+        </template>
+        <template v-else>Daemon update ready ({{ state.node.hello.daemon_version }} → {{ state.node.bundled_version }}).</template>
         <button @click="restart">Restart daemon</button>
       </div>
       <div v-else-if="state.node.state === 'incompatible'" class="banner error">

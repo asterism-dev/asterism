@@ -63,6 +63,7 @@ fn main() {
                 daemon_bin: std::env::current_exe()?.with_file_name("asterismd"),
                 path_env: PathEnv::LoginShell,
                 bundled_version: env!("CARGO_PKG_VERSION").into(),
+                bundled_build: asterism_proto::BUILD_ID.into(),
             };
             let node = LocalNode::new(config, Arc::new(TauriSink(app.handle().clone())));
             app.manage(node.clone());
