@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { DockviewVue, themeLight, type DockviewApi, type DockviewReadyEvent, type VueComponent } from 'dockview-vue';
+import { DockviewVue, getPanelData, themeLight, type DockviewApi, type DockviewReadyEvent, type VueComponent } from 'dockview-vue';
 import { computed, onUnmounted, watch } from 'vue';
 import { read, write } from '../dock/storage';
 import { takePlacement } from '../dock/workspace';
@@ -68,13 +68,18 @@ function onReady(e: DockviewReadyEvent) {
   ];
 }
 
+// Nested dockviews share one drop-target registry; if the outer one sees our drags it takes them over and the drop is lost.
+function keepInside(e: DragEvent) {
+  if (dock && getPanelData()?.viewId === dock.id) e.stopPropagation();
+}
+
 watch(sessionIds, sync);
 watch(() => state.selectedTab[props.task.id], showSelected);
 onUnmounted(() => disposables.forEach((d) => d.dispose()));
 </script>
 
 <template>
-  <div class="pane">
+  <div class="pane" @dragenter="keepInside" @dragover="keepInside" @dragleave="keepInside" @drop="keepInside">
     <DockviewVue
       class="dock"
       :theme="themeLight"
