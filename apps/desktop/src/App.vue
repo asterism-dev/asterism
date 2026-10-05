@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { computed, onMounted, onUnmounted } from 'vue';
 import { api, errorMessage } from './api';
@@ -62,14 +61,6 @@ onMounted(async () => {
     await listen<NodeEvent>('node-event', (e) => {
       const waiting = applyEvent(state, e.payload);
       if (waiting) notify(waiting).catch(() => {});
-    }),
-  );
-  unlisteners.push(
-    await getCurrentWebview().onDragDropEvent(async (e) => {
-      if (e.payload.type !== 'drop') return;
-      for (const path of e.payload.paths) {
-        await api.addProject(path).catch((err) => toast(`${path}: ${errorMessage(err)}`));
-      }
     }),
   );
   window.addEventListener('keydown', onKey);

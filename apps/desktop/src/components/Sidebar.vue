@@ -157,7 +157,7 @@ function taskMenu(e: MouseEvent, t: Task) {
           </div>
         </template>
       </div>
-      <p v-if="connected && !state.projects.length" class="hint">Drop a git repository onto the window, or click + to add, clone or create a project.</p>
+      <p v-if="connected && !state.projects.length" class="hint">Click + to add, clone or create a project.</p>
     </div>
     <button class="settings-button" :class="{ active: state.settingsOpen }" @click="state.settingsOpen = true">⚙ Settings</button>
   </aside>

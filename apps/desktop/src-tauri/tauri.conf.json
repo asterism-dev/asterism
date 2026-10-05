@@ -10,7 +10,7 @@
   },
   "app": {
     "windows": [
-      { "label": "main", "title": "asterism", "width": 1280, "height": 820, "minWidth": 800, "minHeight": 500 }
+      { "label": "main", "title": "asterism", "width": 1280, "height": 820, "minWidth": 800, "minHeight": 500, "dragDropEnabled": false }
     ],
     "security": {
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
