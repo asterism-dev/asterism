@@ -9,6 +9,7 @@ pub mod config;
 pub mod daemon;
 pub mod error;
 pub mod git;
+pub mod github;
 pub mod node_settings;
 pub mod paths;
 pub mod repo_source;

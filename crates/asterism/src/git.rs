@@ -75,3 +75,107 @@ pub fn diff(worktree: &Path, base: &str) -> Result<String> {
     }
     Ok(patch)
 }
+
+pub type GitEnv = [(String, String)];
+
+const MESSAGE_LIMIT: usize = 2_000;
+
+pub fn truncate(message: &str) -> String {
+    let trimmed = message.trim();
+    if trimmed.chars().count() <= MESSAGE_LIMIT {
+        trimmed.to_string()
+    } else {
+        format!("{}…", trimmed.chars().take(MESSAGE_LIMIT).collect::<String>())
+    }
+}
+
+/// Clones must never wait for a password prompt nobody can answer.
+pub fn clone_env(extra: &GitEnv) -> Vec<(String, String)> {
+    let mut env = vec![("GIT_TERMINAL_PROMPT".to_string(), "0".to_string())];
+    if std::env::var_os("GIT_SSH_COMMAND").is_none() {
+        env.push(("GIT_SSH_COMMAND".to_string(), "ssh -o BatchMode=yes".to_string()));
+    }
+    env.extend(extra.iter().cloned());
+    env
+}
+
+fn run_with_env(dir: Option<&Path>, args: &[&str], env: &GitEnv) -> Result<String> {
+    let mut cmd = Command::new("git");
+    if let Some(dir) = dir {
+        cmd.arg("-C").arg(dir);
+    }
+    let out = cmd.args(args).envs(env.iter().map(|(k, v)| (k, v))).stdin(std::process::Stdio::null()).output()?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(Error::new(ErrorKind::Git, truncate(&String::from_utf8_lossy(&out.stderr))))
+    }
+}
+
+pub fn remote_url(repo: &Path, remote: &str) -> Option<String> {
+    git(repo, &["remote", "get-url", remote]).ok().map(|url| url.trim().to_string()).filter(|url| !url.is_empty())
+}
+
+pub fn clone_url(url: &str, target: &Path, extra: &GitEnv) -> Result<()> {
+    let target = target.to_string_lossy();
+    run_with_env(None, &["clone", "-q", "--", url, &target], &clone_env(extra)).map(|_| ())
+}
+
+pub fn init_with_readme(dir: &Path, name: &str, extra: &GitEnv) -> Result<()> {
+    std::fs::create_dir_all(dir)?;
+    run_with_env(Some(dir), &["init", "-q", "-b", "main"], extra)?;
+    std::fs::write(dir.join("README.md"), format!("# {name}\n"))?;
+    run_with_env(Some(dir), &["add", "README.md"], extra)?;
+    run_with_env(Some(dir), &["commit", "-q", "-m", "Initial commit"], extra).map(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn isolated() -> Vec<(String, String)> {
+        [
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+            ("GIT_CONFIG_NOSYSTEM", "1"),
+            ("GIT_AUTHOR_NAME", "t"),
+            ("GIT_AUTHOR_EMAIL", "t@example.com"),
+            ("GIT_COMMITTER_NAME", "t"),
+            ("GIT_COMMITTER_EMAIL", "t@example.com"),
+        ]
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .to_vec()
+    }
+
+    #[test]
+    fn clone_env_is_non_interactive() {
+        let env = clone_env(&[]);
+        assert!(env.contains(&("GIT_TERMINAL_PROMPT".into(), "0".into())));
+        if std::env::var_os("GIT_SSH_COMMAND").is_none() {
+            assert!(env.iter().any(|(k, v)| k == "GIT_SSH_COMMAND" && v.contains("BatchMode=yes")));
+        }
+    }
+
+    #[test]
+    fn init_clone_and_remote_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let origin = dir.path().join("origin");
+        init_with_readme(&origin, "demo", &isolated()).unwrap();
+        assert_eq!(std::fs::read_to_string(origin.join("README.md")).unwrap(), "# demo\n");
+        assert_eq!(base_ref(&origin).unwrap(), "main");
+
+        let target = dir.path().join("clone");
+        clone_url(&format!("file://{}", origin.display()), &target, &isolated()).unwrap();
+        assert!(target.join("README.md").exists());
+        assert!(remote_url(&target, "origin").unwrap().ends_with("origin"));
+        assert_eq!(remote_url(&origin, "origin"), None);
+
+        let err = clone_url("file:///definitely/missing.git", &dir.path().join("x"), &isolated()).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Git);
+    }
+
+    #[test]
+    fn long_messages_are_truncated() {
+        assert_eq!(truncate(&"x".repeat(5_000)).chars().count(), 2_001);
+        assert_eq!(truncate("short"), "short");
+    }
+}
