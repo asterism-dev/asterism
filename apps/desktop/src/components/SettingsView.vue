@@ -6,12 +6,13 @@ import { leaveSettings } from '../settingsGuard';
 import { state } from '../store';
 import { setTheme, themeChoice, type ThemeChoice } from '../theme';
 import AgentSettings from './AgentSettings.vue';
+import PathsSettings from './PathsSettings.vue';
 
 const profiles = computed(() => ('hello' in state.node ? state.node.hello.agents : []));
 const agents = computed(() => [...profiles.value.map((a) => a.name), ...BASE_AGENTS]);
 const agent = ref(agents.value[0] ?? 'shell');
 let picked = false;
-const section = ref<'interface' | 'agents'>('interface');
+const section = ref<'interface' | 'paths' | 'agents'>('interface');
 const themes: { value: ThemeChoice; label: string }[] = [
   { value: 'system', label: 'System' },
   { value: 'light', label: 'Light' },
@@ -38,7 +39,7 @@ async function pick(name: string) {
   agent.value = name;
 }
 
-async function open(next: 'interface' | 'agents') {
+async function open(next: 'interface' | 'paths' | 'agents') {
   if (next === section.value || !(await discardChanges())) return;
   state.settingsDirty = false;
   section.value = next;
@@ -54,6 +55,7 @@ async function open(next: 'interface' | 'agents') {
     <div class="settings-body">
       <nav class="settings-nav">
         <button :class="{ active: section === 'interface' }" @click="open('interface')">Interface</button>
+        <button :class="{ active: section === 'paths' }" @click="open('paths')">Paths</button>
         <button :class="{ active: section === 'agents' }" @click="open('agents')">Agents</button>
       </nav>
       <div v-if="section === 'interface'" class="settings-content">
@@ -73,6 +75,9 @@ async function open(next: 'interface' | 'agents') {
           </div>
           <p class="muted">System follows your operating system's appearance. Terminals stay dark.</p>
         </section>
+      </div>
+      <div v-else-if="section === 'paths'" class="settings-content">
+        <PathsSettings />
       </div>
       <div v-else class="settings-content">
         <div class="agent-picker">

@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ask, open } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
-import { computed } from 'vue';
+import { computed, onMounted, watch } from 'vue';
 import { api, errorMessage, RpcError } from '../api';
 import {
   addSession, isConnected, nextWaiting, nodeAggregateStatus, projectStatus, selectSession, showMenu, state, taskStatus, toast,
   waitingSessions,
 } from '../store';
+import { loadCollapsed, saveCollapsed } from '../projects';
 import { leaveSettings } from '../settingsGuard';
 import type { Project, SessionKind, Task } from '../types';
 
@@ -23,6 +24,14 @@ const offlineLabel = computed(() => {
 });
 const tasksOf = (p: Project) => state.tasks.filter((t) => t.project_id === p.id);
 const report = (e: unknown) => toast(errorMessage(e));
+
+onMounted(() => Object.assign(state.collapsed, loadCollapsed()));
+watch(() => state.collapsed, saveCollapsed, { deep: true });
+
+function toggle(p: Project) {
+  if (state.collapsed[p.id]) delete state.collapsed[p.id];
+  else state.collapsed[p.id] = true;
+}
 
 async function addFolder() {
   const path = await open({ directory: true, multiple: false });
@@ -116,22 +125,30 @@ function taskMenu(e: MouseEvent, t: Task) {
       </div>
       <div v-for="p in state.projects" :key="p.id" class="project" :class="{ offline: !connected }">
         <div class="row project-row" @contextmenu="projectMenu($event, p)">
+          <button
+            class="disclosure"
+            :aria-expanded="!state.collapsed[p.id]"
+            :aria-label="state.collapsed[p.id] ? `Expand ${p.name}` : `Collapse ${p.name}`"
+            @click="toggle(p)"
+          >{{ state.collapsed[p.id] ? '▸' : '▾' }}</button>
           <span class="dot" :class="projectStatus(state, p.id) ?? ''"></span>
-          <span class="name">{{ p.name }}</span>
+          <span class="name" @click="toggle(p)">{{ p.name }}</span>
           <button class="hover-action" title="New task" @click="state.newTaskFor = p.id">+ Task</button>
         </div>
-        <div
-          v-for="t in tasksOf(p)"
-          :key="t.id"
-          class="row task-row"
-          :class="{ selected: state.selectedTaskId === t.id }"
-          @click="openTask(t)"
-          @contextmenu="taskMenu($event, t)"
-        >
-          <span class="dot" :class="taskStatus(state, t.id) ?? ''"></span>
-          <span class="name">{{ t.title }}</span>
-          <button class="hover-action" title="Archive task" @click.stop="archive(t)">Archive</button>
-        </div>
+        <template v-if="!state.collapsed[p.id]">
+          <div
+            v-for="t in tasksOf(p)"
+            :key="t.id"
+            class="row task-row"
+            :class="{ selected: state.selectedTaskId === t.id }"
+            @click="openTask(t)"
+            @contextmenu="taskMenu($event, t)"
+          >
+            <span class="dot" :class="taskStatus(state, t.id) ?? ''"></span>
+            <span class="name">{{ t.title }}</span>
+            <button class="hover-action" title="Archive task" @click.stop="archive(t)">Archive</button>
+          </div>
+        </template>
       </div>
       <p v-if="connected && !state.projects.length" class="hint">Drop a git repository onto the window, or click + to add, clone or create a project.</p>
     </div>
@@ -146,6 +163,8 @@ function taskMenu(e: MouseEvent, t: Task) {
 .row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .node-row { font-weight: 600; }
 .project-row { margin-top: 8px; font-weight: 500; }
+.disclosure { border: 0; padding: 0 2px; background: transparent; width: 16px; color: var(--muted); }
+.project-row .name { cursor: default; }
 .task-row { padding-left: 22px; cursor: default; }
 .task-row:hover, .project-row:hover { background: var(--select); }
 .task-row.selected { background: var(--select); }
