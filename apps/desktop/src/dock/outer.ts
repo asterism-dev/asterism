@@ -23,6 +23,18 @@ function addDefault(api: DockviewApi, pane: ToolPane, background = false) {
   }
 }
 
+// The Workspace has its own tab strips; its outer group shows no header and takes no tabs.
+function isWorkspaceGroup(group: { panels: { id: string }[] } | undefined) {
+  return !!group?.panels.some((p) => p.id === 'workspace');
+}
+
+function hideWorkspaceHeader(api: DockviewApi) {
+  const group = api.getPanel('workspace')?.group;
+  if (!group) return;
+  for (const panel of group.panels.filter((p) => p.id !== 'workspace')) panel.api.moveTo({ group, position: 'right' });
+  group.header.hidden = true;
+}
+
 function save(api: DockviewApi) {
   write(OUTER_KEY, JSON.stringify({ layout: api.toJSON(), closed }));
 }
@@ -50,17 +62,21 @@ export function attachOuter(api: DockviewApi) {
       const kept = keptSizes(before, api.groups.map((g) => g.id), api.getPanel('workspace')?.group.id);
       for (const size of kept) api.getGroup(size.id)?.api.setSize({ width: size.width, height: size.height });
     }),
-    api.onWillShowOverlay((e) => { if (e.getData()?.viewId !== api.id) e.preventDefault(); }),
+    api.onWillShowOverlay((e) => {
+      if (e.getData()?.viewId !== api.id || (e.position === 'center' && isWorkspaceGroup(e.group))) e.preventDefault();
+    }),
     api.onDidRemovePanel((p) => {
       const pane = p.id as ToolPane;
       if (pane !== 'workspace' && !closed.includes(pane)) closed.push(pane);
     }),
     api.onDidAddPanel((p) => { closed = closed.filter((c) => c !== p.id); }),
     api.onDidLayoutChange(() => {
+      hideWorkspaceHeader(api);
       save(api);
       layoutVersion.value++;
     }),
   ];
+  hideWorkspaceHeader(api);
   outer.value = api;
   save(api);
   layoutVersion.value++;
@@ -94,4 +110,5 @@ export function resetOuterLayout() {
   api.clear();
   closed = [];
   TOOL_PANES.forEach((pane) => addDefault(api, pane, true));
+  hideWorkspaceHeader(api);
 }

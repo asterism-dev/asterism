@@ -80,7 +80,7 @@ onUnmounted(() => disposables.forEach((d) => d.dispose()));
       :theme="themeLight"
       :components="components"
       :tab-components="tabComponents"
-      :right-header-actions-component="groupActions"
+      :left-header-actions-component="groupActions"
       :disable-floating-groups="true"
       @ready="onReady"
     />
