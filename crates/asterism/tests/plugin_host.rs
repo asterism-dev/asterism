@@ -1,6 +1,6 @@
 mod common;
 
-use asterism_core::daemon::{Daemon, DaemonOptions};
+use asterism_core::daemon::Daemon;
 use asterism_core::paths::Paths;
 use asterism_proto::rpc::ErrorKind;
 use serde_json::{json, Value};
@@ -12,7 +12,7 @@ fn daemon(home: &std::path::Path, token: bool) -> std::sync::Arc<Daemon> {
     if token {
         common::set_fixture_token(&paths);
     }
-    Daemon::with_options(paths, DaemonOptions { ..common::daemon_options() }).unwrap()
+    Daemon::with_options(paths, common::daemon_options()).unwrap()
 }
 
 async fn host_call(daemon: &Daemon, method: &str) -> asterism_core::error::Result<Value> {

@@ -166,7 +166,6 @@ impl Daemon {
             }
         }
         let backend = set.backend(plugin).cloned().ok_or_else(|| unavailable("has no backend".into()))?;
-        drop(set);
         backend.call(method, params, timeout).await
     }
 
@@ -846,6 +845,30 @@ fn same_path(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plugin_env_strips_agent_variables_and_appends_extras_last() {
+        std::env::set_var("CLAUDE_ASTERISM_ENV_TEST", "1");
+        std::env::set_var("ANTHROPIC_ASTERISM_ENV_TEST", "1");
+        let home = tempfile::tempdir().unwrap();
+        let paths = Paths { home: home.path().to_path_buf() };
+        let env = plugin_env(&paths, &[("EXTRA".into(), "1".into())]).unwrap();
+        std::env::remove_var("CLAUDE_ASTERISM_ENV_TEST");
+        std::env::remove_var("ANTHROPIC_ASTERISM_ENV_TEST");
+
+        let get = |key: &str| env.iter().filter(|(k, _)| k == key).map(|(_, v)| v.clone()).collect::<Vec<_>>();
+        assert!(get("CLAUDE_ASTERISM_ENV_TEST").is_empty() && get("ANTHROPIC_ASTERISM_ENV_TEST").is_empty());
+        let path = get("PATH");
+        assert_eq!(path.len(), 1);
+        let bin_dir = tool_path().unwrap().0;
+        assert!(Path::new(&path[0]).starts_with(&bin_dir));
+        assert_eq!(get("ASTERISM_HOME"), [paths.home.display().to_string()]);
+        assert_eq!(get("ASTERISM_SOCKET"), [paths.socket().display().to_string()]);
+        assert!(get("ASTERISM_CLI")[0].ends_with("/asterism"));
+        let position = |key: &str| env.iter().position(|(k, _)| k == key).unwrap();
+        assert_eq!(get("EXTRA"), ["1"]);
+        assert!(position("EXTRA") > position("ASTERISM_CLI"));
+    }
 
     #[test]
     fn slugs_are_branch_safe_and_unique_by_id() {
