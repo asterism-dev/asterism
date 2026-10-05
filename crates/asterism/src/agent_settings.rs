@@ -13,7 +13,7 @@ use crate::config::{Config, EnvPolicy};
 use crate::error::{Error, Result};
 
 /// Serialises settings writers: config.toml is read-modify-write and the temp names must not collide.
-static SAVE_LOCK: Mutex<()> = Mutex::new(());
+pub(crate) static SAVE_LOCK: Mutex<()> = Mutex::new(());
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Flags that would override or break asterism's own launch.

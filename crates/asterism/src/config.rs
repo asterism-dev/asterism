@@ -14,8 +14,25 @@ pub const DEFAULT_REMOVE: &[&str] = &["CLAUDE*", "ANTHROPIC_*"];
 #[derive(Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default, skip_serializing_if = "PathsConfig::is_empty")]
+    pub paths: PathsConfig,
     #[serde(default)]
     pub agents: BTreeMap<String, AgentConfig>,
+}
+
+#[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PathsConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repos: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktrees: Option<String>,
+}
+
+impl PathsConfig {
+    pub fn is_empty(&self) -> bool {
+        self.repos.is_none() && self.worktrees.is_none()
+    }
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]
