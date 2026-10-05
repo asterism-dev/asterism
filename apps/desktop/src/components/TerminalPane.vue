@@ -20,6 +20,7 @@ let fit: FitAddon | null = null;
 let observer: ResizeObserver | null = null;
 let resizeTimer: number | undefined;
 let attached = false;
+let replaying = false;
 let disposed = false;
 let generation = 0;
 
@@ -51,7 +52,11 @@ async function attach() {
     const result = await api.attach(props.sessionId, channel);
     if (disposed || mine !== generation) return;
     term.resize(result.cols, result.rows);
-    term.write(decodeBase64(result.snapshot));
+    // Replayed output repeats old terminal queries; xterm's answers to them must not reach the process.
+    replaying = true;
+    term.write(decodeBase64(result.snapshot), () => {
+      if (mine === generation) replaying = false;
+    });
     painted = true;
     pending.forEach((data) => term?.write(decodeBase64(data)));
     attached = true;
@@ -99,7 +104,9 @@ onMounted(() => {
   observer.observe(el.value);
   fit.fit();
   if (props.live) {
-    term.onData((data) => void api.send(props.sessionId, data));
+    term.onData((data) => {
+      if (!replaying) void api.send(props.sessionId, data);
+    });
     if (isConnected(state.node)) attach();
   } else {
     showFinalScreen();
