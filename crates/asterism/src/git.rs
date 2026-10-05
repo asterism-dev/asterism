@@ -235,3 +235,95 @@ mod tests {
         assert_eq!(truncate("short"), "short");
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeEntry {
+    pub path: String,
+    pub head: String,
+    pub branch: Option<String>,
+    pub is_main: bool,
+    pub locked: bool,
+    pub prunable: bool,
+}
+
+/// Parses `git worktree list --porcelain`; the first entry is the main checkout.
+pub fn parse_worktrees(text: &str) -> Vec<WorktreeEntry> {
+    let mut list: Vec<WorktreeEntry> = Vec::new();
+    for line in text.lines() {
+        let (key, value) = line.split_once(' ').unwrap_or((line, ""));
+        if key == "worktree" {
+            list.push(WorktreeEntry {
+                path: value.to_string(),
+                head: String::new(),
+                branch: None,
+                is_main: list.is_empty(),
+                locked: false,
+                prunable: false,
+            });
+            continue;
+        }
+        let Some(entry) = list.last_mut() else { continue };
+        match key {
+            "HEAD" => entry.head = value.to_string(),
+            "branch" => entry.branch = Some(value.strip_prefix("refs/heads/").unwrap_or(value).to_string()),
+            "locked" => entry.locked = true,
+            "prunable" => entry.prunable = true,
+            _ => {}
+        }
+    }
+    list
+}
+
+pub fn worktrees(repo: &Path) -> Result<Vec<WorktreeEntry>> {
+    Ok(parse_worktrees(&git(repo, &["worktree", "list", "--porcelain"])?))
+}
+
+pub fn prune_worktrees(repo: &Path) -> Result<()> {
+    git(repo, &["worktree", "prune"]).map(|_| ())
+}
+
+/// Bytes below `path` without following symlinks; skips the main checkout's `.git` object store.
+pub fn dir_size(path: &Path) -> u64 {
+    fn walk(path: &Path, top: bool) -> u64 {
+        let Ok(entries) = std::fs::read_dir(path) else { return 0 };
+        entries
+            .filter_map(|e| e.ok())
+            .map(|entry| match entry.file_type() {
+                Ok(t) if t.is_dir() => {
+                    if top && entry.file_name() == ".git" { 0 } else { walk(&entry.path(), false) }
+                }
+                Ok(t) if t.is_file() => entry.metadata().map(|m| m.len()).unwrap_or(0),
+                _ => 0,
+            })
+            .sum()
+    }
+    walk(path, true)
+}
+
+#[cfg(test)]
+mod worktree_tests {
+    use super::*;
+
+    #[test]
+    fn parses_porcelain_worktree_list() {
+        let text = "worktree /repo\nHEAD 1111111111\nbranch refs/heads/main\n\nworktree /wt/a\nHEAD 2222222222\nbranch refs/heads/asterism/1-a\nlocked reason\n\nworktree /wt/b\nHEAD 3333333333\ndetached\nprunable gitdir file points to non-existent location\n\n";
+        let list = parse_worktrees(text);
+        assert_eq!(list.len(), 3);
+        assert_eq!((list[0].path.as_str(), list[0].branch.as_deref(), list[0].is_main), ("/repo", Some("main"), true));
+        assert_eq!((list[1].branch.as_deref(), list[1].locked, list[1].is_main), (Some("asterism/1-a"), true, false));
+        assert_eq!((list[2].branch.as_deref(), list[2].prunable, list[2].head.as_str()), (None, true, "3333333333"));
+    }
+
+    #[test]
+    fn dir_size_counts_files_but_not_symlinks_or_the_main_git_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a"), vec![0u8; 100]).unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        std::fs::write(dir.path().join("sub/b"), vec![0u8; 50]).unwrap();
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        std::fs::write(dir.path().join(".git/objects"), vec![0u8; 1000]).unwrap();
+        std::os::unix::fs::symlink(dir.path().join("a"), dir.path().join("link")).unwrap();
+        assert_eq!(dir_size(dir.path()), 150);
+        assert_eq!(dir_size(&dir.path().join("missing")), 0);
+    }
+}

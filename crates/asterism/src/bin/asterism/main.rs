@@ -74,6 +74,11 @@ enum ProjectCmd {
     Add { path: Option<PathBuf> },
     List,
     Remove { id: i64 },
+    /// List the git worktrees of a project.
+    Worktrees {
+        #[arg(long)]
+        project: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -211,6 +216,17 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
         Cmd::Project(ProjectCmd::List) => {
             let projects: Vec<Project> = client.call(method::PROJECT_LIST, ()).await?;
             print(json, &projects, || lines(&projects, project_line));
+        }
+        Cmd::Project(ProjectCmd::Worktrees { project }) => {
+            let project_id = resolve_project(&client, project).await?;
+            let list: Vec<Worktree> = client.call(method::PROJECT_WORKTREES, ProjectIdParams { project_id }).await?;
+            print(json, &list, || {
+                lines(&list, |w| {
+                    let branch = w.branch.clone().unwrap_or_else(|| format!("detached@{}", &w.head[..w.head.len().min(7)]));
+                    let task = w.task_id.map(|id| format!("\ttask {id}")).unwrap_or_default();
+                    format!("{}\t{branch}{task}", w.path)
+                })
+            });
         }
         Cmd::Project(ProjectCmd::Remove { id }) => {
             client.call::<_, ()>(method::PROJECT_REMOVE, ProjectIdParams { project_id: id }).await?;

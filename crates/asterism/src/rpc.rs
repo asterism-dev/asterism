@@ -180,6 +180,34 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
             let params = params::<NodeStatsParams>(raw)?;
             blocking(move || to_value(daemon.stats(params))).await
         }
+        method::PROJECT_WORKTREES => {
+            let daemon = daemon.clone();
+            let id = params::<ProjectIdParams>(raw)?.project_id;
+            blocking(move || to_value(daemon.project_worktrees(id)?)).await
+        }
+        method::PROJECT_WORKTREE_SIZES => {
+            let daemon = daemon.clone();
+            let id = params::<ProjectIdParams>(raw)?.project_id;
+            blocking(move || to_value(daemon.project_worktree_sizes(id)?)).await
+        }
+        method::PROJECT_WORKTREE_REMOVE => {
+            let daemon = daemon.clone();
+            let p: ProjectWorktreeParams = params(raw)?;
+            blocking(move || {
+                daemon.remove_worktree(p.project_id, &p.path)?;
+                Ok(Value::Null)
+            })
+            .await
+        }
+        method::PROJECT_WORKTREE_PRUNE => {
+            let daemon = daemon.clone();
+            let id = params::<ProjectIdParams>(raw)?.project_id;
+            blocking(move || {
+                daemon.prune_worktrees(id)?;
+                Ok(Value::Null)
+            })
+            .await
+        }
         method::GITHUB_STATUS => {
             let daemon = daemon.clone();
             blocking(move || to_value(daemon.github_status())).await

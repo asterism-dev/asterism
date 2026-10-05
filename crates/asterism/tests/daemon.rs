@@ -440,3 +440,45 @@ async fn stats_cover_running_sessions_and_requested_pids() {
     assert_eq!(stats.processes[0].pid, me);
     env.daemon.kill_session(session.id).ok();
 }
+
+#[tokio::test]
+async fn worktrees_cover_main_linked_and_foreign_checkouts() {
+    let env = setup();
+    let project = env.daemon.add_project(&env.repo.path().display().to_string()).unwrap();
+    let task = new_task(&env, "listed");
+    let foreign = tempfile::tempdir().unwrap();
+    let foreign_path = foreign.path().join("hand-made");
+    run_git(env.repo.path(), &["worktree", "add", "-q", "-b", "hand", &foreign_path.display().to_string()]);
+
+    let list = env.daemon.project_worktrees(project.id).unwrap();
+    assert_eq!(list.len(), 3);
+    assert!(list[0].is_main);
+    let linked = list.iter().find(|w| w.task_id == Some(task.id)).expect("task worktree is linked despite symlinked tmp paths");
+    assert_eq!(linked.base_branch.as_deref(), Some(task.base_branch.as_str()));
+    let hand = list.iter().find(|w| w.branch.as_deref() == Some("hand")).unwrap();
+    assert_eq!((hand.task_id, hand.base_branch.as_ref()), (None, None));
+
+    let sizes = env.daemon.project_worktree_sizes(project.id).unwrap();
+    assert_eq!(sizes.len(), 3);
+    assert!(sizes.iter().all(|s| s.bytes > 0));
+}
+
+#[tokio::test]
+async fn worktree_remove_only_takes_unlinked_listed_worktrees() {
+    let env = setup();
+    let project = env.daemon.add_project(&env.repo.path().display().to_string()).unwrap();
+    let task = new_task(&env, "linked");
+    let foreign = tempfile::tempdir().unwrap();
+    let foreign_path = foreign.path().join("hand-made");
+    run_git(env.repo.path(), &["worktree", "add", "-q", "-b", "hand", &foreign_path.display().to_string()]);
+    let list = env.daemon.project_worktrees(project.id).unwrap();
+    let main = list.iter().find(|w| w.is_main).unwrap().path.clone();
+    let hand = list.iter().find(|w| w.branch.as_deref() == Some("hand")).unwrap().path.clone();
+
+    for refused in [main, task.worktree_path.clone(), "/not/a/worktree".to_string()] {
+        assert_eq!(env.daemon.remove_worktree(project.id, &refused).unwrap_err().kind, ErrorKind::InvalidParams, "{refused}");
+    }
+    env.daemon.remove_worktree(project.id, &hand).unwrap();
+    assert!(!foreign_path.exists());
+    env.daemon.prune_worktrees(project.id).unwrap();
+}

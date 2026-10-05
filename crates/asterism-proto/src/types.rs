@@ -39,6 +39,10 @@ pub mod method {
     pub const PROJECT_CLONE: &str = "project.clone";
     pub const PROJECT_CREATE: &str = "project.create";
     pub const NODE_STATS: &str = "node.stats";
+    pub const PROJECT_WORKTREES: &str = "project.worktrees";
+    pub const PROJECT_WORKTREE_SIZES: &str = "project.worktree_sizes";
+    pub const PROJECT_WORKTREE_REMOVE: &str = "project.worktree_remove";
+    pub const PROJECT_WORKTREE_PRUNE: &str = "project.worktree_prune";
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -90,6 +94,31 @@ pub struct ProjectAddParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectIdParams {
     pub project_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectWorktreeParams {
+    pub project_id: i64,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Worktree {
+    pub path: String,
+    pub head: String,
+    /// Short branch name; `None` for a detached HEAD.
+    pub branch: Option<String>,
+    pub is_main: bool,
+    pub locked: bool,
+    pub prunable: bool,
+    pub task_id: Option<i64>,
+    pub base_branch: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorktreeSize {
+    pub path: String,
+    pub bytes: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

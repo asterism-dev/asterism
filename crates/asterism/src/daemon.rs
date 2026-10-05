@@ -356,6 +356,51 @@ impl Daemon {
         Ok(TaskDeleteResult { warning: (!warnings.is_empty()).then(|| warnings.join("; ")) })
     }
 
+    pub fn project_worktrees(&self, project_id: i64) -> Result<Vec<Worktree>> {
+        let repo = self.project_path(project_id)?;
+        let tasks = self.store().tasks(Some(project_id), true)?;
+        Ok(git::worktrees(&repo)?
+            .into_iter()
+            .map(|entry| {
+                let task = tasks.iter().find(|t| same_path(&t.worktree_path, &entry.path));
+                Worktree {
+                    task_id: task.map(|t| t.id),
+                    base_branch: task.map(|t| t.base_branch.clone()),
+                    path: entry.path,
+                    head: entry.head,
+                    branch: entry.branch,
+                    is_main: entry.is_main,
+                    locked: entry.locked,
+                    prunable: entry.prunable,
+                }
+            })
+            .collect())
+    }
+
+    pub fn project_worktree_sizes(&self, project_id: i64) -> Result<Vec<WorktreeSize>> {
+        let repo = self.project_path(project_id)?;
+        Ok(git::worktrees(&repo)?
+            .into_iter()
+            .map(|entry| WorktreeSize { bytes: git::dir_size(Path::new(&entry.path)), path: entry.path })
+            .collect())
+    }
+
+    pub fn remove_worktree(&self, project_id: i64, path: &str) -> Result<()> {
+        let repo = self.project_path(project_id)?;
+        let listed = self.project_worktrees(project_id)?;
+        let Some(worktree) = listed.iter().find(|w| same_path(&w.path, path)) else {
+            return Err(Error::new(ErrorKind::InvalidParams, format!("{path} is not a worktree of this project")));
+        };
+        if worktree.is_main || worktree.task_id.is_some() {
+            return Err(Error::new(ErrorKind::InvalidParams, format!("{path} is the main checkout or belongs to a task")));
+        }
+        git::remove_worktree(&repo, Path::new(&worktree.path), true)
+    }
+
+    pub fn prune_worktrees(&self, project_id: i64) -> Result<()> {
+        git::prune_worktrees(&self.project_path(project_id)?)
+    }
+
     fn project_path(&self, project_id: i64) -> Result<PathBuf> {
         let project = self.store().project(project_id)?.ok_or_else(|| not_found("project", project_id))?;
         Ok(PathBuf::from(project.path))
@@ -686,6 +731,12 @@ pub fn slugify(id: i64, title: &str) -> String {
 pub fn last_lines(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.trim_end().lines().collect();
     lines[lines.len().saturating_sub(n)..].join("\n")
+}
+
+/// git prints worktree paths with symlinks resolved (`/private/var` on macOS), tasks store them as created.
+fn same_path(a: &str, b: &str) -> bool {
+    let canonical = |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p));
+    a == b || canonical(a) == canonical(b)
 }
 
 #[cfg(test)]
