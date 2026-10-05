@@ -14,7 +14,10 @@ const dirty = computed(() => saved.value !== '' && JSON.stringify(form.value) !=
 
 watch(dirty, (value) => (state.settingsDirty = value), { immediate: true });
 
-onMounted(async () => {
+onMounted(load);
+
+async function load() {
+  error.value = null;
   try {
     const info = await api.nodeConfig();
     form.value = { ...info.config.paths };
@@ -23,9 +26,10 @@ onMounted(async () => {
   } catch (e) {
     error.value = errorMessage(e);
   }
-});
+}
 
 async function choose(key: keyof PathSettings) {
+  error.value = null;
   const picked = await open({ directory: true, multiple: false, defaultPath: form.value[key] || undefined });
   if (typeof picked === 'string') form.value[key] = picked;
 }
@@ -66,5 +70,6 @@ const fields: { key: keyof PathSettings; label: string }[] = [
       <span class="muted">Applies to new repositories and tasks; existing worktrees stay where they are.</span>
     </div>
     <p v-if="error" class="error">{{ error }}</p>
+    <button v-if="error && !saved" @click="load">Retry</button>
   </div>
 </template>

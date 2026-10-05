@@ -34,6 +34,7 @@ async function submit() {
     });
     addTask(state, created.task);
     state.selectedTaskId = created.task.id;
+    delete state.collapsed[projectId.value];
     if (created.session) addSession(state, created.session);
     emit('close');
   } catch (e) {

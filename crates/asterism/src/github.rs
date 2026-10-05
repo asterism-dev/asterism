@@ -123,8 +123,8 @@ pub fn clone(gh: &Path, owner: &str, repo: &str, target: &Path, extra: &git::Git
     run(gh, &["repo", "clone", &name, &target.to_string_lossy()], extra).map(|_| ())
 }
 
-pub fn create(gh: &Path, target: &GithubTarget, name: &str, dir: &Path, extra: &git::GitEnv) -> Result<()> {
-    let full = format!("{}/{name}", target.owner);
+pub fn create(gh: &Path, target: &GithubTarget, owner: &str, name: &str, dir: &Path, extra: &git::GitEnv) -> Result<()> {
+    let full = format!("{owner}/{name}");
     let visibility = match target.visibility {
         Visibility::Public => "--public",
         Visibility::Private => "--private",
@@ -205,13 +205,13 @@ exit 0
         let dir = tempfile::tempdir().unwrap();
         let gh = fake_gh(dir.path(), true, false);
         let target = GithubTarget { owner: "acme".into(), visibility: Visibility::Private };
-        create(&gh, &target, "demo", dir.path(), &[]).unwrap();
+        create(&gh, &target, &target.owner, "demo", dir.path(), &[]).unwrap();
         let log = std::fs::read_to_string(dir.path().join("gh.log")).unwrap();
         let line = log.lines().find(|l| l.starts_with("repo create")).unwrap();
         assert!(line.contains("acme/demo") && line.contains("--private") && line.contains("--remote origin") && line.contains("--push"), "{line}");
 
         let failing = fake_gh(dir.path(), true, true);
-        let err = create(&failing, &target, "demo", dir.path(), &[]).unwrap_err();
+        let err = create(&failing, &target, &target.owner, "demo", dir.path(), &[]).unwrap_err();
         assert!(err.message.contains("already exists"), "{}", err.message);
     }
 }

@@ -126,6 +126,7 @@ function taskMenu(e: MouseEvent, t: Task) {
       <div v-for="p in state.projects" :key="p.id" class="project" :class="{ offline: !connected }">
         <div class="row project-row" @contextmenu="projectMenu($event, p)">
           <button
+            type="button"
             class="disclosure"
             :aria-expanded="!state.collapsed[p.id]"
             :aria-label="state.collapsed[p.id] ? `Expand ${p.name}` : `Collapse ${p.name}`"

@@ -101,6 +101,11 @@ async fn github_creation_validates_owner_and_visibility() {
     let ok = env.daemon.create_project(&ProjectCreateParams { name: "svc".into(), github: target("acme", Visibility::Internal) }).unwrap();
     assert!(ok.github_error.is_none());
     assert!(env.home.path().join("h/repos/acme/svc/README.md").exists());
+    let cased = env.daemon.create_project(&ProjectCreateParams { name: "svc2".into(), github: target("ACME", Visibility::Private) }).unwrap();
+    assert!(cased.github_error.is_none());
+    assert!(env.home.path().join("h/repos/acme/svc2/README.md").exists());
+    let owners: Vec<_> = std::fs::read_dir(env.home.path().join("h/repos")).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert!(!owners.iter().any(|o| o == "ACME"), "{owners:?}");
     for (owner, visibility) in [("stranger", Visibility::Private), ("me", Visibility::Internal)] {
         let err = env.daemon.create_project(&ProjectCreateParams { name: "x".into(), github: target(owner, visibility) }).unwrap_err();
         assert_eq!(err.kind, ErrorKind::InvalidParams, "{owner}");

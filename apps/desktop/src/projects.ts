@@ -79,6 +79,6 @@ export function visibilityChoices(owner: string, status: GithubStatus): Visibili
   const ownerLower = owner.toLowerCase();
   const loginLower = status.login?.toLowerCase();
   const isOrg = status.orgs.some((org) => org.toLowerCase() === ownerLower);
-  const isNotOwn = loginLower === null || ownerLower !== loginLower;
+  const isNotOwn = !loginLower || ownerLower !== loginLower;
   return isOrg && isNotOwn ? ['private', 'public', 'internal'] : ['private', 'public'];
 }

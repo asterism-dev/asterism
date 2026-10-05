@@ -55,8 +55,11 @@ pub fn load(paths: &Paths) -> Result<NodeConfigInfo> {
 
 /// Also creates both directories, so a successful validation leaves them in place.
 pub fn validate(config: &NodeConfig) -> Result<()> {
+    let mut resolved = Vec::new();
     for (label, value) in [("repositories", &config.paths.repos), ("worktrees", &config.paths.worktrees)] {
-        let path = expand_home(value).map_err(|e| invalid(format!("{label}: {}", e.message)))?;
+        resolved.push((label, expand_home(value).map_err(|e| invalid(format!("{label}: {}", e.message)))?));
+    }
+    for (label, path) in resolved {
         std::fs::create_dir_all(&path).map_err(|e| invalid(format!("{label}: cannot create {}: {e}", path.display())))?;
     }
     Ok(())
@@ -142,6 +145,15 @@ mod tests {
             assert_eq!(save(&paths, &config).unwrap_err().kind, ErrorKind::InvalidParams, "{bad:?}");
         }
         assert_eq!(std::fs::read_to_string(paths.config()).ok(), before);
+    }
+
+    #[test]
+    fn invalid_worktrees_do_not_create_repos_dir() {
+        let (dir, paths) = temp_paths();
+        let repos = dir.path().join("newrepos");
+        let config = NodeConfig { paths: PathSettings { repos: repos.display().to_string(), worktrees: "relative".into() } };
+        assert!(save(&paths, &config).is_err());
+        assert!(!repos.exists());
     }
 
     #[test]

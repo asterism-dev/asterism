@@ -73,7 +73,12 @@ pub fn parse_source(source: &str) -> Result<RepoSource> {
             owner_repo_from_url(source).ok_or_else(|| invalid(format!("cannot read owner/repo from {source:?}")))?;
         check_name("owner", &owner)?;
         check_name("repository name", &repo)?;
-        return Ok(RepoSource { owner, repo, url: Some(source.to_string()) });
+        let url = if is_github(source) && url_path(source).is_some_and(|p| p.trim_matches('/').split('/').count() > 2) {
+            format!("https://github.com/{owner}/{repo}.git")
+        } else {
+            source.to_string()
+        };
+        return Ok(RepoSource { owner, repo, url: Some(url) });
     }
     let (owner, repo) = source
         .split_once('/')
@@ -101,6 +106,10 @@ mod tests {
         assert_eq!(
             parse_source("git@github.com:acme/api.git").unwrap(),
             src("acme", "api", Some("git@github.com:acme/api.git"))
+        );
+        assert_eq!(
+            parse_source("https://github.com/acme/api/tree/main").unwrap(),
+            src("acme", "api", Some("https://github.com/acme/api.git"))
         );
         assert_eq!(
             parse_source("ssh://git@gitlab.com/group/sub/tool").unwrap(),

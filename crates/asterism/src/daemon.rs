@@ -200,14 +200,15 @@ impl Daemon {
                 if !status.logged_in {
                     return Err(Error::new(ErrorKind::InvalidParams, "the GitHub CLI is not logged in; run `gh auth login`"));
                 }
-                let is_user = status.login.as_deref().is_some_and(|login| login.eq_ignore_ascii_case(&target.owner));
-                if !is_user && !status.orgs.iter().any(|org| org.eq_ignore_ascii_case(&target.owner)) {
+                let user = status.login.as_deref().filter(|login| login.eq_ignore_ascii_case(&target.owner));
+                let is_user = user.is_some();
+                let Some(canonical) = user.or_else(|| status.orgs.iter().map(String::as_str).find(|org| org.eq_ignore_ascii_case(&target.owner))) else {
                     return Err(Error::new(ErrorKind::InvalidParams, format!("{} is not you or one of your organizations", target.owner)));
-                }
+                };
                 if is_user && target.visibility == Visibility::Internal {
                     return Err(Error::new(ErrorKind::InvalidParams, "internal visibility needs an organization owner"));
                 }
-                target.owner.clone()
+                canonical.to_string()
             }
             None => LOCAL_OWNER.to_string(),
         };
@@ -220,7 +221,7 @@ impl Daemon {
         let github_error = params
             .github
             .as_ref()
-            .and_then(|target| github::create(&self.options.gh_bin, target, &params.name, &dir, &self.options.git_env).err())
+            .and_then(|target| github::create(&self.options.gh_bin, target, &owner, &params.name, &dir, &self.options.git_env).err())
             .map(|e| e.message);
         Ok(ProjectCreateResult { project, github_error })
     }
