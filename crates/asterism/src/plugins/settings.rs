@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use asterism_proto::paths::Paths;
 use asterism_proto::rpc::ErrorKind;
@@ -14,6 +15,8 @@ use crate::error::{Error, Result};
 
 type Secrets = BTreeMap<String, BTreeMap<String, String>>;
 
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 fn invalid(message: String) -> Error {
     Error::new(ErrorKind::InvalidParams, message)
 }
@@ -21,7 +24,7 @@ fn invalid(message: String) -> Error {
 fn load_secrets(paths: &Paths) -> Result<Secrets> {
     let path = paths.secrets();
     match std::fs::read_to_string(&path) {
-        Ok(text) => toml::from_str(&text).map_err(|e| invalid(format!("{}: {e}", path.display()))),
+        Ok(text) => toml::from_str(&text).map_err(|_| Error::new(ErrorKind::Internal, format!("{} is not valid TOML; fix or remove it", path.display()))),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Secrets::new()),
         Err(e) => Err(e.into()),
     }
@@ -32,9 +35,10 @@ pub fn write_private(path: &Path, contents: &str) -> Result<()> {
     let dir = path.parent().ok_or_else(|| Error::new(ErrorKind::Internal, "path has no parent"))?;
     std::fs::create_dir_all(dir)?;
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let temp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    let unique = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let temp = dir.join(format!(".{name}.{}.{unique}.tmp", std::process::id()));
     let result = (|| -> io::Result<()> {
-        let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&temp)?;
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&temp)?;
         file.write_all(contents.as_bytes())?;
         file.sync_all()?;
         std::fs::rename(&temp, path)
@@ -134,10 +138,10 @@ pub fn save(paths: &Paths, plugin: &str, schema: &[SettingSpec], updates: &BTree
     }
     config.plugins.retain(|_, values| !values.is_empty());
     secrets.retain(|_, values| !values.is_empty());
-    let text = toml::to_string(&config).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
-    write_atomic(&paths.config(), &text)?;
     let text = toml::to_string(&secrets).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
-    write_private(&paths.secrets(), &text)
+    write_private(&paths.secrets(), &text)?;
+    let text = toml::to_string(&config).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+    write_atomic(&paths.config(), &text)
 }
 
 #[cfg(test)]
@@ -206,5 +210,25 @@ mod tests {
             let err = save(&paths, "echo", &schema(), &updates(bad.clone())).unwrap_err();
             assert_eq!(err.kind, ErrorKind::InvalidParams, "{bad}");
         }
+    }
+
+    #[test]
+    fn malformed_secrets_file_error_does_not_leak_secret() {
+        let (_dir, paths) = temp_paths();
+        std::fs::write(paths.secrets(), "[plugins.echo]\ntoken = \"s3cret").unwrap();
+        let err = resolved(&paths, "echo", &schema()).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Internal);
+        assert!(!err.message.contains("s3cret"), "{}", err.message);
+        assert!(err.message.contains("is not valid TOML"));
+    }
+
+    #[test]
+    fn write_private_sets_file_mode_0600() {
+        let (_dir, paths) = temp_paths();
+        std::fs::write(paths.secrets(), "").unwrap();
+        std::fs::set_permissions(paths.secrets(), std::fs::Permissions::from_mode(0o644)).unwrap();
+        save(&paths, "echo", &schema(), &updates(json!({"token": "s3cret"}))).unwrap();
+        let mode = std::fs::metadata(paths.secrets()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }
