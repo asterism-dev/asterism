@@ -4,9 +4,8 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { computed, onMounted, onUnmounted } from 'vue';
 import { api, errorMessage } from './api';
-import CloneDialog from './components/CloneDialog.vue';
+import AddProjectDialog from './components/AddProjectDialog.vue';
 import ContextMenu from './components/ContextMenu.vue';
-import CreateRepoDialog from './components/CreateRepoDialog.vue';
 import NewTaskDialog from './components/NewTaskDialog.vue';
 import SettingsView from './components/SettingsView.vue';
 import Sidebar from './components/Sidebar.vue';
@@ -95,8 +94,7 @@ onUnmounted(() => {
       <p v-else class="empty">Select a task, or create one with + Task.</p>
     </main>
     <NewTaskDialog v-if="state.newTaskFor !== null" :project-id="state.newTaskFor" @close="state.newTaskFor = null" />
-    <CloneDialog v-if="state.projectDialog === 'clone'" @close="state.projectDialog = null" />
-    <CreateRepoDialog v-if="state.projectDialog === 'create'" @close="state.projectDialog = null" />
+    <AddProjectDialog v-if="state.projectDialog" />
     <ContextMenu />
     <div class="toasts">
       <div v-for="t in state.toasts" :key="t.id" class="toast">{{ t.message }}</div>

@@ -5,7 +5,7 @@ import { repoNameError, targetPath, visibilityChoices } from '../projects';
 import { state, toast } from '../store';
 import type { GithubStatus, Visibility } from '../types';
 
-const emit = defineEmits<{ close: [] }>();
+const emit = defineEmits<{ close: []; busy: [boolean] }>();
 
 const name = ref('');
 const onGithub = ref(false);
@@ -67,45 +67,43 @@ async function create() {
     }
   }
 }
+watch(busy, (b) => emit('busy', b));
 </script>
 
 <template>
-  <div class="modal-backdrop" tabindex="-1" @click.self="!busy && emit('close')" @keydown.esc="!busy && emit('close')">
-    <form class="modal" @submit.prevent="create">
-      <h2>New repository</h2>
-      <label>Name <input ref="input" v-model="name" placeholder="my-service" spellcheck="false" :disabled="busy" /></label>
-      <p v-if="nameError" class="error">{{ nameError }}</p>
-      <div class="segmented" role="group" aria-label="Where">
-        <button type="button" :aria-pressed="!onGithub" :class="{ active: !onGithub }" :disabled="busy" @click="onGithub = false">Local only</button>
-        <button
-          type="button"
-          :aria-pressed="onGithub"
-          :class="{ active: onGithub }"
-          :disabled="busy || !status?.logged_in"
-          @click="onGithub = true"
-        >
-          On GitHub
-        </button>
-      </div>
-      <p v-if="status && !status.logged_in" class="muted">GitHub needs the GitHub CLI: run <code>gh auth login</code>.</p>
-      <template v-if="onGithub">
-        <label>Owner
-          <select v-model="owner" :disabled="busy">
-            <option v-for="o in owners" :key="o" :value="o">{{ o }}</option>
-          </select>
-        </label>
-        <label>Visibility
-          <select v-model="visibility" :disabled="busy">
-            <option v-for="v in choices" :key="v" :value="v">{{ v }}</option>
-          </select>
-        </label>
-      </template>
-      <p v-if="preview" class="muted mono">→ {{ preview }}</p>
-      <p v-if="error" class="error">{{ error }}</p>
-      <div class="actions">
-        <button type="button" :disabled="busy" @click="emit('close')">Cancel</button>
-        <button type="submit" :disabled="busy || !!nameError">{{ busy ? 'Creating…' : 'Create' }}</button>
-      </div>
-    </form>
-  </div>
+  <form class="add-form" @submit.prevent="create">
+    <label>Name <input ref="input" v-model="name" placeholder="my-service" spellcheck="false" :disabled="busy" /></label>
+    <p v-if="nameError" class="error">{{ nameError }}</p>
+    <div class="segmented" role="group" aria-label="Where">
+      <button type="button" :aria-pressed="!onGithub" :class="{ active: !onGithub }" :disabled="busy" @click="onGithub = false">Local only</button>
+      <button
+        type="button"
+        :aria-pressed="onGithub"
+        :class="{ active: onGithub }"
+        :disabled="busy || !status?.logged_in"
+        @click="onGithub = true"
+      >
+        On GitHub
+      </button>
+    </div>
+    <p v-if="status && !status.logged_in" class="muted">GitHub needs the GitHub CLI: run <code>gh auth login</code>.</p>
+    <template v-if="onGithub">
+      <label>Owner
+        <select v-model="owner" :disabled="busy">
+          <option v-for="o in owners" :key="o" :value="o">{{ o }}</option>
+        </select>
+      </label>
+      <label>Visibility
+        <select v-model="visibility" :disabled="busy">
+          <option v-for="v in choices" :key="v" :value="v">{{ v }}</option>
+        </select>
+      </label>
+    </template>
+    <p v-if="preview" class="muted mono">→ {{ preview }}</p>
+    <p v-if="error" class="error">{{ error }}</p>
+    <div class="actions">
+      <button type="button" :disabled="busy" @click="emit('close')">Cancel</button>
+      <button type="submit" :disabled="busy || !!nameError">{{ busy ? 'Creating…' : 'Create' }}</button>
+    </div>
+  </form>
 </template>

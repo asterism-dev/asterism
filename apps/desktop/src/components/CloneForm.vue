@@ -5,7 +5,7 @@ import { sourceOwnerRepo, targetPath } from '../projects';
 import { state, toast } from '../store';
 import type { GithubRepo, GithubStatus } from '../types';
 
-const emit = defineEmits<{ close: [] }>();
+const emit = defineEmits<{ close: []; busy: [boolean] }>();
 
 const source = ref('');
 const status = ref<GithubStatus | null>(null);
@@ -74,36 +74,34 @@ async function clone() {
     }
   }
 }
+watch(busy, (b) => emit('busy', b));
 </script>
 
 <template>
-  <div class="modal-backdrop" tabindex="-1" @click.self="!busy && emit('close')" @keydown.esc="!busy && emit('close')">
-    <form class="modal" @submit.prevent="clone">
-      <h2>Clone repository</h2>
-      <label>Repository <input ref="input" v-model="source" placeholder="owner/repo or https://… / git@…" spellcheck="false" :disabled="busy" /></label>
-      <p v-if="preview" class="muted mono">→ {{ preview }}</p>
-      <template v-if="status?.logged_in">
-        <label>Browse
-          <select v-model="owner" :disabled="busy">
-            <option v-for="o in owners" :key="o" :value="o">{{ o }}</option>
-          </select>
-        </label>
-        <input v-model="filter" placeholder="Filter repositories" aria-label="Filter repositories" :disabled="busy" @keydown.enter.prevent />
-        <ul class="repo-list">
-          <li v-for="r in shown" :key="r.name_with_owner">
-            <button type="button" :disabled="busy" @click="source = r.name_with_owner">
-              {{ r.name_with_owner }} <span v-if="r.private" class="muted">private</span>
-              <span v-if="r.description" class="muted">— {{ r.description }}</span>
-            </button>
-          </li>
-        </ul>
-      </template>
-      <p v-else-if="status" class="muted">{{ status.error ?? 'GitHub CLI not available' }} — you can still clone by URL.</p>
-      <p v-if="error" class="error">{{ error }}</p>
-      <div class="actions">
-        <button type="button" :disabled="busy" @click="emit('close')">Cancel</button>
-        <button type="submit" :disabled="busy">{{ busy ? 'Cloning…' : 'Clone' }}</button>
-      </div>
-    </form>
-  </div>
+  <form class="add-form" @submit.prevent="clone">
+    <label>Repository <input ref="input" v-model="source" placeholder="owner/repo or https://… / git@…" spellcheck="false" :disabled="busy" /></label>
+    <p v-if="preview" class="muted mono">→ {{ preview }}</p>
+    <template v-if="status?.logged_in">
+      <label>Browse
+        <select v-model="owner" :disabled="busy">
+          <option v-for="o in owners" :key="o" :value="o">{{ o }}</option>
+        </select>
+      </label>
+      <input v-model="filter" placeholder="Filter repositories" aria-label="Filter repositories" :disabled="busy" @keydown.enter.prevent />
+      <ul class="repo-list">
+        <li v-for="r in shown" :key="r.name_with_owner">
+          <button type="button" :disabled="busy" @click="source = r.name_with_owner">
+            {{ r.name_with_owner }} <span v-if="r.private" class="muted">private</span>
+            <span v-if="r.description" class="muted">— {{ r.description }}</span>
+          </button>
+        </li>
+      </ul>
+    </template>
+    <p v-else-if="status" class="muted">{{ status.error ?? 'GitHub CLI not available' }} — you can still clone by URL.</p>
+    <p v-if="error" class="error">{{ error }}</p>
+    <div class="actions">
+      <button type="button" :disabled="busy" @click="emit('close')">Cancel</button>
+      <button type="submit" :disabled="busy">{{ busy ? 'Cloning…' : 'Clone' }}</button>
+    </div>
+  </form>
 </template>

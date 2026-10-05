@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  activeTab, aggregate, applyEvent, initialState, moveTab, nextWaiting, nodeAggregateStatus, projectStatus, selectSession, taskSessions, taskStatus, waitingSessions,
+  activeTab, aggregate, applyEvent, initialState, moveTab, nextWaiting, selectSession, taskSessions, taskStatus, waitingSessions,
 } from './store';
 import type { Session, SessionStatus, Task } from './types';
 
@@ -20,13 +20,12 @@ describe('aggregate', () => {
     expect(aggregate(['exited'])).toBe('exited');
   });
 
-  it('rolls statuses up to tasks and projects', () => {
+  it('rolls statuses up to tasks', () => {
     const s = initialState();
-    s.tasks = [task(1), task(2), task(3, 2)];
-    s.sessions = [session(10, 1, 'idle'), session(11, 2, 'waiting_input'), session(12, 3, 'working')];
+    s.tasks = [task(1), task(2)];
+    s.sessions = [session(10, 1, 'idle'), session(11, 2, 'waiting_input'), session(12, 2, 'working')];
     expect(taskStatus(s, 1)).toBe('idle');
-    expect(projectStatus(s, 1)).toBe('waiting_input');
-    expect(projectStatus(s, 2)).toBe('working');
+    expect(taskStatus(s, 2)).toBe('waiting_input');
     expect(taskStatus(s, 99)).toBeNull();
   });
 });
@@ -100,15 +99,6 @@ describe('tabs and waiting sessions', () => {
   });
 });
 
-describe('nodeAggregateStatus', () => {
-  it('aggregates sessions of known tasks across projects', () => {
-    const s = initialState();
-    expect(nodeAggregateStatus(s)).toBeNull();
-    s.tasks = [task(1, 1), task(2, 2)];
-    s.sessions = [session(1, 1, 'idle'), session(2, 2, 'waiting_input'), session(3, 99, 'working')];
-    expect(nodeAggregateStatus(s)).toBe('waiting_input');
-  });
-});
 
 describe('session removal', () => {
   it('drops the session and its tab state so the next tab is chosen', () => {

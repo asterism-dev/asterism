@@ -6,6 +6,7 @@ import { api, errorMessage } from '../api';
 import { activeTab, addSession, moveTab, showMenu, state, taskSessions, toast, type Tab } from '../store';
 import type { Session, SessionKind, Task } from '../types';
 import DiffView from './DiffView.vue';
+import StatusIndicator from './StatusIndicator.vue';
 import TerminalPane from './TerminalPane.vue';
 
 const props = defineProps<{ task: Task }>();
@@ -87,7 +88,7 @@ function tabMenu(e: MouseEvent, s: Session) {
         @contextmenu="tabMenu($event, s)"
       >
         <button class="tab-label" @click="select(s.id)" @keydown.delete="close(s)">
-          <span class="dot" :class="s.status"></span>{{ label(s) }}
+          <StatusIndicator :status="s.status" show-all />{{ label(s) }}
         </button>
         <button class="close" aria-label="Close session" title="Close session" @click.stop="close(s)">×</button>
       </div>

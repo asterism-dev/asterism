@@ -3,6 +3,7 @@ import { api } from './api';
 import type { NodeEvent, NodeStatus, Project, Session, SessionStatus, Task } from './types';
 
 export type Tab = 'diff' | number;
+export type ProjectDialogTab = 'folder' | 'clone' | 'create';
 export interface MenuItem { label: string; action: () => void; danger?: boolean }
 export interface Toast { id: number; message: string }
 
@@ -20,7 +21,7 @@ export interface State {
   settingsOpen: boolean;
   settingsDirty: boolean;
   collapsed: Record<number, boolean>;
-  projectDialog: 'clone' | 'create' | null;
+  projectDialog: ProjectDialogTab | null;
 }
 
 export function initialState(): State {
@@ -61,16 +62,6 @@ export function aggregate(statuses: SessionStatus[]): SessionStatus | null {
 
 export function taskStatus(s: State, taskId: number): SessionStatus | null {
   return aggregate(s.sessions.filter((x) => x.task_id === taskId).map((x) => x.status));
-}
-
-export function projectStatus(s: State, projectId: number): SessionStatus | null {
-  const ids = new Set(s.tasks.filter((t) => t.project_id === projectId).map((t) => t.id));
-  return aggregate(s.sessions.filter((x) => ids.has(x.task_id)).map((x) => x.status));
-}
-
-export function nodeAggregateStatus(s: State): SessionStatus | null {
-  const ids = new Set(s.tasks.map((t) => t.id));
-  return aggregate(s.sessions.filter((x) => ids.has(x.task_id)).map((x) => x.status));
 }
 
 export function taskSessions(s: State, taskId: number): Session[] {

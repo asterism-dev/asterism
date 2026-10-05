@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ask, open } from '@tauri-apps/plugin-dialog';
+import { ask } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { computed, onMounted, watch } from 'vue';
 import { api, errorMessage, RpcError } from '../api';
 import {
-  addSession, isConnected, nextWaiting, nodeAggregateStatus, projectStatus, selectSession, showMenu, state, taskStatus, toast,
+  addSession, isConnected, nextWaiting, selectSession, showMenu, state, taskStatus, toast,
   waitingSessions,
 } from '../store';
 import { loadCollapsed, saveCollapsed } from '../projects';
@@ -32,11 +32,6 @@ watch(() => state.collapsed, saveCollapsed, { deep: true });
 function toggle(p: Project) {
   if (state.collapsed[p.id]) delete state.collapsed[p.id];
   else state.collapsed[p.id] = true;
-}
-
-async function addFolder() {
-  const path = await open({ directory: true, multiple: false });
-  if (typeof path === 'string') api.addProject(path).catch(report);
 }
 
 async function archive(task: Task) {
@@ -77,20 +72,9 @@ async function removeProject(p: Project) {
   if (confirmed) api.removeProject(p.id).catch(report);
 }
 
-function addProjectMenu(e: MouseEvent) {
-  showMenu(e, [
-    { label: 'Add folder…', action: addFolder },
-    { label: 'Clone repository…', action: () => (state.projectDialog = 'clone') },
-    { label: 'New repository…', action: () => (state.projectDialog = 'create') },
-  ]);
-}
-
 function nodeMenu(e: MouseEvent) {
   showMenu(e, [
     { label: 'Settings…', action: () => (state.settingsOpen = true) },
-    { label: 'Add folder…', action: addFolder },
-    { label: 'Clone repository…', action: () => (state.projectDialog = 'clone') },
-    { label: 'New repository…', action: () => (state.projectDialog = 'create') },
     { label: 'Restart daemon', danger: true, action: restartDaemon },
   ]);
 }
@@ -119,10 +103,9 @@ function taskMenu(e: MouseEvent, t: Task) {
     <div class="sidebar-scroll">
       <div class="row node-row" :class="{ offline: !connected }" @contextmenu="nodeMenu">
         <span class="name">{{ nodeName }}</span>
-        <StatusIndicator v-if="connected" :status="nodeAggregateStatus(state)" />
         <span v-if="!connected" class="muted offline-label" :title="offlineLabel">{{ offlineLabel }}</span>
         <button v-if="waiting.length" class="badge" @click="jump">{{ waiting.length }} waiting</button>
-        <button class="add" title="Add project" @click="addProjectMenu">+</button>
+        <button class="add" title="Add project" @click="state.projectDialog = 'folder'">+</button>
       </div>
       <div v-for="p in state.projects" :key="p.id" class="project" :class="{ offline: !connected }">
         <div class="row project-row" @contextmenu="projectMenu($event, p)">
@@ -134,7 +117,6 @@ function taskMenu(e: MouseEvent, t: Task) {
             @click="toggle(p)"
           >{{ state.collapsed[p.id] ? '▸' : '▾' }}</button>
           <span class="name" @click="toggle(p)">{{ p.name }}</span>
-          <StatusIndicator :status="projectStatus(state, p.id)" />
           <button class="hover-action" title="New task" @click="state.newTaskFor = p.id">+ Task</button>
         </div>
         <template v-if="!state.collapsed[p.id]">
@@ -147,8 +129,8 @@ function taskMenu(e: MouseEvent, t: Task) {
             @contextmenu="taskMenu($event, t)"
           >
             <span class="name">{{ t.title }}</span>
-            <StatusIndicator :status="taskStatus(state, t.id)" />
             <button class="hover-action" title="Archive task" @click.stop="archive(t)">Archive</button>
+            <StatusIndicator :status="taskStatus(state, t.id)" />
           </div>
         </template>
       </div>
