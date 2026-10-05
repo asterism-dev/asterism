@@ -25,9 +25,9 @@ let lastGroup: string | null = null;
 let disposables: { dispose(): void }[] = [];
 
 function addPanel(api: DockviewApi, sessionId: number) {
-  const groups = api.groups
-    .filter((g) => g.api.location.type === 'grid')
-    .map((g) => ({ id: g.id, hasSession: g.panels.some((p) => sessionIdOf(p.id) !== null) }));
+  // Grid groups first, so the fallbacks prefer docked groups; floating ones still count as explicit or focused targets.
+  const ordered = [...api.groups].sort((a, b) => Number(a.api.location.type !== 'grid') - Number(b.api.location.type !== 'grid'));
+  const groups = ordered.map((g) => ({ id: g.id, hasSession: g.api.location.type === 'grid' && g.panels.some((p) => sessionIdOf(p.id) !== null) }));
   const position = placementPosition(takePlacement(sessionId), groups, lastGroup);
   api.addPanel({ id: sessionPanelId(sessionId), component: 'session', tabComponent: 'pane', params: { sessionId }, ...(position && { position }) });
 }

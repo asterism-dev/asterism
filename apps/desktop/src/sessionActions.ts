@@ -15,14 +15,15 @@ export function startSession(taskId: number, kind: SessionKind, placement?: Plac
   }).catch(report);
 }
 
-export function newSessionMenu(e: MouseEvent, taskId: number, groupId?: string, extra: MenuItem[] = []) {
+export function newSessionMenu(e: MouseEvent, taskId: number, groupId?: string, extra: MenuItem[] = [], floating = false) {
   const agents = 'hello' in state.node ? state.node.hello.agents.filter((a) => a.available) : [];
   const shell: SessionKind = { type: 'shell' };
   const here: Placement | undefined = groupId ? { referenceGroup: groupId, direction: 'within' } : undefined;
   showMenu(e, [
     ...agents.map((a) => ({ label: a.name, action: () => startSession(taskId, { type: 'agent', name: a.name }, here) })),
     { label: 'Terminal', action: () => startSession(taskId, shell, here) },
-    ...(groupId ? [
+    // A floating window holds a single group, so there is no below/right inside it.
+    ...(groupId && !floating ? [
       { label: 'Terminal below', action: () => startSession(taskId, shell, { referenceGroup: groupId, direction: 'below' }) },
       { label: 'Terminal right', action: () => startSession(taskId, shell, { referenceGroup: groupId, direction: 'right' }) },
     ] : []),

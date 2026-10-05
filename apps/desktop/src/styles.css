@@ -54,12 +54,12 @@ body.resizing { cursor: col-resize; user-select: none; }
 .dot.idle { background: var(--idle); border-color: var(--idle); }
 .dot.waiting_input { background: var(--waiting); border-color: var(--waiting); }
 .dot.exited { background: var(--exited); border-color: var(--exited); }
-.toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 30; }
+.toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 10003; }
 .toast { background: var(--text); color: var(--bg); padding: 8px 12px; border-radius: 8px; max-width: 420px; }
-.menu { position: fixed; z-index: 20; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 4px; min-width: 180px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15); }
+.menu { position: fixed; z-index: 10002; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 4px; min-width: 180px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15); }
 .menu button { display: block; width: 100%; text-align: left; border: 0; }
 .menu button.danger { color: var(--danger); }
-.modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); display: grid; place-items: center; z-index: 10; }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); display: grid; place-items: center; z-index: 10001; }
 .modal { background: var(--panel); border-radius: 10px; padding: 18px; width: 460px; display: flex; flex-direction: column; gap: 10px; }
 .modal .actions { display: flex; justify-content: flex-end; gap: 8px; }
 .add-form { display: flex; flex-direction: column; gap: 10px; }

@@ -13,7 +13,7 @@ function open(e: MouseEvent) {
   const { group, containerApi } = props.params;
   const closedTools = TOOLS.filter((t) => paneState(t.pane) === 'closed')
     .map((t) => ({ label: t.label, action: () => addTool(containerApi, t.pane, { group: group.id }) }));
-  newSessionMenu(e, state.selectedTaskId, group.id, closedTools);
+  newSessionMenu(e, state.selectedTaskId, group.id, closedTools, group.api.location.type === 'floating');
 }
 </script>
 
@@ -22,6 +22,6 @@ function open(e: MouseEvent) {
 </template>
 
 <style scoped>
-.new-session { border: 0; background: transparent; padding: 2px 8px; color: var(--muted); }
+.new-session { border: 0; background: transparent; padding: 0 8px; height: 100%; display: flex; align-items: center; color: var(--muted); }
 .new-session:hover { color: var(--text); }
 </style>
