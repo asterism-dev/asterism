@@ -69,6 +69,7 @@ onMounted(async () => {
       const event = e.payload;
       const restored = event.method === 'task.changed' && !event.params.archived && !state.tasks.some((t) => t.id === event.params.id);
       const waiting = applyEvent(state, event);
+      if (event.method === 'plugins.changed') void api.agents().then((agents) => (state.agents = agents));
       // Archiving dropped the task's sessions from the store; a restore needs them back.
       if (restored) refresh().catch(() => {});
       if (waiting) notify(waiting).catch(() => {});

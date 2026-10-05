@@ -4,12 +4,13 @@ import { X } from 'lucide-vue-next';
 import { computed, ref, watch } from 'vue';
 import { api, errorMessage, RpcError } from '../api';
 import {
-  commandPreview, emptyForm, fromForm, HOOKS_EXAMPLE, MCP_EXAMPLE, supportsAgentOptions, toForm,
+  agentSections, commandPreview, emptyForm, fromForm, HOOKS_EXAMPLE, MCP_EXAMPLE, toForm,
   type AgentForm, type FormErrors,
 } from '../settingsForm';
 import { state, toast } from '../store';
+import type { AgentInfo } from '../types';
 
-const props = defineProps<{ agent: string }>();
+const props = defineProps<{ agent: string; info?: AgentInfo }>();
 
 const MCP_DOCS = 'https://docs.anthropic.com/en/docs/claude-code/mcp';
 const HOOKS_DOCS = 'https://docs.anthropic.com/en/docs/claude-code/hooks';
@@ -19,7 +20,7 @@ const saved = ref(JSON.stringify(emptyForm()));
 const errors = ref<FormErrors>({});
 const loadError = ref<string | null>(null);
 const saving = ref(false);
-const options = computed(() => supportsAgentOptions(props.agent));
+const sections = computed(() => agentSections(props.info));
 const dirty = computed(() => JSON.stringify(form.value) !== saved.value);
 
 watch(dirty, (value) => (state.settingsDirty = value), { immediate: true });
@@ -52,7 +53,7 @@ async function load() {
 }
 
 async function save() {
-  const result = fromForm(form.value, options.value);
+  const result = fromForm(form.value, sections.value);
   if ('errors' in result) {
     errors.value = result.errors;
     return;
@@ -82,7 +83,7 @@ watch(() => props.agent, load, { immediate: true });
   <div class="agent-settings">
     <p v-if="loadError" class="error">{{ loadError }}</p>
 
-    <section v-if="options">
+    <section v-if="sections.args">
       <h3>Parameters</h3>
       <div v-for="(_, i) in form.args" :key="i" class="settings-row">
         <input v-model="form.args[i]" placeholder="--model" spellcheck="false" />
@@ -110,7 +111,7 @@ watch(() => props.agent, load, { immediate: true });
       <p v-if="errors.env" class="error">{{ errors.env }}</p>
     </section>
 
-    <section v-if="options">
+    <section v-if="sections.mcp">
       <h3>MCP servers</h3>
       <p class="muted">
         Claude's MCP format, added to your own Claude configuration.
@@ -120,7 +121,7 @@ watch(() => props.agent, load, { immediate: true });
       <p v-if="errors.mcp" class="error">{{ errors.mcp }}</p>
     </section>
 
-    <section v-if="options">
+    <section v-if="sections.hooks">
       <h3>Hooks</h3>
       <p class="muted">
         Claude's hooks format. asterism's status hooks stay active as well.
