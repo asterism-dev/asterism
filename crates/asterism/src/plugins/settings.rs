@@ -85,7 +85,7 @@ pub fn missing(paths: &Paths, plugin: &str, schema: &[SettingSpec]) -> Result<Ve
     Ok(schema.iter().filter(|s| s.required && !values.contains_key(&s.key)).map(|s| s.title.clone()).collect())
 }
 
-fn check(spec: &SettingSpec, value: &Value) -> Result<()> {
+pub(crate) fn check(spec: &SettingSpec, value: &Value) -> Result<()> {
     let valid = match (spec.kind, value) {
         (_, Value::Null) => true,
         (SettingType::String | SettingType::Secret, Value::String(_)) => true,

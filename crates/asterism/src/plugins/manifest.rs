@@ -189,6 +189,12 @@ fn validate(m: &Manifest) -> Result<(), String> {
         if setting.kind == SettingType::Enum && setting.options.is_empty() {
             return Err(format!("setting {}: enum settings need options", setting.key));
         }
+        if let Some(default) = &setting.default {
+            if setting.kind == SettingType::Secret {
+                return Err(format!("setting {}: a secret cannot have a default", setting.key));
+            }
+            super::settings::check(setting, default).map_err(|e| format!("setting {}: default is invalid: {}", setting.key, e.message))?;
+        }
     }
     Ok(())
 }
@@ -262,6 +268,19 @@ required = true
         assert!(parse(&with(duplicate)).unwrap_err().contains("duplicate setting"));
         let enum_without_options = "[[settings]]\nkey = \"region\"\ntitle = \"Region\"\ntype = \"enum\"\n";
         assert!(parse(&with(enum_without_options)).unwrap_err().contains("options"));
+    }
+
+    #[test]
+    fn rejects_mistyped_defaults() {
+        let setting = |kind: &str, default: &str, options: &str| {
+            with(&format!("[[settings]]\nkey = \"k\"\ntitle = \"K\"\ntype = \"{kind}\"\ndefault = {default}\n{options}"))
+        };
+        assert!(parse(&setting("number", "\"x\"", "")).unwrap_err().contains("default is invalid"));
+        assert!(parse(&setting("bool", "1", "")).unwrap_err().contains("default is invalid"));
+        assert!(parse(&setting("enum", "\"b\"", "options = [\"a\"]")).unwrap_err().contains("default is invalid"));
+        assert!(parse(&setting("secret", "\"s\"", "")).unwrap_err().contains("secret cannot have a default"));
+        assert!(parse(&setting("enum", "\"a\"", "options = [\"a\"]")).is_ok());
+        assert!(parse(&setting("number", "3", "")).is_ok());
     }
 
     #[test]
