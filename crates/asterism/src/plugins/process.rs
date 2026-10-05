@@ -23,7 +23,7 @@ const CRASH_LIMIT: usize = 3;
 const CRASH_WINDOW: Duration = Duration::from_secs(60);
 
 pub type HostFn = Arc<
-    dyn Fn(String, Value) -> Pin<Box<dyn Future<Output = std::result::Result<Value, RpcError>> + Send>> + Send + Sync,
+    dyn Fn(String, String, Value) -> Pin<Box<dyn Future<Output = std::result::Result<Value, RpcError>> + Send>> + Send + Sync,
 >;
 
 pub struct BackendConfig {
@@ -349,10 +349,11 @@ impl Backend {
 
     fn serve_host(&self, request: Request, out: mpsc::UnboundedSender<String>) {
         let host = self.host.clone();
+        let plugin = self.config.plugin.clone();
         tokio::spawn(async move {
             let id = request.id;
             let result = match request.method.strip_prefix(HOST_PREFIX) {
-                Some(method) => host(method.to_string(), request.params).await,
+                Some(method) => host(plugin, method.to_string(), request.params).await,
                 None => Err(RpcError::new(ErrorKind::MethodNotFound, format!("unknown method {}", request.method))),
             };
             let response = match result {

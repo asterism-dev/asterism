@@ -11,9 +11,10 @@ fn fixture_dir() -> PathBuf {
 }
 
 fn host() -> HostFn {
-    Arc::new(|method: String, _params: Value| {
+    Arc::new(|plugin: String, method: String, _params: Value| {
         Box::pin(async move {
             match method.as_str() {
+                "whoami" => Ok(json!(plugin)),
                 "project.list" => Ok(json!([{"id": 7}])),
                 other => Err(RpcError::new(ErrorKind::MethodNotFound, format!("unknown method {other}"))),
             }
@@ -130,6 +131,7 @@ async fn idle_backends_stop_and_restart_on_demand() {
 async fn host_requests_reach_the_host_fn() {
     let f = Fixture::standard();
     assert_eq!(f.call("echo.host", json!({"method": "project.list"})).await.unwrap(), json!([{"id": 7}]));
+    assert_eq!(f.call("echo.host", json!({"method": "whoami"})).await.unwrap(), json!("echo"));
     let err = f.call("echo.host", json!({"method": "nope"})).await.unwrap_err();
     assert_eq!(err.kind, ErrorKind::PluginError);
     assert!(err.message.starts_with("echo: unknown method nope"), "{}", err.message);

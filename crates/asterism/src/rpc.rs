@@ -315,7 +315,7 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
 const HOST_DENIED: &[&str] = &[method::SHUTDOWN, method::SUBSCRIBE, method::SESSION_ATTACH, method::SESSION_DETACH];
 
 pub fn host_fn(daemon: Weak<Daemon>) -> HostFn {
-    Arc::new(move |method_name: String, params: Value| {
+    Arc::new(move |_plugin: String, method_name: String, params: Value| {
         let daemon = daemon.clone();
         Box::pin(async move {
             if method_name.starts_with("plugin.") || HOST_DENIED.contains(&method_name.as_str()) {
