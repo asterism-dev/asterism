@@ -58,10 +58,7 @@ onUnmounted(() => {
 
 <template>
   <section class="activity-view">
-    <header class="activity-header">
-      <button @click="state.activityOpen = false">← Back</button>
-      <h1>Activity Monitor</h1>
-    </header>
+    <h2 class="activity-title">Activity Monitor</h2>
     <div class="activity-body">
       <p v-if="error" class="error">{{ error }}</p>
       <p v-else-if="!stats" class="muted">Measuring…</p>
@@ -87,10 +84,9 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.activity-view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.activity-header { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel); }
-.activity-header h1 { font-size: 15px; margin: 0; }
-.activity-body { overflow-y: auto; padding: 14px 18px; }
+.activity-view { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.activity-title { font-size: 13px; margin: 0; padding: 10px 14px 0; }
+.activity-body { overflow-y: auto; padding: 8px 14px 14px; }
 table { width: 100%; border-collapse: collapse; }
 th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px; }
 th, td { padding: 6px 8px; border-bottom: 1px solid var(--border); }

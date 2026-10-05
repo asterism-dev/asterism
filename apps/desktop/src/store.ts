@@ -2,7 +2,7 @@ import { reactive } from 'vue';
 import { api } from './api';
 import type { NodeEvent, NodeStatus, Project, Session, SessionStatus, Task } from './types';
 
-export type Tab = 'diff' | number;
+export type Tab = number | null;
 export type ProjectDialogTab = 'folder' | 'clone' | 'create';
 export interface MenuItem { label: string; action: () => void; danger?: boolean; checked?: boolean }
 export interface Toast { id: number; message: string }
@@ -13,13 +13,12 @@ export interface State {
   tasks: Task[];
   sessions: Session[];
   selectedTaskId: number | null;
-  selectedTab: Record<number, Tab>;
+  selectedTab: Record<number, number>;
   tabOrder: Record<number, number[]>;
   toasts: Toast[];
   menu: { x: number; y: number; items: MenuItem[] } | null;
   newTaskFor: number | null;
   settingsOpen: boolean;
-  activityOpen: boolean;
   settingsDirty: boolean;
   collapsed: Record<number, boolean>;
   projectDialog: ProjectDialogTab | null;
@@ -38,7 +37,6 @@ export function initialState(): State {
     menu: null,
     newTaskFor: null,
     settingsOpen: false,
-    activityOpen: false,
     settingsDirty: false,
     collapsed: {},
     projectDialog: null,
@@ -81,8 +79,8 @@ export function taskSessions(s: State, taskId: number): Session[] {
 export function activeTab(s: State, taskId: number): Tab {
   const sessions = taskSessions(s, taskId);
   const chosen = s.selectedTab[taskId];
-  if (chosen === 'diff' || sessions.some((x) => x.id === chosen)) return chosen;
-  return sessions.find((x) => x.status !== 'exited')?.id ?? sessions[0]?.id ?? 'diff';
+  if (sessions.some((x) => x.id === chosen)) return chosen;
+  return sessions.find((x) => x.status !== 'exited')?.id ?? sessions[0]?.id ?? null;
 }
 
 export function moveTab(s: State, taskId: number, draggedId: number, targetId: number) {
@@ -101,7 +99,7 @@ export function nextWaiting(s: State): Session | null {
   const waiting = waitingSessions(s);
   if (!waiting.length) return null;
   const tab = s.selectedTaskId === null ? undefined : s.selectedTab[s.selectedTaskId];
-  const current = typeof tab === 'number' ? tab : -1;
+  const current = tab ?? -1;
   return waiting.find((x) => x.id > current) ?? waiting[0];
 }
 
@@ -112,7 +110,6 @@ export function sessionLabel(session: Session): string {
 }
 
 export function selectSession(s: State, session: Session) {
-  s.activityOpen = false;
   s.selectedTaskId = session.task_id;
   s.selectedTab[session.task_id] = session.id;
   const projectId = s.tasks.find((t) => t.id === session.task_id)?.project_id;

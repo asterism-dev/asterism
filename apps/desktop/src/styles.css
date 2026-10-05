@@ -16,7 +16,9 @@ button { font: inherit; color: inherit; background: var(--panel); border: 1px so
 button:hover { background: var(--select); }
 button:disabled { opacity: 0.5; cursor: default; }
 input, textarea, select { font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; width: 100%; }
-.app { display: grid; grid-template-columns: 260px 1fr; height: 100%; }
+.app { display: grid; height: 100%; }
+.right-panel { position: relative; background: var(--panel); border-left: 1px solid var(--border); min-width: 0; min-height: 0; overflow: hidden; }
+body.resizing { cursor: col-resize; user-select: none; }
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .empty, .hint, .muted { color: var(--muted); }
 .empty { margin: auto; }

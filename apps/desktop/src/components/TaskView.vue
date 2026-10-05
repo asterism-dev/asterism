@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { ask } from '@tauri-apps/plugin-dialog';
-import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { computed } from 'vue';
 import { api, errorMessage } from '../api';
-import { activeTab, addSession, moveTab, sessionLabel, showMenu, state, taskSessions, toast, type Tab } from '../store';
+import { activeTab, addSession, moveTab, sessionLabel, showMenu, state, taskSessions, toast } from '../store';
 import type { Session, SessionKind, Task } from '../types';
-import DiffView from './DiffView.vue';
 import StatusIndicator from './StatusIndicator.vue';
 import TerminalPane from './TerminalPane.vue';
 
@@ -20,7 +18,7 @@ let dragged: number | null = null;
 // Sessions being closed; a second click during the confirm or the daemon's grace period is ignored.
 const closing = new Set<number>();
 
-function select(next: Tab) {
+function select(next: number) {
   state.selectedTab[props.task.id] = next;
 }
 
@@ -49,6 +47,13 @@ async function close(s: Session) {
   }
 }
 
+function newSessionMenu(e: MouseEvent) {
+  showMenu(e, [
+    ...agents.value.map((a) => ({ label: a.name, action: () => start({ type: 'agent', name: a.name }) })),
+    { label: 'Terminal', action: () => start({ type: 'shell' }) },
+  ]);
+}
+
 function tabMenu(e: MouseEvent, s: Session) {
   showMenu(e, [{ label: 'Close session', danger: true, action: () => close(s) }]);
 }
@@ -56,17 +61,6 @@ function tabMenu(e: MouseEvent, s: Session) {
 
 <template>
   <section class="task-view">
-    <header class="task-header">
-      <div class="title">
-        <h1>{{ task.title }}</h1>
-        <span class="branch">{{ task.branch }} ← {{ task.base_branch }}</span>
-      </div>
-      <div class="toolbar">
-        <button v-for="a in agents" :key="a.name" @click="start({ type: 'agent', name: a.name })">New {{ a.name }}</button>
-        <button @click="start({ type: 'shell' })">New shell</button>
-        <button @click="revealItemInDir(task.worktree_path).catch(report)">Reveal worktree</button>
-      </div>
-    </header>
     <nav class="tabs">
       <div
         v-for="s in sessions"
@@ -86,31 +80,29 @@ function tabMenu(e: MouseEvent, s: Session) {
         </button>
         <button class="close" aria-label="Close session" title="Close session" @click.stop="close(s)">×</button>
       </div>
-      <button class="tab" :class="{ active: tab === 'diff' }" @click="select('diff')">Diff</button>
+      <button class="new-session" title="New session" aria-label="New session" @click.stop="newSessionMenu">+</button>
     </nav>
     <div class="tab-body">
-      <DiffView v-if="tab === 'diff'" :task="task" />
       <TerminalPane
-        v-else-if="activeSession"
+        v-if="activeSession"
         :key="`${activeSession.id}-${activeSession.status === 'exited'}`"
         :session-id="activeSession.id"
         :live="activeSession.status !== 'exited'"
       />
+      <p v-else class="empty">Click + to start an agent or a terminal.</p>
     </div>
   </section>
 </template>
 
 <style scoped>
 .task-view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.task-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel); }
-.title h1 { font-size: 15px; margin: 0; }
-.branch { color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
-.toolbar { display: flex; gap: 6px; flex-wrap: wrap; }
 .tabs { display: flex; gap: 2px; padding: 6px 10px 0; background: var(--panel); border-bottom: 1px solid var(--border); }
 .tab { border: 0; border-radius: 6px 6px 0 0; display: flex; align-items: center; gap: 6px; background: transparent; }
 .tab[role="tab"] { padding: 0; }
 .tab.active { background: var(--select); }
 .tab.exited { color: var(--muted); }
+.new-session { border: 0; background: transparent; padding: 2px 8px; align-self: center; color: var(--muted); }
+.new-session:hover { color: var(--text); }
 .tab-body { position: relative; flex: 1; min-height: 0; }
 .tab-label { border: 0; background: transparent; display: flex; align-items: center; gap: 6px; padding: 3px 4px 3px 9px; cursor: pointer; color: inherit; font-size: inherit; font-family: inherit; }
 .tab-label:focus { outline: 1px solid var(--border); }
