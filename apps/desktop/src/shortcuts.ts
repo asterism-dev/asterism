@@ -3,7 +3,7 @@ const isMac = navigator.userAgent.includes('Mac');
 export type AppShortcut = 'n' | 'j' | 'left' | 'right';
 
 /**
- * New task (`n`), next waiting session (`j`) and toggling the left/right column (`b` / Alt+`b`):
+ * New task (`n`), next waiting session (`j`) and toggling Projects / Diff (`b` / Alt+`b`):
  * Cmd on macOS, Ctrl+Shift elsewhere.
  */
 export function appShortcut(e: KeyboardEvent): AppShortcut | null {
