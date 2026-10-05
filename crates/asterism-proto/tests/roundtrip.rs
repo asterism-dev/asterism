@@ -108,12 +108,12 @@ fn session_removed_event_roundtrips() {
 #[test]
 fn project_and_path_types_roundtrip() {
     let create: ProjectCreateParams = serde_json::from_value(json!({"name": "demo"})).unwrap();
-    assert!(create.github.is_none());
+    assert!(create.remote.is_none());
     let create: ProjectCreateParams = serde_json::from_value(json!({
-        "name": "demo", "github": {"owner": "acme", "visibility": "internal"}
+        "name": "demo", "remote": {"forge": "github", "owner": "acme", "visibility": "internal"}
     }))
     .unwrap();
-    assert_eq!(create.github.unwrap().visibility, Visibility::Internal);
+    assert_eq!(create.remote.unwrap().visibility, Visibility::Internal);
 
     let info = NodeConfigInfo {
         config: NodeConfig { paths: PathSettings { repos: "~/r".into(), worktrees: "~/w".into() } },
@@ -122,11 +122,11 @@ fn project_and_path_types_roundtrip() {
     let back: NodeConfigInfo = serde_json::from_value(serde_json::to_value(&info).unwrap()).unwrap();
     assert_eq!(back, info);
 
-    let status: GithubStatus = serde_json::from_value(json!({
-        "available": true, "logged_in": false, "login": null, "orgs": [], "error": "not logged in"
+    let status: ForgeStatus = serde_json::from_value(json!({
+        "available": true, "authenticated": false, "account": null, "owners": [], "error": "not logged in"
     }))
     .unwrap();
-    assert!(status.available && !status.logged_in);
+    assert!(status.available && !status.authenticated);
 }
 
 #[test]

@@ -19,7 +19,7 @@ fn task_new_autostarts_the_daemon_and_creates_a_worktree() {
     assert!(node.home().join("asterismd.sock").exists());
 
     let status = node.json(&["daemon", "status"]);
-    assert_eq!(status["proto_version"], 1);
+    assert_eq!(status["proto_version"], 2);
 }
 
 #[test]

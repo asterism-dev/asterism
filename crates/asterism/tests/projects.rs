@@ -45,7 +45,11 @@ fn setup(create_fails: bool) -> Env {
     let gh = fake_gh(home.path(), create_fails);
     let daemon = Daemon::with_options(
         Paths { home: home.path().join("h") },
-        DaemonOptions { gh_bin: gh, git_env: git_env(), ..common::daemon_options() },
+        DaemonOptions {
+            git_env: git_env(),
+            plugin_env: vec![("ASTERISM_GH".into(), gh.display().to_string())],
+            ..common::daemon_options()
+        },
     )
     .unwrap();
     Env { home, daemon }
@@ -65,17 +69,17 @@ fn bare_origin(dir: &Path) -> String {
 async fn clone_places_repo_under_owner_and_registers_it() {
     let env = setup(false);
     let url = bare_origin(env.home.path());
-    let project = env.daemon.clone_project(&url).unwrap();
+    let project = env.daemon.clone_project(&url).await.unwrap();
     let expected = env.home.path().join("h/repos/acme/demo");
     assert_eq!(Path::new(&project.path).canonicalize().unwrap(), expected.canonicalize().unwrap());
     assert!(expected.join("README.md").exists());
-    assert_eq!(env.daemon.clone_project(&url).unwrap_err().kind, ErrorKind::InvalidParams);
+    assert_eq!(env.daemon.clone_project(&url).await.unwrap_err().kind, ErrorKind::InvalidParams);
 }
 
 #[tokio::test]
 async fn failed_clone_removes_partial_target() {
     let env = setup(false);
-    let err = env.daemon.clone_project("file:///definitely/missing/acme/nothing.git").unwrap_err();
+    let err = env.daemon.clone_project("file:///definitely/missing/acme/nothing.git").await.unwrap_err();
     assert_eq!(err.kind, ErrorKind::Git);
     assert!(!env.home.path().join("h/repos/acme/nothing").exists());
 }
@@ -83,46 +87,47 @@ async fn failed_clone_removes_partial_target() {
 #[tokio::test]
 async fn create_local_repository() {
     let env = setup(false);
-    let result = env.daemon.create_project(&ProjectCreateParams { name: "notes".into(), github: None }).unwrap();
-    assert!(result.github_error.is_none());
+    let result = env.daemon.create_project(&ProjectCreateParams { name: "notes".into(), remote: None }).await.unwrap();
+    assert!(result.remote_error.is_none());
     let dir = env.home.path().join("h/repos/local/notes");
     assert_eq!(std::fs::read_to_string(dir.join("README.md")).unwrap(), "# notes\n");
     assert_eq!(result.project.name, "notes");
-    let err = env.daemon.create_project(&ProjectCreateParams { name: "../x".into(), github: None }).unwrap_err();
+    let err = env.daemon.create_project(&ProjectCreateParams { name: "../x".into(), remote: None }).await.unwrap_err();
     assert_eq!(err.kind, ErrorKind::InvalidParams);
-    let err = env.daemon.create_project(&ProjectCreateParams { name: "notes".into(), github: None }).unwrap_err();
+    let err = env.daemon.create_project(&ProjectCreateParams { name: "notes".into(), remote: None }).await.unwrap_err();
     assert_eq!(err.kind, ErrorKind::InvalidParams);
 }
 
 #[tokio::test]
-async fn github_creation_validates_owner_and_visibility() {
+async fn remote_creation_validates_owner_and_visibility() {
     let env = setup(false);
-    let target = |owner: &str, visibility| Some(GithubTarget { owner: owner.into(), visibility });
-    let ok = env.daemon.create_project(&ProjectCreateParams { name: "svc".into(), github: target("acme", Visibility::Internal) }).unwrap();
-    assert!(ok.github_error.is_none());
+    let target = |owner: &str, visibility| Some(RemoteTarget { forge: "github".into(), owner: owner.into(), visibility });
+    let ok = env.daemon.create_project(&ProjectCreateParams { name: "svc".into(), remote: target("acme", Visibility::Internal) }).await.unwrap();
+    assert!(ok.remote_error.is_none());
     assert!(env.home.path().join("h/repos/acme/svc/README.md").exists());
-    let cased = env.daemon.create_project(&ProjectCreateParams { name: "svc2".into(), github: target("ACME", Visibility::Private) }).unwrap();
-    assert!(cased.github_error.is_none());
+    let cased = env.daemon.create_project(&ProjectCreateParams { name: "svc2".into(), remote: target("ACME", Visibility::Private) }).await.unwrap();
+    assert!(cased.remote_error.is_none());
     assert!(env.home.path().join("h/repos/acme/svc2/README.md").exists());
     let owners: Vec<_> = std::fs::read_dir(env.home.path().join("h/repos")).unwrap().map(|e| e.unwrap().file_name()).collect();
     assert!(!owners.iter().any(|o| o == "ACME"), "{owners:?}");
     for (owner, visibility) in [("stranger", Visibility::Private), ("me", Visibility::Internal)] {
-        let err = env.daemon.create_project(&ProjectCreateParams { name: "x".into(), github: target(owner, visibility) }).unwrap_err();
+        let err = env.daemon.create_project(&ProjectCreateParams { name: "x".into(), remote: target(owner, visibility) }).await.unwrap_err();
         assert_eq!(err.kind, ErrorKind::InvalidParams, "{owner}");
     }
 }
 
 #[tokio::test]
-async fn github_failure_keeps_local_repo() {
+async fn remote_failure_keeps_local_repo() {
     let env = setup(true);
     let result = env
         .daemon
         .create_project(&ProjectCreateParams {
             name: "svc".into(),
-            github: Some(GithubTarget { owner: "me".into(), visibility: Visibility::Private }),
+            remote: Some(RemoteTarget { forge: "github".into(), owner: "me".into(), visibility: Visibility::Private }),
         })
+        .await
         .unwrap();
-    assert!(result.github_error.unwrap().contains("boom from github"));
+    assert!(result.remote_error.unwrap().contains("boom from github"));
     assert!(env.home.path().join("h/repos/me/svc/README.md").exists());
     assert!(env.daemon.projects().unwrap().iter().any(|p| p.name == "svc"));
 }
@@ -131,7 +136,7 @@ async fn github_failure_keeps_local_repo() {
 async fn worktrees_are_grouped_by_owner_and_root_changes_keep_existing_tasks() {
     let env = setup(false);
     let url = bare_origin(env.home.path());
-    let project = env.daemon.clone_project(&url).unwrap();
+    let project = env.daemon.clone_project(&url).await.unwrap();
     let create = |title: &str| {
         env.daemon
             .create_task(TaskCreateParams { project_id: project.id, title: title.into(), prompt: None, agent: None })
@@ -170,11 +175,27 @@ async fn local_projects_without_remote_use_local_owner() {
 }
 
 #[tokio::test]
-async fn github_status_comes_from_gh() {
+async fn forge_status_comes_from_the_github_plugin() {
     let env = setup(false);
-    let status = env.daemon.github_status();
-    assert_eq!(status.login.as_deref(), Some("me"));
-    assert_eq!(status.orgs, ["acme"]);
+    assert_eq!(env.daemon.forges().iter().map(|f| f.id.as_str()).collect::<Vec<_>>(), ["github"]);
+    let status = env.daemon.forge_status("github").await.unwrap();
+    assert_eq!((status.account.as_deref(), status.owners.as_slice()), (Some("me"), &["acme".to_string()][..]));
+    assert_eq!(env.daemon.forge_status("gitlab").await.unwrap_err().kind, ErrorKind::PluginError);
+}
+
+#[tokio::test]
+async fn unknown_remote_owners_create_nothing() {
+    let env = setup(false);
+    let err = env
+        .daemon
+        .create_project(&ProjectCreateParams {
+            name: "svc".into(),
+            remote: Some(RemoteTarget { forge: "github".into(), owner: "stranger".into(), visibility: Visibility::Private }),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
+    assert!(!env.home.path().join("h/repos/stranger").exists());
 }
 
 #[tokio::test]
@@ -196,7 +217,7 @@ async fn existing_target_directory_is_left_untouched() {
     let dir = env.home.path().join("h/repos/local/notes");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("marker"), "mine").unwrap();
-    let err = env.daemon.create_project(&ProjectCreateParams { name: "notes".into(), github: None }).unwrap_err();
+    let err = env.daemon.create_project(&ProjectCreateParams { name: "notes".into(), remote: None }).await.unwrap_err();
     assert_eq!(err.kind, ErrorKind::InvalidParams);
     assert_eq!(std::fs::read_to_string(dir.join("marker")).unwrap(), "mine");
 }

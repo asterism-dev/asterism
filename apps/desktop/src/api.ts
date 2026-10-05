@@ -1,6 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type {
-  AgentConfig, AgentConfigRaw, GithubRepo, GithubStatus, GithubTarget, NodeConfig, NodeConfigInfo, NodeStats, NodeStatus, Project, ProjectCreateResult, Session, SessionAttachResult, SessionKind,
+  AgentConfig, AgentConfigRaw, ForgeInfo, ForgeRepo, ForgeStatus, NodeConfig, NodeConfigInfo, NodeStats, NodeStatus, Project, ProjectCreateResult, RemoteTarget, Session, SessionAttachResult, SessionKind,
   SessionReadResult, Task, TaskCreateResult, TaskDeleteCheck, TaskDeleteResult, TaskDiffResult, Worktree, WorktreeSize,
 } from './types';
 
@@ -100,9 +100,10 @@ export const api = {
   nodeConfig: () => call<NodeConfigInfo>('node_config.get'),
   nodeStats: (pids: number[]) => call<NodeStats>('node.stats', { pids }),
   setNodeConfig: (config: NodeConfig) => call<null>('node_config.set', { config }),
-  githubStatus: () => call<GithubStatus>('github.status'),
-  githubRepos: (owner: string) => call<GithubRepo[]>('github.repos', { owner }),
+  forges: () => call<ForgeInfo[]>('forge.list'),
+  forgeStatus: (forge: string) => call<ForgeStatus>('forge.status', { forge }),
+  forgeRepos: (forge: string, owner: string) => call<ForgeRepo[]>('forge.repos', { forge, owner }),
   cloneProject: (source: string) => call<Project>('project.clone', { source }),
-  createProject: (name: string, github: GithubTarget | null) =>
-    call<ProjectCreateResult>('project.create', { name, github }),
+  createProject: (name: string, remote: RemoteTarget | null) =>
+    call<ProjectCreateResult>('project.create', { name, remote }),
 };

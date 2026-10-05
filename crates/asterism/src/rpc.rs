@@ -220,22 +220,14 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             })
             .await
         }
-        method::GITHUB_STATUS => {
-            let daemon = daemon.clone();
-            blocking(move || to_value(daemon.github_status())).await
+        method::FORGE_LIST => to_value(daemon.forges()),
+        method::FORGE_STATUS => to_value(daemon.forge_status(&params::<ForgeParams>(raw)?.forge).await?),
+        method::FORGE_REPOS => {
+            let p: ForgeOwnerParams = params(raw)?;
+            to_value(daemon.forge_repos(&p.forge, &p.owner).await?)
         }
-        method::GITHUB_REPOS => {
-            let daemon = daemon.clone();
-            blocking(move || to_value(daemon.github_repos(&params::<GithubOwnerParams>(raw)?.owner)?)).await
-        }
-        method::PROJECT_CLONE => {
-            let daemon = daemon.clone();
-            blocking(move || to_value(daemon.clone_project(&params::<ProjectCloneParams>(raw)?.source)?)).await
-        }
-        method::PROJECT_CREATE => {
-            let daemon = daemon.clone();
-            blocking(move || to_value(daemon.create_project(&params::<ProjectCreateParams>(raw)?)?)).await
-        }
+        method::PROJECT_CLONE => to_value(daemon.clone_project(&params::<ProjectCloneParams>(raw)?.source).await?),
+        method::PROJECT_CREATE => to_value(daemon.create_project(&params::<ProjectCreateParams>(raw)?).await?),
         method::AGENT_CONFIG_GET => {
             let daemon = daemon.clone();
             blocking(move || to_value(daemon.agent_config(&params::<AgentParams>(raw)?.agent)?)).await

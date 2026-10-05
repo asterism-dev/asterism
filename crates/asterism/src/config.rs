@@ -21,6 +21,9 @@ pub struct Config {
     /// Non-secret plugin setting values, by plugin name; secrets live in `secrets.toml`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub plugins: BTreeMap<String, BTreeMap<String, toml::Value>>,
+    /// Forge for `owner/repo` shorthand; the first installed forge when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_forge: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]

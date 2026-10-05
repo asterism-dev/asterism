@@ -34,8 +34,6 @@ pub mod method {
     pub const SESSION_REMOVE: &str = "session.remove";
     pub const NODE_CONFIG_GET: &str = "node_config.get";
     pub const NODE_CONFIG_SET: &str = "node_config.set";
-    pub const GITHUB_STATUS: &str = "github.status";
-    pub const GITHUB_REPOS: &str = "github.repos";
     pub const PROJECT_CLONE: &str = "project.clone";
     pub const PROJECT_CREATE: &str = "project.create";
     pub const NODE_STATS: &str = "node.stats";
@@ -202,39 +200,12 @@ pub struct NodeStats {
     pub processes: Vec<PidStats>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GithubStatus {
-    pub available: bool,
-    pub logged_in: bool,
-    pub login: Option<String>,
-    pub orgs: Vec<String>,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GithubRepo {
-    pub name_with_owner: String,
-    pub description: Option<String>,
-    pub private: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GithubOwnerParams {
-    pub owner: String,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Visibility {
     Public,
     Private,
     Internal,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GithubTarget {
-    pub owner: String,
-    pub visibility: Visibility,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -398,13 +369,14 @@ pub struct ProjectCloneParams {
 pub struct ProjectCreateParams {
     pub name: String,
     #[serde(default)]
-    pub github: Option<GithubTarget>,
+    pub remote: Option<RemoteTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectCreateResult {
     pub project: Project,
-    pub github_error: Option<String>,
+    /// Set when the local repository was created but the remote was not.
+    pub remote_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

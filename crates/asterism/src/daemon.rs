@@ -4,9 +4,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
+use asterism_plugin::protocol::{self, CloneParams, CreateRemoteParams, ListReposParams, ResolveOwnerParams, ResolveOwnerResult};
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
 use asterism_proto::PROTO_VERSION;
+use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use tokio::sync::{broadcast, watch, Notify};
 
@@ -22,7 +24,7 @@ use crate::proc_stats::{self, CpuTracker};
 use crate::session::{Pty, Snapshot, SpawnSpec, SCROLLBACK_LINES};
 use crate::store::Store;
 use crate::node_settings::LOCAL_OWNER;
-use crate::{git, github, lock, node_settings, repo_source, status};
+use crate::{git, lock, node_settings, repo_source, status};
 
 const DEFAULT_ROWS: u16 = 40;
 const DEFAULT_COLS: u16 = 120;
@@ -37,9 +39,8 @@ struct LiveSession {
     hooks_active: Arc<AtomicBool>,
 }
 
-/// Overridable external tools; tests inject a fake `gh` and an isolated git environment.
+/// Overridable external tools; tests inject an isolated git environment.
 pub struct DaemonOptions {
-    pub gh_bin: PathBuf,
     pub git_env: Vec<(String, String)>,
     /// Where built-in plugin backends live; defaults to the daemon's own directory.
     pub builtin_plugins_dir: Option<PathBuf>,
@@ -52,7 +53,6 @@ pub struct DaemonOptions {
 impl Default for DaemonOptions {
     fn default() -> Self {
         Self {
-            gh_bin: PathBuf::from("gh"),
             git_env: Vec::new(),
             builtin_plugins_dir: None,
             plugin_env: Vec::new(),
@@ -254,13 +254,47 @@ impl Daemon {
         node_settings::save(&self.paths, config)
     }
 
-    pub fn github_status(&self) -> GithubStatus {
-        github::status(&self.options.gh_bin)
+    pub fn forges(&self) -> Vec<ForgeInfo> {
+        let set = self.plugin_set();
+        set.registry
+            .forges()
+            .map(|(plugin, forge)| ForgeInfo {
+                id: forge.id.clone(),
+                display_name: forge.display_name.clone(),
+                hosts: forge.hosts.clone(),
+                plugin: plugin.name.clone(),
+            })
+            .collect()
     }
 
-    pub fn github_repos(&self, owner: &str) -> Result<Vec<GithubRepo>> {
+    async fn forge_call<P: Serialize, R: DeserializeOwned>(&self, forge: &str, method: &str, params: P, timeout: Option<Duration>) -> Result<R> {
+        let plugin = self
+            .plugin_set()
+            .registry
+            .forge(forge)
+            .map(|(plugin, _)| plugin.name.clone())
+            .ok_or_else(|| Error::new(ErrorKind::PluginError, format!("no forge {forge:?} is installed")))?;
+        let params = serde_json::to_value(params).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+        let reply = self.plugin_call(&plugin, method, params, timeout).await?;
+        serde_json::from_value(reply).map_err(|e| Error::new(ErrorKind::PluginError, format!("{plugin}: unexpected {method} reply: {e}")))
+    }
+
+    pub async fn forge_status(&self, forge: &str) -> Result<ForgeStatus> {
+        self.forge_call(forge, protocol::method::FORGE_STATUS, serde_json::json!({}), Some(self.call_timeout())).await
+    }
+
+    pub async fn forge_repos(&self, forge: &str, owner: &str) -> Result<Vec<ForgeRepo>> {
         repo_source::check_name("owner", owner)?;
-        github::repos(&self.options.gh_bin, owner)
+        let params = ListReposParams { owner: owner.to_string() };
+        self.forge_call(forge, protocol::method::FORGE_LIST_REPOS, params, Some(self.call_timeout())).await
+    }
+
+    fn default_forge(&self) -> Result<String> {
+        let configured = Config::load(&self.paths.config())?.default_forge;
+        let first = || self.plugin_set().registry.forges().next().map(|(_, forge)| forge.id.clone());
+        configured
+            .or_else(first)
+            .ok_or_else(|| Error::new(ErrorKind::InvalidParams, "no forge is installed; clone by URL instead"))
     }
 
     fn new_repo_dir(&self, owner: &str, name: &str) -> Result<PathBuf> {
@@ -278,16 +312,12 @@ impl Daemon {
         }
     }
 
-    pub fn clone_project(&self, source: &str) -> Result<Project> {
+    pub async fn clone_project(self: &Arc<Self>, source: &str) -> Result<Project> {
         let source = repo_source::parse_source(source)?;
         let target = self.new_repo_dir(&source.owner, &source.repo)?;
-        let env = &self.options.git_env;
         let cloned = match &source.url {
-            Some(url) => git::clone_url(url, &target, env),
-            None if github::logged_in(&self.options.gh_bin) => {
-                github::clone(&self.options.gh_bin, &source.owner, &source.repo, &target, env)
-            }
-            None => git::clone_url(&format!("https://github.com/{}/{}.git", source.owner, source.repo), &target, env),
+            Some(url) => self.git_clone(url.clone(), target.clone()).await,
+            None => self.clone_shorthand(&source.owner, &source.repo, &target).await,
         };
         if let Err(e) = cloned {
             // A half-cloned directory would block the next attempt.
@@ -297,38 +327,67 @@ impl Daemon {
         self.add_project(&target.to_string_lossy())
     }
 
-    pub fn create_project(&self, params: &ProjectCreateParams) -> Result<ProjectCreateResult> {
+    async fn git_clone(&self, url: String, target: PathBuf) -> Result<()> {
+        let env = self.options.git_env.clone();
+        tokio::task::spawn_blocking(move || git::clone_url(&url, &target, &env))
+            .await
+            .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?
+    }
+
+    /// `owner/repo` goes to the default forge: its own clone when signed in, else anonymous HTTPS.
+    async fn clone_shorthand(&self, owner: &str, repo: &str, target: &Path) -> Result<()> {
+        let forge = self.default_forge()?;
+        if self.forge_status(&forge).await.is_ok_and(|s| s.authenticated) {
+            let params = CloneParams {
+                owner: owner.to_string(),
+                repo: repo.to_string(),
+                target: target.display().to_string(),
+                git_env: git::clone_env(&self.options.git_env),
+            };
+            return self.forge_call::<_, Value>(&forge, protocol::method::FORGE_CLONE, params, None).await.map(|_| ());
+        }
+        let host = self.plugin_set().registry.forge(&forge).and_then(|(_, f)| f.hosts.first().cloned());
+        let host = host.ok_or_else(|| Error::new(ErrorKind::InvalidParams, format!("forge {forge} has no host to clone from")))?;
+        self.git_clone(format!("https://{host}/{owner}/{repo}.git"), target.to_path_buf()).await
+    }
+
+    pub async fn create_project(self: &Arc<Self>, params: &ProjectCreateParams) -> Result<ProjectCreateResult> {
         repo_source::check_name("repository name", &params.name)?;
-        let owner = match &params.github {
+        let owner = match &params.remote {
             Some(target) => {
-                let status = self.github_status();
-                if !status.logged_in {
-                    return Err(Error::new(ErrorKind::InvalidParams, "the GitHub CLI is not logged in; run `gh auth login`"));
-                }
-                let user = status.login.as_deref().filter(|login| login.eq_ignore_ascii_case(&target.owner));
-                let is_user = user.is_some();
-                let Some(canonical) = user.or_else(|| status.orgs.iter().map(String::as_str).find(|org| org.eq_ignore_ascii_case(&target.owner))) else {
-                    return Err(Error::new(ErrorKind::InvalidParams, format!("{} is not you or one of your organizations", target.owner)));
-                };
-                if is_user && target.visibility == Visibility::Internal {
-                    return Err(Error::new(ErrorKind::InvalidParams, "internal visibility needs an organization owner"));
-                }
-                canonical.to_string()
+                let resolve = ResolveOwnerParams { owner: target.owner.clone(), visibility: target.visibility };
+                let resolved: ResolveOwnerResult =
+                    self.forge_call(&target.forge, protocol::method::FORGE_RESOLVE_OWNER, resolve, Some(self.call_timeout())).await?;
+                // The plugin's answer names a directory.
+                repo_source::check_name("owner", &resolved.owner)?;
+                resolved.owner
             }
             None => LOCAL_OWNER.to_string(),
         };
         let dir = self.new_repo_dir(&owner, &params.name)?;
-        if let Err(e) = git::init_with_readme(&dir, &params.name, &self.options.git_env) {
+        let (init_dir, name, env) = (dir.clone(), params.name.clone(), self.options.git_env.clone());
+        let initialized = tokio::task::spawn_blocking(move || git::init_with_readme(&init_dir, &name, &env))
+            .await
+            .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+        if let Err(e) = initialized {
             let _ = std::fs::remove_dir_all(&dir);
             return Err(e);
         }
         let project = self.add_project(&dir.to_string_lossy())?;
-        let github_error = params
-            .github
-            .as_ref()
-            .and_then(|target| github::create(&self.options.gh_bin, target, &owner, &params.name, &dir, &self.options.git_env).err())
-            .map(|e| e.message);
-        Ok(ProjectCreateResult { project, github_error })
+        let remote_error = match &params.remote {
+            Some(target) => {
+                let create = CreateRemoteParams {
+                    owner,
+                    name: params.name.clone(),
+                    visibility: target.visibility,
+                    dir: dir.display().to_string(),
+                    git_env: git::clone_env(&self.options.git_env),
+                };
+                self.forge_call::<_, Value>(&target.forge, protocol::method::FORGE_CREATE_REMOTE, create, None).await.err().map(|e| e.message)
+            }
+            None => None,
+        };
+        Ok(ProjectCreateResult { project, remote_error })
     }
 
     pub fn create_task(self: &Arc<Self>, params: TaskCreateParams) -> Result<TaskCreateResult> {

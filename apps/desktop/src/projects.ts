@@ -1,4 +1,4 @@
-import type { GithubStatus, Project, Task, Visibility } from './types';
+import type { ForgeStatus, Project, Task, Visibility } from './types';
 
 export const COLLAPSED_KEY = 'asterism.collapsedProjects';
 
@@ -119,10 +119,10 @@ export function targetPath(root: string, owner: string, repo: string): string {
   return `${root.replace(/\/+$/, '')}/${owner}/${repo}`;
 }
 
-export function visibilityChoices(owner: string, status: GithubStatus): Visibility[] {
+export function visibilityChoices(owner: string, status: ForgeStatus): Visibility[] {
   const ownerLower = owner.toLowerCase();
-  const loginLower = status.login?.toLowerCase();
-  const isOrg = status.orgs.some((org) => org.toLowerCase() === ownerLower);
-  const isNotOwn = !loginLower || ownerLower !== loginLower;
+  const accountLower = status.account?.toLowerCase();
+  const isOrg = status.owners.some((org) => org.toLowerCase() === ownerLower);
+  const isNotOwn = !accountLower || ownerLower !== accountLower;
   return isOrg && isNotOwn ? ['private', 'public', 'internal'] : ['private', 'public'];
 }

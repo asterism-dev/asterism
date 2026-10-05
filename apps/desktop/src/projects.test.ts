@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { relativeTime, repoNameError, sortProjects, sortTasks, sourceOwnerRepo, targetPath, visibilityChoices } from './projects';
-import type { GithubStatus, Project, Task } from './types';
+import type { ForgeStatus, Project, Task } from './types';
 
-const status: GithubStatus = { available: true, logged_in: true, login: 'me', orgs: ['acme'], error: null };
+const status: ForgeStatus = { available: true, authenticated: true, account: 'me', owners: ['acme'], error: null };
 
 describe('project helpers', () => {
   it('validates repository names like the daemon', () => {
@@ -43,7 +43,7 @@ describe('project helpers', () => {
   });
 
   it('handles null login in visibility choices', () => {
-    const noLogin: GithubStatus = { available: true, logged_in: false, login: null, orgs: ['acme'], error: null };
+    const noLogin: ForgeStatus = { available: true, authenticated: false, account: null, owners: ['acme'], error: null };
     expect(visibilityChoices('acme', noLogin)).toEqual(['private', 'public', 'internal']);
     expect(visibilityChoices('other', noLogin)).toEqual(['private', 'public']);
   });
