@@ -175,6 +175,22 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             daemon.remove_project(params::<ProjectIdParams>(raw)?.project_id)?;
             Ok(Value::Null)
         }
+        method::PLUGIN_LIST => to_value(daemon.plugin_list()?),
+        method::PLUGIN_LINK => to_value(daemon.plugin_link(&params::<PluginPathParams>(raw)?.path).await?),
+        method::PLUGIN_UNLINK => {
+            daemon.plugin_unlink(&params::<PluginNameParams>(raw)?.name).await?;
+            Ok(Value::Null)
+        }
+        method::PLUGIN_RELOAD => {
+            daemon.reload_plugins(params::<PluginReloadParams>(raw)?.name.as_deref()).await?;
+            Ok(Value::Null)
+        }
+        method::PLUGIN_SETTINGS => to_value(daemon.plugin_settings(&params::<PluginNameParams>(raw)?.name)?),
+        method::PLUGIN_SET_SETTINGS => {
+            let p: PluginSetSettingsParams = params(raw)?;
+            daemon.set_plugin_settings(&p.name, &p.values).await?;
+            Ok(Value::Null)
+        }
         method::NODE_CONFIG_GET => {
             let daemon = daemon.clone();
             blocking(move || to_value(daemon.node_config()?)).await

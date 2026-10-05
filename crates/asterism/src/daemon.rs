@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
@@ -17,9 +17,9 @@ use crate::agents;
 use crate::config::{self, Config};
 use crate::error::{Error, Result};
 use crate::paths::Paths;
-use crate::plugins::manifest::{AgentDecl, LaunchKind};
+use crate::plugins::manifest::{self, AgentDecl, LaunchKind};
 use crate::plugins::process::{self, HostFn};
-use crate::plugins::registry::Status;
+use crate::plugins::registry::{self, Plugin, Status};
 use crate::plugins::{settings, PluginSet, Runtime};
 use crate::proc_stats::{self, CpuTracker};
 use crate::session::{Pty, Snapshot, SpawnSpec, SCROLLBACK_LINES};
@@ -99,10 +99,8 @@ pub struct Daemon {
     shutdown: Notify,
     cpu: Mutex<CpuTracker>,
     plugins: RwLock<Arc<PluginSet>>,
-    #[allow(dead_code)]
     host: HostFn,
     runtime: Runtime,
-    #[allow(dead_code)]
     builtin_dir: PathBuf,
 }
 
@@ -193,6 +191,104 @@ impl Daemon {
 
     fn emit(&self, event: Event) {
         let _ = self.events.send(event);
+    }
+
+    fn plugin_info(&self, set: &PluginSet, plugin: &Plugin) -> PluginInfo {
+        let state = match &plugin.status {
+            Status::Broken(reason) => PluginState::Broken { reason: reason.clone() },
+            Status::Ok => match set.backend(&plugin.name).and_then(|b| b.failing()) {
+                Some(reason) => PluginState::Failing { reason },
+                None => match plugin.manifest.as_ref().map(|m| settings::missing(&self.paths, &plugin.name, &m.settings)) {
+                    Some(Ok(missing)) if !missing.is_empty() => PluginState::NeedsSetup { missing },
+                    Some(Err(e)) => PluginState::Broken { reason: e.message },
+                    _ => PluginState::Ok,
+                },
+            },
+        };
+        let manifest = plugin.manifest.as_ref();
+        PluginInfo {
+            name: plugin.name.clone(),
+            version: manifest.map(|m| m.version.clone()),
+            description: manifest.map(|m| m.description.clone()).unwrap_or_default(),
+            origin: plugin.origin,
+            path: plugin.dir.display().to_string(),
+            capabilities: plugin.capabilities(),
+            permissions: manifest.map(|m| m.permissions.clone()).unwrap_or_default(),
+            state,
+            backend: plugin.backend_command(),
+        }
+    }
+
+    pub fn plugin_list(&self) -> Result<Vec<PluginInfo>> {
+        let set = self.plugin_set();
+        Ok(set.registry.plugins().iter().map(|p| self.plugin_info(&set, p)).collect())
+    }
+
+    /// Re-reads every manifest; backends restart lazily on their next call.
+    pub async fn reload_plugins(&self, name: Option<&str>) -> Result<()> {
+        if let Some(name) = name {
+            if self.plugin_set().registry.get(name).is_none() {
+                return Err(Error::new(ErrorKind::NotFound, format!("plugin {name} is not installed")));
+            }
+        }
+        let fresh = Arc::new(PluginSet::load(&self.paths, &self.builtin_dir, &self.runtime, &self.host));
+        let old = std::mem::replace(&mut *self.plugins.write().unwrap_or_else(std::sync::PoisonError::into_inner), fresh);
+        old.stop_all().await;
+        self.emit(Event::PluginsChanged {});
+        Ok(())
+    }
+
+    pub async fn plugin_link(&self, path: &str) -> Result<PluginInfo> {
+        let invalid = |message: String| Error::new(ErrorKind::InvalidParams, message);
+        let dir = node_settings::expand_home(path)?.canonicalize().map_err(|e| invalid(format!("{path}: {e}")))?;
+        let text = std::fs::read_to_string(dir.join("plugin.toml")).map_err(|e| invalid(format!("no plugin.toml in {}: {e}", dir.display())))?;
+        let manifest = manifest::parse(&text).map_err(|e| invalid(format!("{}: {e}", dir.join("plugin.toml").display())))?;
+        {
+            let _guard = crate::lock(&agent_settings::SAVE_LOCK);
+            let mut links = registry::load_links(&self.paths.plugin_links()).map_err(invalid)?;
+            links.insert(manifest.name.clone(), dir);
+            registry::save_links(&self.paths.plugin_links(), &links)?;
+        }
+        self.reload_plugins(None).await?;
+        let set = self.plugin_set();
+        let plugin = set.registry.get(&manifest.name).ok_or_else(|| Error::new(ErrorKind::Internal, "linked plugin vanished"))?;
+        Ok(self.plugin_info(&set, plugin))
+    }
+
+    pub async fn plugin_unlink(&self, name: &str) -> Result<()> {
+        {
+            let _guard = crate::lock(&agent_settings::SAVE_LOCK);
+            let mut links = registry::load_links(&self.paths.plugin_links()).map_err(|e| Error::new(ErrorKind::InvalidParams, e))?;
+            if links.remove(name).is_none() {
+                return Err(Error::new(ErrorKind::NotFound, format!("plugin {name} is not linked")));
+            }
+            registry::save_links(&self.paths.plugin_links(), &links)?;
+        }
+        self.reload_plugins(None).await
+    }
+
+    fn plugin_schema(&self, name: &str) -> Result<Vec<SettingSpec>> {
+        let set = self.plugin_set();
+        let plugin = set.registry.get(name).ok_or_else(|| Error::new(ErrorKind::NotFound, format!("plugin {name} is not installed")))?;
+        let manifest = plugin
+            .manifest
+            .as_ref()
+            .ok_or_else(|| Error::new(ErrorKind::InvalidParams, format!("plugin {name} is broken and has no settings")))?;
+        Ok(manifest.settings.clone())
+    }
+
+    pub fn plugin_settings(&self, name: &str) -> Result<PluginSettings> {
+        settings::view(&self.paths, name, &self.plugin_schema(name)?)
+    }
+
+    pub async fn set_plugin_settings(&self, name: &str, values: &BTreeMap<String, Value>) -> Result<()> {
+        let schema = self.plugin_schema(name)?;
+        settings::save(&self.paths, name, &schema, values)?;
+        if let Some(backend) = self.plugin_set().backend(name).cloned() {
+            backend.update_settings(settings::resolved(&self.paths, name, &schema)?).await;
+        }
+        self.emit(Event::PluginsChanged {});
+        Ok(())
     }
 
     pub fn hello(&self, params: HelloParams) -> Result<HelloResult> {
