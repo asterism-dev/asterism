@@ -116,7 +116,13 @@ impl Daemon {
             os: std::env::consts::OS.into(),
             agents: agents::PROFILES
                 .iter()
-                .map(|p| AgentInfo { name: p.name.into(), available: p.is_available() })
+                .map(|p| AgentInfo {
+                    name: p.name.into(),
+                    available: p.is_available(),
+                    display_name: "Claude Code".into(),
+                    settings: vec![AgentSettingKind::Args, AgentSettingKind::Mcp, AgentSettingKind::Hooks],
+                    plugin: "claude".into(),
+                })
                 .collect(),
         })
     }
