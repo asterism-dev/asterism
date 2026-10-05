@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ask } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
-import { ArrowDownUp, ChevronDown, ChevronRight, Plus, Settings } from 'lucide-vue-next';
+import { ArrowDownUp, ChevronDown, ChevronRight, Plus, Settings, SquarePlus } from 'lucide-vue-next';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, errorMessage, RpcError } from '../api';
 import {
@@ -126,7 +126,7 @@ function taskMenu(e: MouseEvent, t: Task) {
         <span v-if="!connected" class="muted offline-label" :title="offlineLabel">{{ offlineLabel }}</span>
         <button v-if="waiting.length" class="badge" @click="jump">{{ waiting.length }} waiting</button>
         <button class="add" :title="`Sort: ${SORT_LABELS[sortMode]}`" aria-label="Sort projects and tasks" @click.stop="sortMenu"><ArrowDownUp /></button>
-        <button class="add" title="Add project" aria-label="Add project" @click="state.projectDialog = 'folder'"><Plus /></button>
+        <button class="add" title="Add project" aria-label="Add project" @click="state.projectDialog = 'folder'"><SquarePlus /></button>
       </div>
       <div v-for="p in projects" :key="p.id" class="project" :class="{ offline: !connected }">
         <div class="row project-row" @contextmenu="projectMenu($event, p)">
