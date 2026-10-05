@@ -34,3 +34,10 @@ export function parseOuter(raw: string | null): StoredOuter | null {
 export function missingPanes(present: string[], closed: ToolPane[]): ToolPane[] {
   return TOOL_PANES.filter((p) => !present.includes(p) && (p === 'workspace' || !closed.includes(p)));
 }
+
+export interface GroupSize { id: string; width: number; height: number }
+
+/** Sizes to restore after a removal, which dockview follows by spreading space evenly; `absorber` takes up the rest. */
+export function keptSizes(before: GroupSize[], remaining: string[], absorber: string | undefined): GroupSize[] {
+  return before.filter((g) => remaining.includes(g.id) && g.id !== absorber);
+}

@@ -2,7 +2,9 @@ import { ref } from 'vue';
 import { keys, remove } from './storage';
 import { staleWorkspaceKeys, WORKSPACE_PREFIX } from './workspaceModel';
 
-export type Placement = { referenceGroup: string; direction: 'right' | 'below' };
+import type { Placement } from './workspaceModel';
+
+export type { Placement };
 
 // A session's placement is chosen before the daemon returns its id, so it waits here until its panel is added.
 const placements = new Map<number, Placement>();

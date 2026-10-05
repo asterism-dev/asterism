@@ -15,9 +15,13 @@ function split(position: 'right' | 'bottom') {
 function menu(e: MouseEvent) {
   const s = session.value;
   if (!s) return;
+  // Moving a group's only tab beside its own group is not a split; dockview's drag and drop refuses it too.
+  const canSplit = props.params.api.group.panels.length > 1;
   showMenu(e, [
-    { label: 'Split right', action: () => split('right') },
-    { label: 'Split down', action: () => split('bottom') },
+    ...(canSplit ? [
+      { label: 'Split right', action: () => split('right') },
+      { label: 'Split down', action: () => split('bottom') },
+    ] : []),
     { label: 'Close session', danger: true, action: () => closeSession(s) },
   ]);
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseWorkspace, reconcile, sessionIdOf, sessionPanelId, staleWorkspaceKeys, targetGroup, workspaceKey } from './workspaceModel';
+import { parseWorkspace, placementPosition, reconcile, sessionIdOf, sessionPanelId, staleWorkspaceKeys, targetGroup, workspaceKey } from './workspaceModel';
 
 describe('workspace model', () => {
   it('round-trips session panel ids', () => {
@@ -29,5 +29,12 @@ describe('workspace model', () => {
   it('finds workspace keys of tasks that no longer exist', () => {
     const keys = [workspaceKey(1), workspaceKey(2), 'asterism.theme', 'asterism.workspace.x'];
     expect(staleWorkspaceKeys(keys, [2])).toEqual([workspaceKey(1), 'asterism.workspace.x']);
+  });
+
+  it('places into the chosen group, or the fallback group if it is gone', () => {
+    expect(placementPosition({ referenceGroup: 'g2', direction: 'below' }, ['g1', 'g2'], null)).toEqual({ referenceGroup: 'g2', direction: 'below' });
+    expect(placementPosition({ referenceGroup: 'gone', direction: 'within' }, ['g1'], null)).toEqual({ referenceGroup: 'g1', direction: 'within' });
+    expect(placementPosition(undefined, ['g1', 'g2'], 'g2')).toEqual({ referenceGroup: 'g2', direction: 'within' });
+    expect(placementPosition(undefined, [], null)).toBeUndefined();
   });
 });

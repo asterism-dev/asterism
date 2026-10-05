@@ -3,7 +3,7 @@ import { DockviewVue, themeLight, type DockviewApi, type DockviewReadyEvent, typ
 import { computed, onUnmounted, watch } from 'vue';
 import { read, write } from '../dock/storage';
 import { takePlacement } from '../dock/workspace';
-import { parseWorkspace, reconcile, sessionIdOf, sessionPanelId, targetGroup, workspaceKey } from '../dock/workspaceModel';
+import { parseWorkspace, placementPosition, reconcile, sessionIdOf, sessionPanelId, workspaceKey } from '../dock/workspaceModel';
 import { newSessionMenu } from '../sessionActions';
 import { activeTab, state, taskSessions } from '../store';
 import type { Task } from '../types';
@@ -22,11 +22,7 @@ let lastGroup: string | null = null;
 let disposables: { dispose(): void }[] = [];
 
 function addPanel(api: DockviewApi, sessionId: number) {
-  const placement = takePlacement(sessionId);
-  const group = targetGroup(lastGroup, api.groups.map((g) => g.id));
-  const position = placement
-    ? { referenceGroup: placement.referenceGroup, direction: placement.direction }
-    : group ? { referenceGroup: group, direction: 'within' as const } : undefined;
+  const position = placementPosition(takePlacement(sessionId), api.groups.map((g) => g.id), lastGroup);
   api.addPanel({ id: sessionPanelId(sessionId), component: 'session', tabComponent: 'session', params: { sessionId }, ...(position && { position }) });
 }
 
@@ -58,6 +54,7 @@ function onReady(e: DockviewReadyEvent) {
     }
   }
   dock = api;
+  lastGroup = api.activeGroup?.id ?? null;
   sync();
   showSelected();
   disposables = [

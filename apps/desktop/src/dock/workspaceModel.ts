@@ -22,6 +22,8 @@ export function reconcile(panelIds: string[], sessionIds: number[]): { remove: s
   return { remove, add: sessionIds.filter((id) => !shown.has(id)) };
 }
 
+export type Placement = { referenceGroup: string; direction: 'within' | 'right' | 'below' };
+
 export function targetGroup(lastFocused: string | null, groupIds: string[]): string | undefined {
   return lastFocused !== null && groupIds.includes(lastFocused) ? lastFocused : groupIds[0];
 }
@@ -38,4 +40,10 @@ export function parseWorkspace(raw: string | null): SerializedDockview | null {
 export function staleWorkspaceKeys(keys: string[], taskIds: number[]): string[] {
   const live = new Set(taskIds.map(workspaceKey));
   return keys.filter((key) => key.startsWith(WORKSPACE_PREFIX) && !live.has(key));
+}
+
+export function placementPosition(placement: Placement | undefined, groupIds: string[], lastFocused: string | null): Placement | undefined {
+  if (placement && groupIds.includes(placement.referenceGroup)) return placement;
+  const group = targetGroup(lastFocused, groupIds);
+  return group ? { referenceGroup: group, direction: 'within' } : undefined;
 }

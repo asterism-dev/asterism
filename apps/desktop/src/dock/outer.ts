@@ -1,6 +1,6 @@
 import type { DockviewApi } from 'dockview-vue';
 import { ref, shallowRef } from 'vue';
-import { LEGACY_KEY, OUTER_KEY, TOOL_PANES, missingPanes, parseOuter, toggleAction, type PaneState, type ToolPane } from './outerModel';
+import { LEGACY_KEY, OUTER_KEY, TOOL_PANES, keptSizes, missingPanes, parseOuter, toggleAction, type GroupSize, type PaneState, type ToolPane } from './outerModel';
 import { read, remove, write } from './storage';
 
 const TITLES: Record<ToolPane, string> = { projects: 'Projects', workspace: 'Workspace', diff: 'Diff', activity: 'Activity Monitor' };
@@ -10,7 +10,7 @@ export const layoutVersion = ref(0);
 let closed: ToolPane[] = [];
 let disposables: { dispose(): void }[] = [];
 
-function addDefault(api: DockviewApi, pane: ToolPane) {
+function addDefault(api: DockviewApi, pane: ToolPane, background = false) {
   const base = { id: pane, component: pane, title: TITLES[pane] };
   const workspace = api.getPanel('workspace');
   if (pane === 'workspace') api.addPanel({ ...base, tabComponent: 'fixed' });
@@ -18,7 +18,7 @@ function addDefault(api: DockviewApi, pane: ToolPane) {
   else if (pane === 'diff') api.addPanel({ ...base, initialWidth: 420, ...(workspace && { position: { referencePanel: workspace, direction: 'right' } }) });
   else {
     const diff = api.getPanel('diff');
-    if (diff) api.addPanel({ ...base, inactive: true, position: { referencePanel: diff, direction: 'within' } });
+    if (diff) api.addPanel({ ...base, inactive: background, position: { referencePanel: diff, direction: 'within' } });
     else api.addPanel({ ...base, initialWidth: 420, ...(workspace && { position: { referencePanel: workspace, direction: 'right' } }) });
   }
 }
@@ -39,8 +39,17 @@ export function attachOuter(api: DockviewApi) {
       closed = [];
     }
   }
-  for (const pane of missingPanes(api.panels.map((p) => p.id), closed)) addDefault(api, pane);
+  for (const pane of missingPanes(api.panels.map((p) => p.id), closed)) addDefault(api, pane, true);
+  let before: GroupSize[] = [];
   disposables = [
+    api.onWillMutateLayout((e) => {
+      if (e.kind === 'remove') before = api.groups.map((g) => ({ id: g.id, width: g.api.width, height: g.api.height }));
+    }),
+    api.onDidMutateLayout((e) => {
+      if (e.kind !== 'remove') return;
+      const kept = keptSizes(before, api.groups.map((g) => g.id), api.getPanel('workspace')?.group.id);
+      for (const size of kept) api.getGroup(size.id)?.api.setSize({ width: size.width, height: size.height });
+    }),
     api.onWillShowOverlay((e) => { if (e.getData()?.viewId !== api.id) e.preventDefault(); }),
     api.onDidRemovePanel((p) => {
       const pane = p.id as ToolPane;
@@ -84,5 +93,5 @@ export function resetOuterLayout() {
   if (!api) return;
   api.clear();
   closed = [];
-  TOOL_PANES.forEach((pane) => addDefault(api, pane));
+  TOOL_PANES.forEach((pane) => addDefault(api, pane, true));
 }
