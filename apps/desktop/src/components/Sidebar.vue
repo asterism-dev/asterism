@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { ask } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
-import { computed, onMounted, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, errorMessage, RpcError } from '../api';
 import {
   addSession, isConnected, nextWaiting, selectSession, showMenu, state, taskStatus, toast,
   waitingSessions,
 } from '../store';
-import { loadCollapsed, saveCollapsed } from '../projects';
+import {
+  loadCollapsed, loadSortMode, relativeTime, saveCollapsed, saveSortMode, sortProjects, sortTasks, type SortMode,
+} from '../projects';
 import { leaveSettings } from '../settingsGuard';
 import StatusIndicator from './StatusIndicator.vue';
 import type { Project, SessionKind, Task } from '../types';
@@ -23,10 +25,30 @@ const offlineLabel = computed(() => {
     default: return '';
   }
 });
-const tasksOf = (p: Project) => state.tasks.filter((t) => t.project_id === p.id);
+const sortMode = ref<SortMode>(loadSortMode());
+const projects = computed(() => sortProjects(state.projects, state.tasks, sortMode.value));
+const tasksOf = (p: Project) => sortTasks(state.tasks.filter((t) => t.project_id === p.id), sortMode.value);
+const now = ref(Date.now() / 1000);
+let clock: ReturnType<typeof setInterval> | undefined;
+const formatDate = (seconds: number) => new Date(seconds * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const report = (e: unknown) => toast(errorMessage(e));
 
-onMounted(() => Object.assign(state.collapsed, loadCollapsed()));
+onMounted(() => {
+  Object.assign(state.collapsed, loadCollapsed());
+  clock = setInterval(() => (now.value = Date.now() / 1000), 60_000);
+});
+onUnmounted(() => clearInterval(clock));
+watch(sortMode, saveSortMode);
+
+const SORT_LABELS: Record<SortMode, string> = { alphabetical: 'Alphabetical', activity: 'Activity', added: 'Last added' };
+
+function sortMenu(e: MouseEvent) {
+  showMenu(e, (Object.keys(SORT_LABELS) as SortMode[]).map((mode) => ({
+    label: SORT_LABELS[mode],
+    checked: sortMode.value === mode,
+    action: () => (sortMode.value = mode),
+  })));
+}
 watch(() => state.collapsed, saveCollapsed, { deep: true });
 
 function toggle(p: Project) {
@@ -105,9 +127,10 @@ function taskMenu(e: MouseEvent, t: Task) {
         <span class="name">{{ nodeName }}</span>
         <span v-if="!connected" class="muted offline-label" :title="offlineLabel">{{ offlineLabel }}</span>
         <button v-if="waiting.length" class="badge" @click="jump">{{ waiting.length }} waiting</button>
+        <button class="add" :title="`Sort: ${SORT_LABELS[sortMode]}`" aria-label="Sort projects and tasks" @click.stop="sortMenu">⇅</button>
         <button class="add" title="Add project" @click="state.projectDialog = 'folder'">+</button>
       </div>
-      <div v-for="p in state.projects" :key="p.id" class="project" :class="{ offline: !connected }">
+      <div v-for="p in projects" :key="p.id" class="project" :class="{ offline: !connected }">
         <div class="row project-row" @contextmenu="projectMenu($event, p)">
           <button
             type="button"
@@ -129,6 +152,9 @@ function taskMenu(e: MouseEvent, t: Task) {
             @contextmenu="taskMenu($event, t)"
           >
             <span class="name">{{ t.title }}</span>
+            <span class="age muted" :title="`Created ${formatDate(t.created_at)} · Last activity ${formatDate(t.last_activity_at)}`">
+              {{ relativeTime(t.last_activity_at, now) }}
+            </span>
             <button class="hover-action" title="Archive task" @click.stop="archive(t)">Archive</button>
             <StatusIndicator :status="taskStatus(state, t.id)" />
           </div>
@@ -156,6 +182,7 @@ function taskMenu(e: MouseEvent, t: Task) {
 .row:hover .hover-action { visibility: visible; }
 .badge { background: var(--waiting); color: #1d1f27; border: 0; padding: 0 8px; border-radius: 10px; font-size: 12px; }
 .add { padding: 0 7px; }
+.age { flex: none; font-size: 12px; font-variant-numeric: tabular-nums; }
 .offline-label { flex-shrink: 1; min-width: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
 .offline { opacity: 0.55; }
 .hint { padding: 0 8px; }

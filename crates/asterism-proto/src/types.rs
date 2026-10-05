@@ -74,6 +74,8 @@ pub struct Project {
     pub id: i64,
     pub name: String,
     pub path: String,
+    #[serde(default)]
+    pub created_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -172,6 +174,11 @@ pub struct Task {
     pub worktree_path: String,
     pub prompt: Option<String>,
     pub archived: bool,
+    #[serde(default)]
+    pub created_at: i64,
+    /// Unix seconds (like `created_at`) of the last session start or status change.
+    #[serde(default)]
+    pub last_activity_at: i64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

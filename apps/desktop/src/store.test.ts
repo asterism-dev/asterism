@@ -6,7 +6,7 @@ import type { Session, SessionStatus, Task } from './types';
 
 const task = (id: number, projectId = 1): Task => ({
   id, project_id: projectId, title: `t${id}`, slug: `${id}`, branch: `asterism/${id}`, base_branch: 'main',
-  worktree_path: `/wt/${id}`, prompt: null, archived: false,
+  worktree_path: `/wt/${id}`, prompt: null, archived: false, created_at: 0, last_activity_at: 0,
 });
 const session = (id: number, taskId: number, status: SessionStatus = 'working'): Session => ({
   id, task_id: taskId, kind: { type: 'shell' }, status,
@@ -46,7 +46,7 @@ describe('applyEvent', () => {
     applyEvent(s, { method: 'session.changed', params: session(10, 1) });
     applyEvent(s, { method: 'session.changed', params: session(10, 1, 'idle') });
     applyEvent(s, { method: 'task.changed', params: task(1) });
-    applyEvent(s, { method: 'project.changed', params: { id: 1, name: 'repo', path: '/repo' } });
+    applyEvent(s, { method: 'project.changed', params: { id: 1, name: 'repo', path: '/repo', created_at: 0 } });
     expect(s.sessions).toEqual([session(10, 1, 'idle')]);
     expect(s.tasks).toEqual([task(1)]);
     expect(s.projects).toHaveLength(1);
@@ -65,7 +65,7 @@ describe('applyEvent', () => {
 
   it('removes a project and its tasks', () => {
     const s = initialState();
-    s.projects = [{ id: 1, name: 'a', path: '/a' }, { id: 2, name: 'b', path: '/b' }];
+    s.projects = [{ id: 1, name: 'a', path: '/a', created_at: 0 }, { id: 2, name: 'b', path: '/b', created_at: 0 }];
     s.tasks = [task(1, 1), task(2, 2)];
     applyEvent(s, { method: 'project.removed', params: { project_id: 1 } });
     expect(s.projects.map((p) => p.id)).toEqual([2]);

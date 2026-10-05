@@ -1,4 +1,4 @@
-import type { GithubStatus, Visibility } from './types';
+import type { GithubStatus, Project, Task, Visibility } from './types';
 
 export const COLLAPSED_KEY = 'asterism.collapsedProjects';
 
@@ -17,6 +17,50 @@ export function saveCollapsed(collapsed: Record<number, boolean>) {
   } catch {
     // Storage can be unavailable; collapsing still works for this run.
   }
+}
+
+export type SortMode = 'alphabetical' | 'activity' | 'added';
+export const SORT_KEY = 'asterism.sortMode';
+
+export function loadSortMode(): SortMode {
+  try {
+    const mode = localStorage.getItem(SORT_KEY);
+    return mode === 'alphabetical' || mode === 'activity' ? mode : 'added';
+  } catch {
+    return 'added';
+  }
+}
+
+export function saveSortMode(mode: SortMode) {
+  try {
+    localStorage.setItem(SORT_KEY, mode);
+  } catch {
+    // Storage can be unavailable; the order still applies for this run.
+  }
+}
+
+const byName = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+
+export function sortTasks(tasks: Task[], mode: SortMode): Task[] {
+  const key = (t: Task) => (mode === 'activity' ? t.last_activity_at : t.created_at);
+  return [...tasks].sort((a, b) => (mode === 'alphabetical' ? byName(a.title, b.title) : key(b) - key(a)) || b.id - a.id);
+}
+
+export function projectActivity(p: Project, tasks: Task[]): number {
+  return tasks.reduce((latest, t) => (t.project_id === p.id ? Math.max(latest, t.last_activity_at) : latest), p.created_at);
+}
+
+export function sortProjects(projects: Project[], tasks: Task[], mode: SortMode): Project[] {
+  const key = (p: Project) => (mode === 'activity' ? projectActivity(p, tasks) : p.created_at);
+  return [...projects].sort((a, b) => (mode === 'alphabetical' ? byName(a.name, b.name) : key(b) - key(a)) || b.id - a.id);
+}
+
+const UNITS: [number, string][] = [[31_536_000, 'y'], [604_800, 'w'], [86_400, 'd'], [3_600, 'h'], [60, 'm']];
+
+export function relativeTime(seconds: number, now: number): string {
+  const elapsed = Math.max(0, now - seconds);
+  const unit = UNITS.find(([size]) => elapsed >= size);
+  return unit ? `${Math.floor(elapsed / unit[0])}${unit[1]}` : 'now';
 }
 
 const SAFE_NAME = /^[A-Za-z0-9._-]+$/;

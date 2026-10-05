@@ -10,7 +10,7 @@ export interface AgentConfig {
 }
 export interface AgentConfigRaw { args: string[]; env: EnvSettings; mcp_text: string | null; hooks_text: string | null }
 
-export interface Project { id: number; name: string; path: string }
+export interface Project { id: number; name: string; path: string; created_at: number }
 export interface Task {
   id: number;
   project_id: number;
@@ -21,6 +21,8 @@ export interface Task {
   worktree_path: string;
   prompt: string | null;
   archived: boolean;
+  created_at: number;
+  last_activity_at: number;
 }
 export interface Session { id: number; task_id: number; kind: SessionKind; status: SessionStatus }
 export interface AgentInfo { name: string; available: boolean }

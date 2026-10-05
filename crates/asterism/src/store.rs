@@ -33,8 +33,19 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 ";
 
+/// Each entry upgrades the schema by one version; `PRAGMA user_version` records how many ran.
+const MIGRATIONS: &[&str] = &[
+    SCHEMA,
+    "ALTER TABLE projects ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE tasks ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE tasks ADD COLUMN last_activity_at INTEGER NOT NULL DEFAULT 0;
+     UPDATE projects SET created_at = unixepoch();
+     UPDATE tasks SET created_at = unixepoch(), last_activity_at = unixepoch();",
+];
+
+const PROJECT_COLUMNS: &str = "id, name, path, created_at";
 const TASK_COLUMNS: &str =
-    "id, project_id, title, slug, branch, base_branch, worktree_path, prompt, archived";
+    "id, project_id, title, slug, branch, base_branch, worktree_path, prompt, archived, created_at, last_activity_at";
 const SESSION_COLUMNS: &str = "id, task_id, kind, status, agent_ref";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,28 +67,34 @@ impl Store {
         Self::init(Connection::open_in_memory()?)
     }
 
-    fn init(conn: Connection) -> rusqlite::Result<Self> {
-        conn.execute_batch(SCHEMA)?;
+    fn init(mut conn: Connection) -> rusqlite::Result<Self> {
+        let version: usize = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        let tx = conn.transaction()?;
+        for (i, migration) in MIGRATIONS.iter().enumerate().skip(version) {
+            tx.execute_batch(migration)?;
+            tx.pragma_update(None, "user_version", i + 1)?;
+        }
+        tx.commit()?;
         Ok(Self { conn })
     }
 
     pub fn add_project(&self, name: &str, path: &str) -> rusqlite::Result<Project> {
         self.conn.execute(
-            "INSERT OR IGNORE INTO projects (name, path) VALUES (?1, ?2)",
+            "INSERT OR IGNORE INTO projects (name, path, created_at) VALUES (?1, ?2, unixepoch())",
             params![name, path],
         )?;
-        self.conn.query_row("SELECT id, name, path FROM projects WHERE path = ?1", [path], project_row)
+        self.conn.query_row(&format!("SELECT {PROJECT_COLUMNS} FROM projects WHERE path = ?1"), [path], project_row)
     }
 
     pub fn projects(&self) -> rusqlite::Result<Vec<Project>> {
-        let mut stmt = self.conn.prepare("SELECT id, name, path FROM projects ORDER BY id")?;
+        let mut stmt = self.conn.prepare(&format!("SELECT {PROJECT_COLUMNS} FROM projects ORDER BY id"))?;
         let rows = stmt.query_map([], project_row)?;
         rows.collect()
     }
 
     pub fn project(&self, id: i64) -> rusqlite::Result<Option<Project>> {
         self.conn
-            .query_row("SELECT id, name, path FROM projects WHERE id = ?1", [id], project_row)
+            .query_row(&format!("SELECT {PROJECT_COLUMNS} FROM projects WHERE id = ?1"), [id], project_row)
             .optional()
     }
 
@@ -99,7 +116,8 @@ impl Store {
         base_branch: &str,
     ) -> rusqlite::Result<i64> {
         self.conn.execute(
-            "INSERT INTO tasks (project_id, title, prompt, base_branch) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO tasks (project_id, title, prompt, base_branch, created_at, last_activity_at)
+             VALUES (?1, ?2, ?3, ?4, unixepoch(), unixepoch())",
             params![project_id, title, prompt, base_branch],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -126,6 +144,11 @@ impl Store {
 
     pub fn delete_task(&self, id: i64) -> rusqlite::Result<()> {
         self.conn.execute("DELETE FROM tasks WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn touch_task(&self, id: i64) -> rusqlite::Result<()> {
+        self.conn.execute("UPDATE tasks SET last_activity_at = unixepoch() WHERE id = ?1", [id])?;
         Ok(())
     }
 
@@ -211,7 +234,7 @@ fn from_text<T: DeserializeOwned>(column: usize, text: String) -> rusqlite::Resu
 }
 
 fn project_row(row: &Row) -> rusqlite::Result<Project> {
-    Ok(Project { id: row.get(0)?, name: row.get(1)?, path: row.get(2)? })
+    Ok(Project { id: row.get(0)?, name: row.get(1)?, path: row.get(2)?, created_at: row.get(3)? })
 }
 
 fn task_row(row: &Row) -> rusqlite::Result<Task> {
@@ -225,6 +248,8 @@ fn task_row(row: &Row) -> rusqlite::Result<Task> {
         worktree_path: row.get(6)?,
         prompt: row.get(7)?,
         archived: row.get::<_, i64>(8)? != 0,
+        created_at: row.get(9)?,
+        last_activity_at: row.get(10)?,
     })
 }
 
@@ -290,6 +315,35 @@ mod tests {
         assert_eq!(store.session_last_text(id + 1).unwrap(), None);
         assert_eq!(store.sessions(Some(task)).unwrap().len(), 1);
         assert!(store.sessions(Some(task + 1)).unwrap().is_empty());
+    }
+
+    #[test]
+    fn migrates_a_pre_timestamp_database() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        conn.execute("INSERT INTO projects (name, path) VALUES ('repo', '/src/repo')", []).unwrap();
+        conn.execute("INSERT INTO tasks (project_id, title, base_branch) VALUES (1, 't', 'main')", []).unwrap();
+
+        let store = Store::init(conn).unwrap();
+        let version: usize = store.conn.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        assert_eq!(version, MIGRATIONS.len());
+        let task = store.task(1).unwrap().unwrap();
+        assert!(task.created_at > 0);
+        assert_eq!(task.last_activity_at, task.created_at);
+        assert!(store.project(1).unwrap().unwrap().created_at > 0);
+    }
+
+    #[test]
+    fn new_rows_get_timestamps_and_touch_updates_activity() {
+        let store = Store::open_in_memory().unwrap();
+        let p = store.add_project("repo", "/src/repo").unwrap();
+        assert!(p.created_at > 0);
+        let id = store.insert_task(p.id, "t", None, "main").unwrap();
+        store.conn.execute("UPDATE tasks SET last_activity_at = 0 WHERE id = ?1", [id]).unwrap();
+        store.touch_task(id).unwrap();
+        let task = store.task(id).unwrap().unwrap();
+        assert!(task.created_at > 0);
+        assert!(task.last_activity_at >= task.created_at);
     }
 
     #[test]

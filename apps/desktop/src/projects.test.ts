@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { repoNameError, sourceOwnerRepo, targetPath, visibilityChoices } from './projects';
-import type { GithubStatus } from './types';
+import { relativeTime, repoNameError, sortProjects, sortTasks, sourceOwnerRepo, targetPath, visibilityChoices } from './projects';
+import type { GithubStatus, Project, Task } from './types';
 
 const status: GithubStatus = { available: true, logged_in: true, login: 'me', orgs: ['acme'], error: null };
 
@@ -46,5 +46,41 @@ describe('project helpers', () => {
     const noLogin: GithubStatus = { available: true, logged_in: false, login: null, orgs: ['acme'], error: null };
     expect(visibilityChoices('acme', noLogin)).toEqual(['private', 'public', 'internal']);
     expect(visibilityChoices('other', noLogin)).toEqual(['private', 'public']);
+  });
+});
+
+const proj = (id: number, name: string, created_at: number): Project => ({ id, name, path: `/p/${id}`, created_at });
+const tsk = (id: number, project_id: number, title: string, created_at: number, last_activity_at: number): Task => ({
+  id, project_id, title, slug: `${id}`, branch: `b${id}`, base_branch: 'main', worktree_path: `/wt/${id}`, prompt: null,
+  archived: false, created_at, last_activity_at,
+});
+
+describe('sorting', () => {
+  const tasks = [tsk(1, 1, 'beta', 100, 500), tsk(2, 1, 'Alpha', 200, 300), tsk(3, 2, 'task 10', 300, 400), tsk(4, 2, 'task 9', 300, 100)];
+  const projects = [proj(1, 'zeta', 10), proj(2, 'Api', 20), proj(3, 'empty', 30)];
+  const ids = (items: { id: number }[]) => items.map((i) => i.id);
+
+  it('sorts tasks by name, activity or newest first', () => {
+    expect(ids(sortTasks(tasks, 'alphabetical'))).toEqual([2, 1, 4, 3]);
+    expect(ids(sortTasks(tasks, 'activity'))).toEqual([1, 3, 2, 4]);
+    expect(ids(sortTasks(tasks, 'added'))).toEqual([4, 3, 2, 1]);
+  });
+
+  it('sorts projects by their most active task, falling back to creation', () => {
+    expect(ids(sortProjects(projects, tasks, 'alphabetical'))).toEqual([2, 3, 1]);
+    expect(ids(sortProjects(projects, tasks, 'activity'))).toEqual([1, 2, 3]);
+    expect(ids(sortProjects(projects, tasks, 'added'))).toEqual([3, 2, 1]);
+  });
+});
+
+describe('relativeTime', () => {
+  it('uses the largest whole unit', () => {
+    expect(relativeTime(1000, 1030)).toBe('now');
+    expect(relativeTime(1000, 1000 + 5 * 60)).toBe('5m');
+    expect(relativeTime(1000, 1000 + 2 * 3600 + 59)).toBe('2h');
+    expect(relativeTime(1000, 1000 + 3 * 86400)).toBe('3d');
+    expect(relativeTime(1000, 1000 + 15 * 86400)).toBe('2w');
+    expect(relativeTime(1000, 1000 + 400 * 86400)).toBe('1y');
+    expect(relativeTime(2000, 1000)).toBe('now');
   });
 });

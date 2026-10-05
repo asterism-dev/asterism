@@ -327,6 +327,7 @@ impl Daemon {
         }
         let session = self.session(id)?;
         self.emit(Event::SessionChanged(session.clone()));
+        self.touch_task(task.id);
         Ok(session)
     }
 
@@ -369,6 +370,7 @@ impl Daemon {
         tokio::spawn(status::track(pty.clone(), agents::waiting_patterns(kind), live.status.clone(), live.hooks_active.clone()));
 
         let daemon = self.clone();
+        let task_id = task.id;
         tokio::spawn(async move {
             while status_rx.changed().await.is_ok() {
                 let status = *status_rx.borrow_and_update();
@@ -383,12 +385,24 @@ impl Daemon {
                 }
                 let _ = daemon.store().set_session_status(id, status);
                 daemon.emit(Event::SessionStatusChanged { session_id: id, status });
+                daemon.touch_task(task_id);
                 if status == SessionStatus::Exited {
                     break;
                 }
             }
         });
         Ok(())
+    }
+
+    /// Best effort: a failed timestamp update must not break the session it reports on.
+    fn touch_task(&self, task_id: i64) {
+        let touched = {
+            let store = self.store();
+            store.touch_task(task_id).and_then(|()| store.task(task_id))
+        };
+        if let Ok(Some(task)) = touched {
+            self.emit(Event::TaskChanged(task));
+        }
     }
 
     fn live(&self, id: i64) -> Result<Arc<LiveSession>> {

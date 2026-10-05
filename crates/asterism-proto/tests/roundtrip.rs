@@ -13,6 +13,8 @@ fn sample_task() -> Task {
         worktree_path: "/tmp/wt".into(),
         prompt: Some("go".into()),
         archived: false,
+        created_at: 1_700_000_000,
+        last_activity_at: 1_700_000_060,
     }
 }
 

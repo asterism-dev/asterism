@@ -4,7 +4,7 @@ import type { NodeEvent, NodeStatus, Project, Session, SessionStatus, Task } fro
 
 export type Tab = 'diff' | number;
 export type ProjectDialogTab = 'folder' | 'clone' | 'create';
-export interface MenuItem { label: string; action: () => void; danger?: boolean }
+export interface MenuItem { label: string; action: () => void; danger?: boolean; checked?: boolean }
 export interface Toast { id: number; message: string }
 
 export interface State {
