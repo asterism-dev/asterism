@@ -9,6 +9,7 @@ import {
 } from '../store';
 import { loadCollapsed, saveCollapsed } from '../projects';
 import { leaveSettings } from '../settingsGuard';
+import StatusIndicator from './StatusIndicator.vue';
 import type { Project, SessionKind, Task } from '../types';
 
 const connected = computed(() => isConnected(state.node));
@@ -117,8 +118,8 @@ function taskMenu(e: MouseEvent, t: Task) {
   <aside class="sidebar">
     <div class="sidebar-scroll">
       <div class="row node-row" :class="{ offline: !connected }" @contextmenu="nodeMenu">
-        <span class="dot" :class="connected ? (nodeAggregateStatus(state) ?? 'idle') : ''"></span>
         <span class="name">{{ nodeName }}</span>
+        <StatusIndicator v-if="connected" :status="nodeAggregateStatus(state)" />
         <span v-if="!connected" class="muted offline-label" :title="offlineLabel">{{ offlineLabel }}</span>
         <button v-if="waiting.length" class="badge" @click="jump">{{ waiting.length }} waiting</button>
         <button class="add" title="Add project" @click="addProjectMenu">+</button>
@@ -132,8 +133,8 @@ function taskMenu(e: MouseEvent, t: Task) {
             :aria-label="state.collapsed[p.id] ? `Expand ${p.name}` : `Collapse ${p.name}`"
             @click="toggle(p)"
           >{{ state.collapsed[p.id] ? '▸' : '▾' }}</button>
-          <span class="dot" :class="projectStatus(state, p.id) ?? ''"></span>
           <span class="name" @click="toggle(p)">{{ p.name }}</span>
+          <StatusIndicator :status="projectStatus(state, p.id)" />
           <button class="hover-action" title="New task" @click="state.newTaskFor = p.id">+ Task</button>
         </div>
         <template v-if="!state.collapsed[p.id]">
@@ -145,8 +146,8 @@ function taskMenu(e: MouseEvent, t: Task) {
             @click="openTask(t)"
             @contextmenu="taskMenu($event, t)"
           >
-            <span class="dot" :class="taskStatus(state, t.id) ?? ''"></span>
             <span class="name">{{ t.title }}</span>
+            <StatusIndicator :status="taskStatus(state, t.id)" />
             <button class="hover-action" title="Archive task" @click.stop="archive(t)">Archive</button>
           </div>
         </template>
@@ -166,7 +167,7 @@ function taskMenu(e: MouseEvent, t: Task) {
 .project-row { margin-top: 8px; font-weight: 500; }
 .disclosure { border: 0; padding: 0 2px; background: transparent; width: 16px; color: var(--muted); }
 .project-row .name { cursor: default; }
-.task-row { padding-left: 22px; cursor: default; }
+.task-row { padding-left: 30px; cursor: default; }
 .task-row:hover, .project-row:hover { background: var(--select); }
 .task-row.selected { background: var(--select); }
 .hover-action { visibility: hidden; padding: 0 6px; font-size: 12px; }
