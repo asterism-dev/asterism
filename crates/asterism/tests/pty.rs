@@ -2,7 +2,7 @@ mod common;
 
 use std::time::Duration;
 
-use asterism_core::session::{Pty, SpawnSpec};
+use asterism_core::session::{Pty, SpawnSpec, SCROLLBACK_LINES, TAIL_BYTES};
 use common::eventually;
 
 fn spec(cwd: &std::path::Path, argv: &[&str]) -> SpawnSpec {
@@ -68,4 +68,51 @@ async fn exit_and_kill_are_reported() {
 fn empty_argv_is_rejected() {
     let dir = tempfile::tempdir().unwrap();
     assert!(Pty::spawn(spec(dir.path(), &[])).is_err());
+}
+
+async fn replayed(argv: &[&str], ready: &str) -> (std::sync::Arc<Pty>, vt100::Parser, usize) {
+    let dir = tempfile::tempdir().unwrap();
+    let pty = Pty::spawn(spec(dir.path(), argv)).unwrap();
+    assert!(eventually(|| pty.text().contains(ready)).await);
+    let (snapshot, _) = pty.attach();
+    let mut parser = vt100::Parser::new(snapshot.rows, snapshot.cols, SCROLLBACK_LINES);
+    parser.process(&snapshot.screen);
+    (pty, parser, snapshot.screen.len())
+}
+
+// vt100 panics when scrolled back beyond one screen, so grow the screen first (as `Pty::history` does).
+fn oldest_rows(parser: &mut vt100::Parser) -> String {
+    let (rows, cols) = parser.screen().size();
+    parser.set_scrollback(usize::MAX);
+    let depth = parser.screen().scrollback();
+    parser.set_size(rows + depth as u16, cols);
+    parser.set_scrollback(depth);
+    parser.screen().contents()
+}
+
+#[tokio::test]
+async fn attach_restores_scrollback() {
+    let (pty, mut parser, _) = replayed(&["sh", "-c", "seq 1 100; cat"], "100").await;
+    assert_eq!(parser.screen().contents(), pty.text());
+    assert!(oldest_rows(&mut parser).starts_with("1\n2\n"));
+}
+
+#[tokio::test]
+async fn attach_restores_alternate_screen_over_scrollback() {
+    let argv = ["sh", "-c", r"seq 1 100; printf '\033[?1049h\033[HTUI'; cat"];
+    let (_pty, mut parser, _) = replayed(&argv, "TUI").await;
+    assert!(parser.screen().alternate_screen());
+    assert!(parser.screen().contents().starts_with("TUI"));
+    parser.process(b"\x1b[?1049l");
+    assert!(parser.screen().contents().contains("100"));
+    assert!(oldest_rows(&mut parser).starts_with("1\n2\n"));
+}
+
+#[tokio::test]
+async fn attach_bounds_the_replayed_output() {
+    let argv = ["sh", "-c", r"yes 0123456789 | head -c 3000000; printf '\033[?1049h\033[HTUI'; cat"];
+    let (_pty, parser, len) = replayed(&argv, "TUI").await;
+    assert!(len < TAIL_BYTES + 64 * 1024, "snapshot is {len} bytes");
+    assert!(parser.screen().alternate_screen());
+    assert!(parser.screen().contents().starts_with("TUI"));
 }

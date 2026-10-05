@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex};
@@ -9,6 +10,8 @@ use tokio::sync::{broadcast, watch};
 use crate::lock;
 
 pub const SCROLLBACK_LINES: usize = 2_000;
+/// Raw output kept for replay on attach, so clients rebuild scrollback and the alternate screen.
+pub const TAIL_BYTES: usize = 1 << 20;
 const READ_BUFFER: usize = 64 * 1024;
 const DRAIN_GRACE: Duration = Duration::from_millis(500);
 
@@ -27,11 +30,46 @@ pub struct Snapshot {
     pub cols: u16,
 }
 
+struct Term {
+    parser: vt100::Parser,
+    tail: VecDeque<u8>,
+    truncated: bool,
+}
+
+impl Term {
+    fn process(&mut self, bytes: &[u8]) {
+        self.parser.process(bytes);
+        self.tail.extend(bytes);
+        let excess = self.tail.len().saturating_sub(TAIL_BYTES);
+        if excess > 0 {
+            self.tail.drain(..excess);
+            self.truncated = true;
+        }
+    }
+
+    fn replay(&self) -> Vec<u8> {
+        let (front, back) = self.tail.as_slices();
+        let mut bytes = [front, back].concat();
+        // A cut tail may start inside an escape sequence or a UTF-8 character; resume at a line start.
+        if self.truncated {
+            let start = bytes.iter().position(|&b| b == b'\n').map_or(bytes.len(), |i| i + 1);
+            bytes.drain(..start);
+        }
+        // Repaints the exact current state even if the cut tail lost the alternate-screen switch.
+        let screen = self.parser.screen();
+        if screen.alternate_screen() {
+            bytes.extend_from_slice(b"\x1b[?1049h");
+        }
+        bytes.extend(screen.state_formatted());
+        bytes
+    }
+}
+
 pub struct Pty {
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
-    parser: Arc<Mutex<vt100::Parser>>,
+    term: Arc<Mutex<Term>>,
     output: broadcast::Sender<Vec<u8>>,
     exited: watch::Receiver<bool>,
     pid: Option<u32>,
@@ -76,11 +114,15 @@ impl Pty {
         let killer = child.clone_killer();
         let mut reader = pair.master.try_clone_reader().map_err(io_err)?;
         let writer = pair.master.take_writer().map_err(io_err)?;
-        let parser = Arc::new(Mutex::new(vt100::Parser::new(spec.rows, spec.cols, SCROLLBACK_LINES)));
+        let term = Arc::new(Mutex::new(Term {
+            parser: vt100::Parser::new(spec.rows, spec.cols, SCROLLBACK_LINES),
+            tail: VecDeque::new(),
+            truncated: false,
+        }));
         let (output, _) = broadcast::channel(256);
         let (exited_tx, exited) = watch::channel(false);
 
-        let reader_parser = parser.clone();
+        let reader_term = term.clone();
         let reader_output = output.clone();
         let (drained_tx, drained) = mpsc::channel::<()>();
         std::thread::spawn(move || {
@@ -91,8 +133,7 @@ impl Pty {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
                         // Parse and publish under one lock so `attach` never misses or duplicates bytes.
-                        let mut parser = lock(&reader_parser);
-                        parser.process(&buf[..n]);
+                        lock(&reader_term).process(&buf[..n]);
                         let _ = reader_output.send(buf[..n].to_vec());
                     }
                 }
@@ -110,7 +151,7 @@ impl Pty {
             writer: Mutex::new(writer),
             master: Mutex::new(pair.master),
             killer: Mutex::new(killer),
-            parser,
+            term,
             output,
             exited,
             pid,
@@ -126,16 +167,16 @@ impl Pty {
     pub fn resize(&self, rows: u16, cols: u16) -> io::Result<()> {
         check_size(rows, cols)?;
         lock(&self.master).resize(pty_size(rows, cols)).map_err(io_err)?;
-        lock(&self.parser).set_size(rows, cols);
+        lock(&self.term).parser.set_size(rows, cols);
         Ok(())
     }
 
     pub fn text(&self) -> String {
-        lock(&self.parser).screen().contents()
+        lock(&self.term).parser.screen().contents()
     }
 
     pub fn history(&self) -> String {
-        let mut parser = lock(&self.parser);
+        let parser = &mut lock(&self.term).parser;
         let (rows, cols) = parser.screen().size();
         parser.set_scrollback(usize::MAX);
         let depth = parser.screen().scrollback();
@@ -152,13 +193,10 @@ impl Pty {
         self.output.subscribe()
     }
 
-    // ponytail: snapshot is the visible screen only; serialize scrollback rows when the app needs them.
     pub fn attach(&self) -> (Snapshot, broadcast::Receiver<Vec<u8>>) {
-        let parser = lock(&self.parser);
-        let (rows, cols) = parser.screen().size();
-        let mut screen = b"\x1b[H\x1b[2J".to_vec();
-        screen.extend(parser.screen().state_formatted());
-        (Snapshot { screen, rows, cols }, self.output.subscribe())
+        let term = lock(&self.term);
+        let (rows, cols) = term.parser.screen().size();
+        (Snapshot { screen: term.replay(), rows, cols }, self.output.subscribe())
     }
 
     pub fn exited(&self) -> watch::Receiver<bool> {
