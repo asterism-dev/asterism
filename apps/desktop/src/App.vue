@@ -5,6 +5,7 @@ import { computed, onMounted, onUnmounted } from 'vue';
 import { api, errorMessage } from './api';
 import MainDock from './components/MainDock.vue';
 import PaneHandle from './components/PaneHandle.vue';
+import ProjectPage from './components/ProjectPage.vue';
 import Sidebar from './components/Sidebar.vue';
 import TopBar from './components/TopBar.vue';
 import { layoutEpoch, pruneLayouts, togglePane } from './dock/main';
@@ -99,7 +100,8 @@ onUnmounted(() => {
       <!-- v-show keeps terminals attached while Settings is open. -->
       <main v-show="!state.settingsOpen" class="main">
         <TopBar />
-        <MainDock v-if="selectedTask" :key="`${selectedTask.id}-${layoutEpoch}`" :task="selectedTask" />
+        <ProjectPage v-if="state.projectPage !== null" :project-id="state.projectPage" />
+        <MainDock v-else-if="selectedTask" :key="`${selectedTask.id}-${layoutEpoch}`" :task="selectedTask" />
         <p v-else class="empty">Select a task, or create one with + Task.</p>
       </main>
     </div>

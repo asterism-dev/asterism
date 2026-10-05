@@ -20,6 +20,8 @@ export interface State {
   newTaskFor: number | null;
   settingsOpen: boolean;
   settingsDirty: boolean;
+  projectPage: number | null;
+  tasksVersion: number;
   collapsed: Record<number, boolean>;
   projectDialog: ProjectDialogTab | null;
 }
@@ -38,6 +40,8 @@ export function initialState(): State {
     newTaskFor: null,
     settingsOpen: false,
     settingsDirty: false,
+    projectPage: null,
+    tasksVersion: 0,
     collapsed: {},
     projectDialog: null,
   };
@@ -103,6 +107,7 @@ export function sessionLabel(session: Session): string {
 }
 
 export function selectSession(s: State, session: Session) {
+  s.projectPage = null;
   s.selectedTaskId = session.task_id;
   s.selectedTab[session.task_id] = session.id;
   const projectId = s.tasks.find((t) => t.id === session.task_id)?.project_id;
@@ -155,8 +160,13 @@ export function applyEvent(s: State, event: NodeEvent): Session | null {
       return null;
     }
     case 'task.changed':
+      s.tasksVersion++;
       if (event.params.archived) dropTask(s, event.params.id);
       else upsert(s.tasks, event.params);
+      return null;
+    case 'task.removed':
+      s.tasksVersion++;
+      dropTask(s, event.params.task_id);
       return null;
     case 'project.changed':
       upsert(s.projects, event.params);

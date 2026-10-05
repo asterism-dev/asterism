@@ -9,6 +9,7 @@ import { sidebar } from '../dock/sidebar';
 import { state, toast } from '../store';
 
 const task = computed(() => state.tasks.find((t) => t.id === state.selectedTaskId) ?? null);
+const pageProject = computed(() => (state.projectPage === null ? null : state.projects.find((p) => p.id === state.projectPage) ?? null));
 const repo = computed(() => state.projects.find((p) => p.id === task.value?.project_id)?.name ?? '');
 
 async function resetLayout() {
@@ -28,12 +29,14 @@ function copyBranch() {
       <PanelLeftClose v-if="sidebar.open" /><PanelLeftOpen v-else />
     </button>
     <div class="location">
-      <template v-if="task">
+      <span v-if="pageProject" class="repo">{{ pageProject.name }}</span>
+      <template v-else-if="task">
         <span class="repo">{{ repo }}</span>
         <span class="muted">/</span>
         <button class="branch" title="Copy branch name" @click="copyBranch">{{ task.branch }}</button>
       </template>
     </div>
+    <template v-if="state.projectPage === null">
     <button v-if="task" @click="revealItemInDir(task.worktree_path).catch((e) => toast(errorMessage(e)))"><FolderOpen />Reveal worktree</button>
     <button :disabled="!mainApi" :class="{ active: paneState('diff') === 'front' }" @click="togglePane('diff')"><GitCompare />Diff</button>
     <button :disabled="!mainApi" :class="{ active: paneState('activity') === 'front' }" @click="togglePane('activity')"><Activity />Activity Monitor</button>
@@ -45,6 +48,7 @@ function copyBranch() {
       @click="setFloatUnlocked(!floatUnlocked)"
     ><LockOpen v-if="floatUnlocked" /><Lock v-else /></button>
     <button class="icon" :disabled="!mainApi" title="Reset layout" aria-label="Reset layout" @click="resetLayout"><RotateCcw /></button>
+    </template>
     <button class="icon" title="Settings" aria-label="Settings" @click="state.settingsOpen = true"><Settings /></button>
   </header>
 </template>

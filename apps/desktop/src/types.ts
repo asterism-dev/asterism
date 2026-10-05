@@ -48,9 +48,17 @@ export type NodeEvent =
   | { method: 'session.changed'; params: Session }
   | { method: 'session.removed'; params: { session_id: number } }
   | { method: 'task.changed'; params: Task }
+  | { method: 'task.removed'; params: { task_id: number } }
   | { method: 'project.changed'; params: Project }
   | { method: 'project.removed'; params: { project_id: number } };
 
+export interface TaskDeleteCheck { dirty: boolean; branch: string; branch_exists: boolean; unmerged_commits: number }
+export interface TaskDeleteResult { warning: string | null }
+export interface Worktree {
+  path: string; head: string; branch: string | null; is_main: boolean; locked: boolean; prunable: boolean;
+  task_id: number | null; base_branch: string | null;
+}
+export interface WorktreeSize { path: string; bytes: number }
 export interface TaskCreateResult { task: Task; session: Session | null }
 export interface TaskDiffResult { patch: string }
 export interface SessionAttachResult { snapshot: string; rows: number; cols: number }

@@ -3,7 +3,7 @@ import { ask } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { ArrowDownUp, ChevronDown, ChevronRight, Plus, Settings, SquarePlus } from 'lucide-vue-next';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { api, errorMessage, RpcError } from '../api';
+import { api, errorMessage } from '../api';
 import {
   isConnected, nextWaiting, selectSession, showMenu, state, taskStatus, toast,
   waitingSessions,
@@ -13,6 +13,7 @@ import {
 } from '../projects';
 import { leaveSettings } from '../settingsGuard';
 import { startSession } from '../sessionActions';
+import { archiveTask, deleteTask } from '../taskActions';
 import StatusIndicator from './StatusIndicator.vue';
 import type { Project, Task } from '../types';
 
@@ -58,21 +59,16 @@ function toggle(p: Project) {
   else state.collapsed[p.id] = true;
 }
 
-async function archive(task: Task) {
-  try {
-    await api.archiveTask(task.id, false);
-  } catch (e) {
-    if (!(e instanceof RpcError && e.kind === 'dirty_worktree')) return report(e);
-    const discard = await ask(
-      `"${task.title}" has uncommitted changes. Archive it anyway and discard them? The branch ${task.branch} is kept.`,
-      { title: 'Archive task', kind: 'warning' },
-    );
-    if (discard) api.archiveTask(task.id, true).catch(report);
-  }
+function openTask(t: Task) {
+  leaveSettings().then((left) => {
+    if (!left) return;
+    state.projectPage = null;
+    state.selectedTaskId = t.id;
+  }).catch(report);
 }
 
-function openTask(t: Task) {
-  leaveSettings().then((left) => { if (left) state.selectedTaskId = t.id; }).catch(report);
+function openProject(p: Project) {
+  leaveSettings().then((left) => { if (left) state.projectPage = p.id; }).catch(report);
 }
 
 function jump() {
@@ -101,6 +97,7 @@ function nodeMenu(e: MouseEvent) {
 
 function projectMenu(e: MouseEvent, p: Project) {
   showMenu(e, [
+    { label: 'Open project page', action: () => openProject(p) },
     { label: 'New task…', action: () => (state.newTaskFor = p.id) },
     { label: 'Reveal in file manager', action: () => revealItemInDir(p.path).catch(report) },
     { label: 'Remove project', danger: true, action: () => removeProject(p) },
@@ -113,7 +110,8 @@ function taskMenu(e: MouseEvent, t: Task) {
     ...agents.map((a) => ({ label: `New ${a.name} session`, action: () => startSession(t.id, { type: 'agent', name: a.name }) })),
     { label: 'New shell', action: () => startSession(t.id, { type: 'shell' }) },
     { label: 'Reveal worktree', action: () => revealItemInDir(t.worktree_path).catch(report) },
-    { label: 'Archive task', danger: true, action: () => archive(t) },
+    { label: 'Archive task', action: () => archiveTask(t) },
+    { label: 'Delete task', danger: true, action: () => deleteTask(t) },
   ]);
 }
 </script>
@@ -137,7 +135,7 @@ function taskMenu(e: MouseEvent, t: Task) {
             :aria-label="state.collapsed[p.id] ? `Expand ${p.name}` : `Collapse ${p.name}`"
             @click="toggle(p)"
           ><ChevronRight v-if="state.collapsed[p.id]" /><ChevronDown v-else /></button>
-          <span class="name" @click="toggle(p)">{{ p.name }}</span>
+          <span class="name" :class="{ current: state.projectPage === p.id }" @click="openProject(p)">{{ p.name }}</span>
           <button class="hover-action" title="New task" @click="state.newTaskFor = p.id"><Plus />Task</button>
         </div>
         <template v-if="!state.collapsed[p.id]">
@@ -153,7 +151,7 @@ function taskMenu(e: MouseEvent, t: Task) {
             <span class="age muted" :title="`Created ${formatDate(t.created_at)} · Last activity ${formatDate(t.last_activity_at)}`">
               {{ relativeTime(t.last_activity_at, now) }}
             </span>
-            <button class="hover-action" title="Archive task" @click.stop="archive(t)">Archive</button>
+            <button class="hover-action" title="Archive task" @click.stop="archiveTask(t)">Archive</button>
             <StatusIndicator :status="taskStatus(state, t.id)" />
           </div>
         </template>
@@ -172,7 +170,8 @@ function taskMenu(e: MouseEvent, t: Task) {
 .node-row { font-weight: 600; }
 .project-row { margin-top: 8px; font-weight: 500; }
 .disclosure { border: 0; padding: 0 2px; background: transparent; width: 16px; color: var(--muted); }
-.project-row .name { cursor: default; }
+.project-row .name { cursor: pointer; }
+.project-row .name.current { font-weight: 600; }
 .task-row { padding-left: 30px; cursor: default; }
 .task-row:hover, .project-row:hover { background: var(--select); }
 .task-row.selected { background: var(--select); }

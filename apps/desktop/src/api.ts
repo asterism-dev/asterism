@@ -1,7 +1,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type {
-  AgentConfig, AgentConfigRaw, GithubRepo, GithubStatus, GithubTarget, NodeConfig, NodeConfigInfo, NodeStats, NodeStatus, Project, ProjectCreateResult, Session, SessionAttachResult, SessionKind, SessionReadResult, Task,
-  TaskCreateResult, TaskDiffResult,
+  AgentConfig, AgentConfigRaw, GithubRepo, GithubStatus, GithubTarget, NodeConfig, NodeConfigInfo, NodeStats, NodeStatus, Project, ProjectCreateResult, Session, SessionAttachResult, SessionKind,
+  SessionReadResult, Task, TaskCreateResult, TaskDeleteCheck, TaskDeleteResult, TaskDiffResult, Worktree, WorktreeSize,
 } from './types';
 
 export class RpcError extends Error {
@@ -72,7 +72,15 @@ export const api = {
   tasks: () => call<Task[]>('task.list', { include_archived: false }),
   createTask: (p: { project_id: number; title: string; prompt: string | null; agent: string | null }) =>
     call<TaskCreateResult>('task.create', p),
-  archiveTask: (taskId: number, force: boolean) => call<Task>('task.archive', { task_id: taskId, force }),
+  archiveTask: (taskId: number) => call<Task>('task.archive', { task_id: taskId }),
+  restoreTask: (taskId: number) => call<Task>('task.restore', { task_id: taskId }),
+  deleteCheck: (taskId: number) => call<TaskDeleteCheck>('task.delete_check', { task_id: taskId }),
+  deleteTask: (taskId: number, deleteBranch: boolean) => call<TaskDeleteResult>('task.delete', { task_id: taskId, delete_branch: deleteBranch }),
+  projectTasks: (projectId: number) => call<Task[]>('task.list', { project_id: projectId, include_archived: true }),
+  worktrees: (projectId: number) => call<Worktree[]>('project.worktrees', { project_id: projectId }),
+  worktreeSizes: (projectId: number) => call<WorktreeSize[]>('project.worktree_sizes', { project_id: projectId }),
+  removeWorktree: (projectId: number, path: string) => call<void>('project.worktree_remove', { project_id: projectId, path }),
+  pruneWorktrees: (projectId: number) => call<void>('project.worktree_prune', { project_id: projectId }),
   diff: (taskId: number) => call<TaskDiffResult>('task.diff', { task_id: taskId }),
   sessions: () => call<Session[]>('session.list'),
   startSession: (taskId: number, kind: SessionKind) => call<Session>('session.start', { task_id: taskId, kind }),

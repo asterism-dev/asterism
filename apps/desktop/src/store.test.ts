@@ -52,6 +52,16 @@ describe('applyEvent', () => {
     expect(s.projects).toHaveLength(1);
   });
 
+  it('drops removed tasks and bumps the task version', () => {
+    const s = initialState();
+    s.tasks = [task(1)];
+    s.sessions = [session(10, 1)];
+    applyEvent(s, { method: 'task.removed', params: { task_id: 1 } });
+    expect(s.tasks).toEqual([]);
+    expect(s.sessions).toEqual([]);
+    expect(s.tasksVersion).toBe(1);
+  });
+
   it('drops archived tasks with their sessions and selection', () => {
     const s = initialState();
     s.tasks = [task(1), task(2)];
