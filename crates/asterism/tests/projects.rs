@@ -26,7 +26,8 @@ fn git_env() -> Vec<(String, String)> {
 
 fn fake_gh(dir: &Path, create_fails: bool) -> PathBuf {
     let script = format!(
-        "#!/bin/sh\ncase \"$1 $2\" in\n  \"--version \"*) exit 0 ;;\n  \"api user\") echo me; exit 0 ;;\n  \"api user/orgs\") echo acme; exit 0 ;;\n  \"repo create\") {} ;;\nesac\nexit 0\n",
+        "#!/bin/sh\ncase \"$1 $2\" in\n  \"--version \"*) exit 0 ;;\n  \"api user\") echo me; exit 0 ;;\n  \"api user/orgs\") echo acme; exit 0 ;;\n  \"repo clone\") echo \"$3\" >> \"$(dirname \"$0\")/clone.log\"; git clone -q \"file://$(dirname \"$0\")/remotes/acme/demo.git\" \"$4\" ;;
+  \"repo create\") {} ;;\nesac\nexit 0\n",
         if create_fails { "echo 'boom from github' >&2; exit 1" } else { "exit 0" }
     );
     let bin = dir.join("gh");
@@ -196,6 +197,26 @@ async fn unknown_remote_owners_create_nothing() {
         .unwrap_err();
     assert_eq!(err.kind, ErrorKind::InvalidParams);
     assert!(!env.home.path().join("h/repos/stranger").exists());
+}
+
+#[tokio::test]
+async fn shorthand_clones_through_the_authenticated_forge() {
+    let env = setup(false);
+    bare_origin(env.home.path());
+    let project = env.daemon.clone_project("acme/demo").await.unwrap();
+    let expected = env.home.path().join("h/repos/acme/demo");
+    assert_eq!(Path::new(&project.path).canonicalize().unwrap(), expected.canonicalize().unwrap());
+    assert!(expected.join("README.md").exists());
+    assert_eq!(std::fs::read_to_string(env.home.path().join("clone.log")).unwrap(), "acme/demo\n");
+}
+
+#[tokio::test]
+async fn shorthand_with_an_unknown_default_forge_cleans_up() {
+    let env = setup(false);
+    std::fs::write(env.home.path().join("h/config.toml"), "default_forge = \"nope\"\n").unwrap();
+    let err = env.daemon.clone_project("acme/demo").await.unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
+    assert!(!env.home.path().join("h/repos/acme/demo").exists());
 }
 
 #[tokio::test]
