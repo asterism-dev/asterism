@@ -1,7 +1,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type {
   AgentConfig, AgentConfigRaw, AgentInfo, CapabilityKind, PluginDetails, PluginInfo, SearchHit, StoreInfo, StoreList, PluginSettings, SettingValue, ForgeInfo, ForgeRepo, ForgeStatus, NodeConfig, NodeConfigInfo, NodeStats, NodeStatus, Project, ProjectCreateResult, RemoteTarget, Session, SessionAttachResult, SessionKind,
-  SessionReadResult, Task, TaskCreateResult, TaskDeleteCheck, TaskDeleteResult, TaskDiffResult, Worktree, WorktreeSize,
+  SessionReadResult, IssueDetails, IssueHit, Task, TaskCreateResult, TaskIssue, TaskSourceInfo, TaskDeleteCheck, TaskDeleteResult, TaskDiffResult, Worktree, WorktreeSize,
 } from './types';
 
 export class RpcError extends Error {
@@ -71,8 +71,13 @@ export const api = {
   removeProject: (projectId: number) => call<null>('project.remove', { project_id: projectId }),
   tasks: () => call<Task[]>('task.list', { include_archived: false }),
   allTasks: () => call<Task[]>('task.list', { include_archived: true }),
-  createTask: (p: { project_id: number; title: string; prompt: string | null; agent: string | null }) =>
+  createTask: (p: { project_id: number; title: string; prompt: string | null; agent: string | null; issue?: TaskIssue | null }) =>
     call<TaskCreateResult>('task.create', p),
+  taskSources: (projectId: number) => call<TaskSourceInfo[]>('task_source.list', { project_id: projectId }),
+  searchIssues: (projectId: number, source: string, query: string, assignedToMe: boolean) =>
+    call<IssueHit[]>('task_source.search', { project_id: projectId, source, query, assigned_to_me: assignedToMe }),
+  getIssue: (projectId: number, source: string, key: string) =>
+    call<IssueDetails>('task_source.get', { project_id: projectId, source, key }),
   archiveTask: (taskId: number) => call<Task>('task.archive', { task_id: taskId }),
   restoreTask: (taskId: number) => call<Task>('task.restore', { task_id: taskId }),
   deleteCheck: (taskId: number) => call<TaskDeleteCheck>('task.delete_check', { task_id: taskId }),

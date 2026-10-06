@@ -14,6 +14,7 @@ const agents = computed(() => [...profiles.value.map((a) => a.name), ...BASE_AGE
 const agent = ref(agents.value[0] ?? 'shell');
 let picked = false;
 const section = ref<'interface' | 'paths' | 'agents' | 'plugins'>('interface');
+watch(() => state.pluginSettingsRequest, (name) => { if (name) section.value = 'plugins'; }, { immediate: true });
 const themes: { value: ThemeChoice; label: string }[] = [
   { value: 'system', label: 'System' },
   { value: 'light', label: 'Light' },
