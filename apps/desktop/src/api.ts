@@ -1,6 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type {
-  AgentConfig, AgentConfigRaw, GithubRepo, GithubStatus, GithubTarget, NodeConfig, NodeConfigInfo, NodeStats, NodeStatus, Project, ProjectCreateResult, Session, SessionAttachResult, SessionKind,
+  AgentConfig, AgentConfigRaw, GithubRepo, GithubStatus, GithubTarget, NodeConfig, NodeConfigInfo, NodeStats, NodeStatus, Project, ProjectBranches, ProjectCreateResult, Session, SessionAttachResult, SessionKind,
   SessionReadResult, Task, TaskCreateResult, TaskDeleteCheck, TaskDeleteResult, TaskDiffResult, Worktree, WorktreeSize,
 } from './types';
 
@@ -71,8 +71,11 @@ export const api = {
   removeProject: (projectId: number) => call<null>('project.remove', { project_id: projectId }),
   tasks: () => call<Task[]>('task.list', { include_archived: false }),
   allTasks: () => call<Task[]>('task.list', { include_archived: true }),
-  createTask: (p: { project_id: number; title: string; prompt: string | null; agent: string | null }) =>
+  createTask: (p: { project_id: number; title: string; prompt: string | null; agent: string | null; base: string | null }) =>
     call<TaskCreateResult>('task.create', p),
+  projectBranches: (projectId: number) => call<ProjectBranches>('project.branches', { project_id: projectId }),
+  updateProject: (projectId: number, defaultBase: string | null) =>
+    call<Project>('project.update', { project_id: projectId, default_base: defaultBase }),
   archiveTask: (taskId: number) => call<Task>('task.archive', { task_id: taskId }),
   restoreTask: (taskId: number) => call<Task>('task.restore', { task_id: taskId }),
   deleteCheck: (taskId: number) => call<TaskDeleteCheck>('task.delete_check', { task_id: taskId }),

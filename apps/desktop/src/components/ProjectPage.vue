@@ -3,16 +3,18 @@ import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { computed, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
+import { staleDefault } from '../baseBranch';
 import { filterTasks, formatSize, taskState, worktreeActions, type TaskFilter } from '../projectPage';
 import { relativeTime } from '../projects';
 import { state, toast } from '../store';
 import { archiveTask, deleteTask, restoreTask } from '../taskActions';
-import type { Task, Worktree } from '../types';
+import type { ProjectBranches, Task, Worktree } from '../types';
 
 const props = defineProps<{ projectId: number }>();
 const report = (e: unknown) => toast(errorMessage(e));
 const project = computed(() => state.projects.find((p) => p.id === props.projectId) ?? null);
-const tab = ref<'tasks' | 'worktrees'>('tasks');
+const tab = ref<'tasks' | 'worktrees' | 'settings'>('tasks');
+const branches = ref<ProjectBranches | null>(null);
 const filter = ref<TaskFilter>('all');
 const tasks = ref<Task[]>([]);
 const worktrees = ref<Worktree[]>([]);
@@ -33,6 +35,16 @@ async function loadWorktrees() {
   if (projectId === props.projectId) sizes.value = Object.fromEntries(measured.map((s) => [s.path, s.bytes]));
 }
 
+async function loadBranches() {
+  const id = props.projectId;
+  const result = await api.projectBranches(id).catch((e) => (report(e), null));
+  if (id === props.projectId) branches.value = result;
+}
+
+function setDefaultBase(value: string) {
+  api.updateProject(props.projectId, value || null).then(loadBranches).catch(report);
+}
+
 function openTask(id: number | null) {
   if (id === null) return;
   state.projectPage = null;
@@ -45,8 +57,16 @@ async function removeWorktree(w: Worktree) {
 }
 
 watch(() => [props.projectId, state.tasksVersion], loadTasks, { immediate: true });
-watch(tab, (t) => { if (t === 'worktrees') loadWorktrees(); });
-watch(() => props.projectId, () => { sizes.value = {}; if (tab.value === 'worktrees') loadWorktrees(); });
+watch(tab, (t) => {
+  if (t === 'worktrees') loadWorktrees();
+  if (t === 'settings') loadBranches();
+});
+watch(() => props.projectId, () => {
+  sizes.value = {};
+  branches.value = null;
+  if (tab.value === 'worktrees') loadWorktrees();
+  if (tab.value === 'settings') loadBranches();
+});
 </script>
 
 <template>
@@ -54,6 +74,7 @@ watch(() => props.projectId, () => { sizes.value = {}; if (tab.value === 'worktr
     <nav class="tabs" role="tablist">
       <button role="tab" :aria-selected="tab === 'tasks'" :class="{ active: tab === 'tasks' }" @click="tab = 'tasks'">Tasks</button>
       <button role="tab" :aria-selected="tab === 'worktrees'" :class="{ active: tab === 'worktrees' }" @click="tab = 'worktrees'">Worktrees</button>
+      <button role="tab" :aria-selected="tab === 'settings'" :class="{ active: tab === 'settings' }" @click="tab = 'settings'">Settings</button>
     </nav>
     <div v-if="tab === 'tasks'" class="body">
       <div class="segmented" role="group" aria-label="Filter">
@@ -79,7 +100,7 @@ watch(() => props.projectId, () => { sizes.value = {}; if (tab.value === 'worktr
       </table>
       <p v-if="!shown.length" class="muted">No tasks.</p>
     </div>
-    <div v-else class="body">
+    <div v-else-if="tab === 'worktrees'" class="body">
       <div v-if="worktrees.some((w) => w.prunable)" class="toolbar">
         <button @click="api.pruneWorktrees(projectId).then(loadWorktrees).catch(report)">Prune missing worktrees</button>
       </div>
@@ -105,6 +126,20 @@ watch(() => props.projectId, () => { sizes.value = {}; if (tab.value === 'worktr
           </tr>
         </tbody>
       </table>
+    </div>
+    <div v-else class="body">
+      <label>Default base branch
+        <select
+          :value="staleDefault(branches) ? '' : project?.default_base ?? ''"
+          :disabled="!branches"
+          @change="setDefaultBase(($event.target as HTMLSelectElement).value)"
+        >
+          <option value="">Automatic{{ branches?.automatic ? ` (${branches.automatic})` : '' }}</option>
+          <option v-for="b in branches?.branches ?? []" :key="b" :value="b">{{ b }}</option>
+        </select>
+      </label>
+      <p v-if="staleDefault(branches)" class="muted">{{ staleDefault(branches) }} no longer exists — using Automatic.</p>
+      <p v-if="branches?.fetch_error" class="muted">Couldn't fetch origin — branches may be stale.</p>
     </div>
     <p v-if="!project" class="muted">This project no longer exists.</p>
   </section>
