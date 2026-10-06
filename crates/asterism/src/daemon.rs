@@ -699,6 +699,13 @@ impl Daemon {
             }
             store.remove_project(project_id)?;
         }
+        {
+            let mut status = lock(&self.pr_status);
+            status.entries.retain(|_, e| e.project_id != project_id);
+            status.errors.remove(&project_id);
+            status.polled.remove(&project_id);
+            status.rate_limited.remove(&project_id);
+        }
         self.emit(Event::ProjectRemoved { project_id });
         Ok(())
     }
@@ -1067,6 +1074,8 @@ impl Daemon {
                 (asked, reply)
             }
         };
+        // Re-read after the await so a task archived or deleted meanwhile is not re-inserted.
+        let tasks: Vec<(i64, String)> = self.store().tasks(Some(project.id), false)?.into_iter().map(|t| (t.id, t.branch)).collect();
         let changes = pr_status::merge(project.id, &tasks, &asked, reply, &mut lock(&self.pr_status).entries);
         for (task_id, pr) in changes {
             self.emit(Event::PrChanged { task_id, pr });
@@ -1089,6 +1098,7 @@ impl Daemon {
             }
             let Ok(projects) = self.projects() else { continue };
             let now = unix_now();
+            // ponytail: projects are polled sequentially, so one slow forge delays the others by up to call_timeout per tick.
             for project in projects {
                 let last_activity = self.store().tasks(Some(project.id), false).map(|ts| ts.iter().map(|t| t.last_activity_at).max().unwrap_or(0)).unwrap_or(0);
                 let due = {
@@ -1120,7 +1130,7 @@ impl Daemon {
         Ok(task)
     }
 
-    pub fn restore_task(&self, task_id: i64) -> Result<Task> {
+    pub fn restore_task(self: &Arc<Self>, task_id: i64) -> Result<Task> {
         let task = self.task(task_id)?;
         if !task.archived {
             return Ok(task);
@@ -1144,6 +1154,11 @@ impl Daemon {
         self.store().set_task_active(task_id)?;
         let task = self.task(task_id)?;
         self.emit(Event::TaskChanged(task.clone()));
+        let daemon = self.clone();
+        let project_id = task.project_id;
+        tokio::spawn(async move {
+            let _ = daemon.refresh_prs(project_id).await;
+        });
         Ok(task)
     }
 
