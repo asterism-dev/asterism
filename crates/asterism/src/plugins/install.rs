@@ -70,6 +70,7 @@ pub fn resolve(paths: &Paths, store: &StoreConfig, entry: &IndexEntry, env: &Git
 
 /// Copies into a temp dir first and renames, so a failed copy never leaves a half-installed version.
 pub fn install_files(paths: &Paths, resolved: &Resolved) -> Result<()> {
+    load(paths)?;
     let base = paths.plugins_installed().join(&resolved.manifest.name);
     std::fs::create_dir_all(&base)?;
     let temp = base.join(format!(".tmp-{}-{}", std::process::id(), TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)));
@@ -85,6 +86,16 @@ pub fn install_files(paths: &Paths, resolved: &Resolved) -> Result<()> {
 
 /// The old version becomes `previous`; the version before that is deleted.
 pub fn record(paths: &Paths, store: &str, resolved: &Resolved) -> Result<InstalledEntry> {
+    let live: Vec<String> = load(paths)?.plugins.get(&resolved.manifest.name).into_iter().flat_map(|e| [Some(e.version.clone()), e.previous.clone()]).flatten().collect();
+    record_entry(paths, store, resolved).inspect_err(|_| {
+        let version = &resolved.manifest.version;
+        if !live.contains(version) {
+            let _ = std::fs::remove_dir_all(paths.plugins_installed().join(&resolved.manifest.name).join(version));
+        }
+    })
+}
+
+fn record_entry(paths: &Paths, store: &str, resolved: &Resolved) -> Result<InstalledEntry> {
     let mut file = load(paths)?;
     let name = &resolved.manifest.name;
     let version = resolved.manifest.version.clone();

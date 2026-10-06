@@ -1,3 +1,4 @@
+use super::manifest::is_slug;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Component, Path};
@@ -53,10 +54,6 @@ impl IndexEntry {
             _ => EntrySource::Local { path: self.path.as_deref().unwrap_or(".") },
         }
     }
-}
-
-fn is_slug(s: &str) -> bool {
-    !s.is_empty() && !s.starts_with('-') && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 /// A relative path that stays inside its root: no absolute prefix and no `..`.

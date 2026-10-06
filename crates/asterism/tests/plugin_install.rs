@@ -148,7 +148,6 @@ fn permission_helpers() {
     assert!(!install::adds_permissions(&s(&["network", "exec:gh"]), &s(&["network"])));
 }
 
-
 #[test]
 fn bad_names_are_refused_before_touching_disk() {
     let env = env();
@@ -157,4 +156,23 @@ fn bad_names_are_refused_before_touching_disk() {
         assert_eq!(install::rollback(&env.paths, name).unwrap_err().kind, ErrorKind::InvalidParams, "{name}");
         assert_eq!(install::set_enabled(&env.paths, name, true).unwrap_err().kind, ErrorKind::InvalidParams, "{name}");
     }
+}
+
+#[test]
+fn failed_record_removes_the_new_version() {
+    let env = env();
+    let local = local_store(&env, "1.0.0", &[]);
+    store_ops::add_store(&env.paths, &local.display().to_string(), &isolated_git_env()).unwrap();
+    install(&env).unwrap();
+    std::fs::write(env.paths.plugin_installed_file(), "plugins = 3\n").unwrap();
+    write_plugin(&local.join("plugins/one"), "one", "1.1.0", &[]);
+    assert!(install(&env).is_err());
+    assert_eq!(installed_versions(&env.paths, "one"), ["1.0.0"]);
+}
+
+#[test]
+fn store_names_must_be_slugs() {
+    let env = env();
+    std::fs::write(env.paths.plugin_stores_file(), "[[store]]\nname = \"../installed\"\nsource = \"/tmp/x\"\n").unwrap();
+    assert_eq!(store_ops::load(&env.paths).unwrap_err().kind, ErrorKind::InvalidParams);
 }

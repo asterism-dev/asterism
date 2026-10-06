@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use asterism_proto::rpc::ErrorKind;
 
 use super::catalog::{self, official_source, StoreConfig, StoreIndex, StoresFile};
+use super::manifest::is_slug;
 use super::source;
 use crate::error::{Error, Result};
 use crate::git::GitEnv;
@@ -30,7 +31,11 @@ pub fn store_dir(paths: &Paths, store: &StoreConfig) -> PathBuf {
 }
 
 pub fn load(paths: &Paths) -> Result<StoresFile> {
-    catalog::load_stores(&paths.plugin_stores_file()).map_err(invalid)
+    let file = catalog::load_stores(&paths.plugin_stores_file()).map_err(invalid)?;
+    if let Some(store) = file.stores.iter().find(|s| !is_slug(&s.name)) {
+        return Err(invalid(format!("stores.toml: invalid store name {:?}", store.name)));
+    }
+    Ok(file)
 }
 
 pub fn find_store<'a>(file: &'a StoresFile, name: &str) -> Result<&'a StoreConfig> {
@@ -65,7 +70,10 @@ pub fn add_store(paths: &Paths, source: &str, env: &GitEnv) -> Result<StoreConfi
     if let Some(temp) = checkout {
         let target = store_dir(paths, &store);
         let _ = std::fs::remove_dir_all(&target);
-        std::fs::rename(&temp, &target)?;
+        if let Err(e) = std::fs::rename(&temp, &target) {
+            let _ = std::fs::remove_dir_all(&temp);
+            return Err(e.into());
+        }
     }
     file.stores.push(store.clone());
     catalog::save_stores(&paths.plugin_stores_file(), &file)?;
