@@ -10,7 +10,14 @@ export interface AgentConfig {
 }
 export interface AgentConfigRaw { args: string[]; env: EnvSettings; mcp_text: string | null; hooks_text: string | null }
 
-export interface Project { id: number; name: string; path: string; created_at: number }
+export interface Project { id: number; name: string; path: string; created_at: number; default_base: string | null }
+export interface ProjectBranches {
+  branches: string[];
+  default: string | null;
+  automatic: string | null;
+  configured: string | null;
+  fetch_error: string | null;
+}
 export interface Task {
   id: number;
   project_id: number;

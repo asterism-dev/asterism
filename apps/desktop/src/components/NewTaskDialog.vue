@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, errorMessage, RpcError } from '../api';
+import { baseChoice } from '../baseBranch';
 import { leaveSettings } from '../settingsGuard';
 import { addSession, addTask, state } from '../store';
 import { createTitle, issueToCreate, searchParams, sourceOptions } from '../taskSources';
-import type { IssueDetails, IssueHit, TaskSourceInfo } from '../types';
+import type { IssueDetails, IssueHit, ProjectBranches, TaskSourceInfo } from '../types';
 
 const props = defineProps<{ projectId: number }>();
 const emit = defineEmits<{ close: [] }>();
@@ -17,6 +18,29 @@ const agent = ref(agents.value[0]?.name ?? '');
 const error = ref<string | null>(null);
 const busy = ref(false);
 const titleInput = ref<HTMLInputElement>();
+
+const branches = ref<ProjectBranches | null>(null);
+const loadingBranches = ref(false);
+const base = ref('');
+const choice = computed(() => baseChoice(branches.value));
+
+async function loadBranches() {
+  const id = projectId.value;
+  branches.value = null;
+  loadingBranches.value = true;
+  try {
+    const result = await api.projectBranches(id);
+    if (id !== projectId.value) return;
+    branches.value = result;
+    base.value = baseChoice(result).selected;
+  } catch (e) {
+    if (id === projectId.value) error.value = errorMessage(e);
+  } finally {
+    if (id === projectId.value) loadingBranches.value = false;
+  }
+}
+
+watch(projectId, loadBranches, { immediate: true });
 
 const sources = ref<TaskSourceInfo[]>([]);
 const options = computed(() => sourceOptions(sources.value));
@@ -139,6 +163,7 @@ async function submit() {
       title: createTitle(title.value, details.value),
       prompt: (agent.value && prompt.value.trim()) || null,
       agent: agent.value || null,
+      base: base.value || null,
       issue: details.value && source.value ? issueToCreate(details.value) : null,
     });
     addTask(state, created.task);
@@ -164,6 +189,13 @@ async function submit() {
           <option v-for="p in state.projects" :key="p.id" :value="p.id">{{ p.name }}</option>
         </select>
       </label>
+      <label>Base branch
+        <select v-model="base" :disabled="loadingBranches || !choice.canCreate">
+          <option v-if="loadingBranches" value="">Fetching…</option>
+          <option v-for="b in choice.options" :key="b" :value="b">{{ b }}</option>
+        </select>
+      </label>
+      <p v-if="choice.hint" class="muted">{{ choice.hint }}</p>
       <div v-if="sources.length" class="segmented" role="group" aria-label="Source">
         <button v-for="o in options" :key="o.id" type="button" :disabled="o.disabled" :title="o.hint ?? ''"
           :aria-pressed="source === o.id" :class="{ active: source === o.id }" @click="source = o.id">{{ o.label }}</button>
@@ -201,7 +233,7 @@ async function submit() {
       <p v-if="error" class="error">{{ error }}</p>
       <div class="actions">
         <button type="button" @click="emit('close')">Cancel</button>
-        <button type="submit" :disabled="busy">Create</button>
+        <button type="submit" :disabled="busy || loadingBranches || !choice.canCreate">Create</button>
       </div>
     </form>
   </div>

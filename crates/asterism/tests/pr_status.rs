@@ -49,7 +49,7 @@ fn write(path: &Path, value: Value) {
 
 async fn task(env: &Env, title: &str) -> Task {
     let project = env.daemon.add_project(&env.repo.path().display().to_string()).unwrap();
-    let params = TaskCreateParams { project_id: project.id, title: title.into(), prompt: None, agent: None, issue: None };
+    let params = TaskCreateParams { project_id: project.id, title: title.into(), prompt: None, agent: None, base: None, issue: None };
     env.daemon.create_task(params).await.unwrap().task
 }
 

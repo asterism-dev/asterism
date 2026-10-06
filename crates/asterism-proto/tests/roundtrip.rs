@@ -279,3 +279,11 @@ fn pr_changed_events_round_trip_with_and_without_a_pr() {
     let p: PrListParams = serde_json::from_value(json!({})).unwrap();
     assert_eq!(p.project_id, None);
 }
+
+#[test]
+fn older_clients_omit_base_and_default_base() {
+    let params: TaskCreateParams = serde_json::from_str(r#"{"project_id":1,"title":"t"}"#).unwrap();
+    assert_eq!(params.base, None);
+    let project: Project = serde_json::from_str(r#"{"id":1,"name":"n","path":"/p"}"#).unwrap();
+    assert_eq!(project.default_base, None);
+}

@@ -46,7 +46,7 @@ describe('applyEvent', () => {
     applyEvent(s, { method: 'session.changed', params: session(10, 1) });
     applyEvent(s, { method: 'session.changed', params: session(10, 1, 'idle') });
     applyEvent(s, { method: 'task.changed', params: task(1) });
-    applyEvent(s, { method: 'project.changed', params: { id: 1, name: 'repo', path: '/repo', created_at: 0 } });
+    applyEvent(s, { method: 'project.changed', params: { id: 1, name: 'repo', path: '/repo', created_at: 0, default_base: null } });
     expect(s.sessions).toEqual([session(10, 1, 'idle')]);
     expect(s.tasks).toEqual([task(1)]);
     expect(s.projects).toHaveLength(1);
@@ -84,7 +84,7 @@ describe('applyEvent', () => {
 
   it('removes a project and its tasks', () => {
     const s = initialState();
-    s.projects = [{ id: 1, name: 'a', path: '/a', created_at: 0 }, { id: 2, name: 'b', path: '/b', created_at: 0 }];
+    s.projects = [{ id: 1, name: 'a', path: '/a', created_at: 0, default_base: null }, { id: 2, name: 'b', path: '/b', created_at: 0, default_base: null }];
     s.tasks = [task(1, 1), task(2, 2)];
     applyEvent(s, { method: 'project.removed', params: { project_id: 1 } });
     expect(s.projects.map((p) => p.id)).toEqual([2]);

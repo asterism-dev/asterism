@@ -123,6 +123,7 @@ function taskMenu(e: MouseEvent, t: Task) {
     ...agents.map((a) => ({ label: `New ${a.display_name || a.name} session`, action: () => startSession(t.id, { type: 'agent', name: a.name }) })),
     { label: 'New shell', action: () => startSession(t.id, { type: 'shell' }) },
     { label: 'Reveal worktree', action: () => revealItemInDir(t.worktree_path).catch(report) },
+    { label: 'Copy branch name', action: () => navigator.clipboard.writeText(t.branch).then(() => toast(`Copied ${t.branch}`), report) },
     { label: 'Archive task', action: () => archiveTask(t) },
     { label: 'Delete task', danger: true, action: () => deleteTask(t) },
   ]);
@@ -176,7 +177,6 @@ function taskMenu(e: MouseEvent, t: Task) {
             <span class="age muted" :title="`Created ${formatDate(t.created_at)} · Last activity ${formatDate(t.last_activity_at)}`">
               {{ relativeTime(t.last_activity_at, now) }}
             </span>
-            <button class="hover-action" title="Archive task" @click.stop="archiveTask(t)">Archive</button>
             <StatusIndicator :status="taskStatus(state, t.id)" />
           </div>
         </template>

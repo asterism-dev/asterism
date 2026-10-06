@@ -1,4 +1,4 @@
-import type { CapabilityKind, PluginInfo, PluginSettings, PluginState, SearchHit, SettingSpec, SettingValue } from './types';
+import type { AgentInfo, CapabilityKind, PluginInfo, PluginSettings, PluginState, SearchHit, SettingSpec, SettingValue } from './types';
 
 export function stateLabel(state: PluginState): string | null {
   switch (state.state) {
@@ -101,4 +101,18 @@ export const CAPABILITY_FILTERS: { value: CapabilityKind | null; label: string }
 export function hitAction(hit: SearchHit): 'install' | 'update' | 'installed' {
   if (!hit.installed_version) return 'install';
   return hit.update_available ? 'update' : 'installed';
+}
+
+export interface PluginTab { name: string; title: string }
+
+/** Usable plugins with own settings or agents get a settings tab, titled after their single agent if they have one. */
+export function pluginTabs(plugins: PluginInfo[], withSettings: string[], agents: AgentInfo[]): PluginTab[] {
+  return plugins
+    .filter((p) => p.state.state !== 'disabled' && p.state.state !== 'broken')
+    .filter((p) => withSettings.includes(p.name) || agents.some((a) => a.plugin === p.name))
+    .map((p) => {
+      const own = agents.filter((a) => a.plugin === p.name);
+      const title = own.length === 1 ? own[0].display_name : p.name.charAt(0).toUpperCase() + p.name.slice(1);
+      return { name: p.name, title };
+    });
 }

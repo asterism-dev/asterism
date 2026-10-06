@@ -124,7 +124,7 @@ fn issue(key: &str, title: &str, branch: Option<&str>) -> TaskIssue {
 }
 
 async fn create(d: &std::sync::Arc<Daemon>, project_id: i64, title: &str, issue: TaskIssue) -> asterism_core::error::Result<Task> {
-    let params = TaskCreateParams { project_id, title: title.into(), prompt: Some("p".into()), agent: None, issue: Some(issue) };
+    let params = TaskCreateParams { project_id, title: title.into(), prompt: Some("p".into()), agent: None, base: None, issue: Some(issue) };
     d.create_task(params).await.map(|r| r.task)
 }
 

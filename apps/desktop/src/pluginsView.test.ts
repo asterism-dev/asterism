@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { capabilityChips, draftFrom, hitAction, newPermissions, originLabel, permissionText, settingsPatch, stateDetail, stateLabel, statusLabel, updateCount } from './pluginsView';
-import type { PluginInfo, PluginSettings, SearchHit } from './types';
+import { capabilityChips, draftFrom, hitAction, newPermissions, originLabel, permissionText, pluginTabs, settingsPatch, stateDetail, stateLabel, statusLabel, updateCount } from './pluginsView';
+import type { AgentInfo, PluginInfo, PluginSettings, SearchHit } from './types';
 
 const settings: PluginSettings = {
   schema: [
@@ -14,6 +14,18 @@ const settings: PluginSettings = {
 };
 
 describe('plugin view helpers', () => {
+  it('gives usable plugins with settings or agents a tab', () => {
+    const plugin = (name: string, state: PluginInfo['state'] = { state: 'ok' }) => ({ name, state }) as PluginInfo;
+    const agent = (name: string, display_name: string, owner: string) => ({ name, display_name, plugin: owner }) as AgentInfo;
+    const plugins = [plugin('claude'), plugin('linear', { state: 'needs_setup', missing: ['API key'] }), plugin('github'), plugin('multi'), plugin('off', { state: 'disabled' })];
+    const agents = [agent('claude', 'Claude Code', 'claude'), agent('a', 'A', 'multi'), agent('b', 'B', 'multi'), agent('x', 'X', 'off')];
+    expect(pluginTabs(plugins, ['linear', 'off'], agents)).toEqual([
+      { name: 'claude', title: 'Claude Code' },
+      { name: 'linear', title: 'Linear' },
+      { name: 'multi', title: 'Multi' },
+    ]);
+  });
+
   it('labels only meaningful states', () => {
     expect(stateLabel({ state: 'ok' })).toBeNull();
     expect(stateLabel({ state: 'needs_setup', missing: ['Token'] })).toBe('needs setup');
