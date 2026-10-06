@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { api, errorMessage } from './api';
 import MainDock from './components/MainDock.vue';
 import PaneHandle from './components/PaneHandle.vue';
@@ -49,6 +49,10 @@ function onKey(e: KeyboardEvent) {
     e.preventDefault();
     const projectId = selectedTask.value?.project_id ?? state.projects[0]?.id;
     if (projectId !== undefined) state.newTaskFor = projectId;
+  } else if (key === 'f') {
+    e.preventDefault();
+    sidebar.open = true;
+    void nextTick(() => document.getElementById('sidebar-search')?.focus());
   } else if (key === 'left' || key === 'right') {
     e.preventDefault();
     if (key === 'left') sidebar.open = !sidebar.open;
