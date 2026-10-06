@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ask } from '@tauri-apps/plugin-dialog';
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { api, errorMessage, RpcError } from '../../api';
-import { CAPABILITY_FILTERS, hitAction, permissionText } from '../../pluginsView';
+import { CAPABILITY_FILTERS, hitAction, newPermissions, permissionText } from '../../pluginsView';
 import { state, toast } from '../../store';
 import type { CapabilityKind, PluginDetails, SearchHit } from '../../types';
 
@@ -29,15 +29,28 @@ async function search() {
   error.value = null;
   try {
     const found = await api.searchPlugins({ query: query.value || undefined, capability: capability.value ?? undefined, store: store.value ?? undefined });
-    if (seq === searchSeq) hits.value = found;
+    if (seq !== searchSeq) return;
+    hits.value = found;
+    if (selected.value) {
+      const current = selected.value;
+      const fresh = found.find((h) => key(h) === key(current));
+      if (fresh) await select(fresh);
+      else {
+        selected.value = null;
+        details.value = null;
+      }
+    }
   } catch (e) {
-    if (seq === searchSeq) error.value = errorMessage(e);
+    if (seq !== searchSeq) return;
+    hits.value = [];
+    error.value = errorMessage(e);
   }
 }
 
 async function loadStores() {
   try {
     stores.value = (await api.storeList()).stores.map((s) => s.name);
+    if (store.value && !stores.value.includes(store.value)) store.value = null;
   } catch {
     stores.value = [];
   }
@@ -59,15 +72,22 @@ async function install() {
   const hit = selected.value;
   const d = details.value;
   if (!hit || !d) return;
-  const list = d.permissions.length ? d.permissions.map(permissionText).join('\n') : 'No special permissions';
-  try {
-    if (!(await ask(`Install ${d.name} ${d.version} from ${d.store}?\n\nIt asks for:\n${list}`, { title: 'Install plugin', kind: 'warning' }))) return;
-  } catch (e) {
-    toast(errorMessage(e));
-    return;
-  }
   busy.value = true;
   try {
+    let question: string;
+    let title: string;
+    if (hit.installed_version) {
+      const installed = (await api.plugins()).find((p) => p.name === d.name);
+      const added = newPermissions(installed?.permissions ?? [], d.permissions).map(permissionText);
+      question = `${d.name} ${d.version} asks for new permissions:\n\n${added.join('\n')}\n\nUpdate?`;
+      title = 'Update plugin';
+      if (!added.length) question = '';
+    } else {
+      const list = d.permissions.length ? d.permissions.map(permissionText).join('\n') : 'No special permissions';
+      question = `Install ${d.name} ${d.version} from ${d.store}?\n\nIt asks for:\n${list}`;
+      title = 'Install plugin';
+    }
+    if (question && !(await ask(question, { title, kind: 'warning' }))) return;
     const info = hit.installed_version ? await api.updatePlugin(d.name, d.permissions) : await api.installPlugin(d.store, d.name, d.permissions);
     toast(`${hit.installed_version ? 'Updated' : 'Installed'} ${d.name} ${info.version ?? ''}`);
     if (info.state.state === 'needs_setup') emit('configure', d.name);
@@ -93,6 +113,7 @@ watch(() => [state.pluginsVersion, state.storesVersion], () => {
   void loadStores();
   void search();
 });
+onBeforeUnmount(() => clearTimeout(debounce));
 onMounted(() => {
   void loadStores();
   void search();
