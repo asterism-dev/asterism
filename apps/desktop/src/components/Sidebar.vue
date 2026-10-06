@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ask } from '@tauri-apps/plugin-dialog';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
-import { ArrowDownUp, ChevronDown, ChevronRight, Plus, Settings, SquarePlus } from 'lucide-vue-next';
+import { ArrowDownUp, ChevronDown, ChevronRight, Plus, Settings, SquarePlus } from '@lucide/vue';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
 import {
@@ -9,7 +9,7 @@ import {
   waitingSessions,
 } from '../store';
 import {
-  loadCollapsed, loadSortMode, relativeTime, saveCollapsed, saveSortMode, sortProjects, sortTasks, type SortMode,
+  filterTasks, loadCollapsed, loadSortMode, relativeTime, saveCollapsed, saveSortMode, sortProjects, sortTasks, type SortMode,
 } from '../projects';
 import { leaveSettings } from '../settingsGuard';
 import { startSession } from '../sessionActions';
@@ -29,8 +29,14 @@ const offlineLabel = computed(() => {
   }
 });
 const sortMode = ref<SortMode>(loadSortMode());
-const projects = computed(() => sortProjects(state.projects, state.tasks, sortMode.value));
-const tasksOf = (p: Project) => sortTasks(state.tasks.filter((t) => t.project_id === p.id), sortMode.value);
+const query = ref('');
+const searching = computed(() => query.value.trim() !== '');
+const visible = computed(() =>
+  sortProjects(state.projects, state.tasks, sortMode.value).flatMap((project) => {
+    const tasks = filterTasks(project, state.tasks, query.value);
+    return tasks ? [{ project, tasks: sortTasks(tasks, sortMode.value) }] : [];
+  }),
+);
 const now = ref(Date.now() / 1000);
 let clock: ReturnType<typeof setInterval> | undefined;
 const formatDate = (seconds: number) => new Date(seconds * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
@@ -130,7 +136,16 @@ function taskMenu(e: MouseEvent, t: Task) {
         <button class="add" :title="`Sort: ${SORT_LABELS[sortMode]}`" aria-label="Sort projects and tasks" @click.stop="sortMenu"><ArrowDownUp /></button>
         <button class="add" title="Add project" aria-label="Add project" @click="state.projectDialog = 'folder'"><SquarePlus /></button>
       </div>
-      <div v-for="p in projects" :key="p.id" class="project" :class="{ offline: !connected }">
+      <input
+        id="sidebar-search"
+        v-model="query"
+        class="search"
+        type="search"
+        placeholder="Search projects and tasks"
+        aria-label="Search projects and tasks"
+        @keydown.esc="query = ''"
+      />
+      <div v-for="{ project: p, tasks } in visible" :key="p.id" class="project" :class="{ offline: !connected }">
         <div class="row project-row" @contextmenu="projectMenu($event, p)">
           <button
             type="button"
@@ -138,13 +153,13 @@ function taskMenu(e: MouseEvent, t: Task) {
             :aria-expanded="!state.collapsed[p.id]"
             :aria-label="state.collapsed[p.id] ? `Expand ${p.name}` : `Collapse ${p.name}`"
             @click="toggle(p)"
-          ><ChevronRight v-if="state.collapsed[p.id]" /><ChevronDown v-else /></button>
+          ><ChevronRight v-if="state.collapsed[p.id] && !searching" /><ChevronDown v-else /></button>
           <span class="name" :class="{ current: state.projectPage === p.id }" @click="openProject(p)">{{ p.name }}</span>
           <button class="hover-action" title="New task" @click="state.newTaskFor = p.id"><Plus />Task</button>
         </div>
-        <template v-if="!state.collapsed[p.id]">
+        <template v-if="searching || !state.collapsed[p.id]">
           <div
-            v-for="t in tasksOf(p)"
+            v-for="t in tasks"
             :key="t.id"
             class="row task-row"
             :class="{ selected: state.selectedTaskId === t.id }"
@@ -162,6 +177,7 @@ function taskMenu(e: MouseEvent, t: Task) {
           </div>
         </template>
       </div>
+      <p v-if="searching && !visible.length" class="hint muted">No matches</p>
       <p v-if="connected && !state.projects.length" class="hint">Click + to add, clone or create a project.</p>
     </div>
     <button class="settings-button" :class="{ active: state.settingsOpen }" @click="state.settingsOpen = true"><Settings />Settings<span v-if="state.pluginUpdates" class="badge update-badge" :title="`${state.pluginUpdates} plugin update(s)`">{{ state.pluginUpdates }}</span></button>
@@ -191,6 +207,7 @@ function taskMenu(e: MouseEvent, t: Task) {
 .offline-label { flex-shrink: 1; min-width: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
 .offline { opacity: 0.55; }
 .hint { padding: 0 8px; }
+.search { width: 100%; margin: 6px 0 2px; box-sizing: border-box; }
 .settings-button { flex: none; margin: 0; padding: 8px 12px; width: 100%; text-align: left; border: 0; border-top: 1px solid var(--border); border-radius: 0; }
 .settings-button.active { background: var(--select); }
 </style>

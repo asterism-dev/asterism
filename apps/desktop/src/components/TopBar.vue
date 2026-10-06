@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ask } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
-import { Activity, FolderOpen, GitCompare, Lock, LockOpen, PanelLeftClose, PanelLeftOpen, RotateCcw, Settings } from 'lucide-vue-next';
+import { Activity, FolderOpen, GitCompare, Lock, LockOpen, PanelLeftClose, PanelLeftOpen, RotateCcw, Settings } from '@lucide/vue';
 import { computed } from 'vue';
 import { errorMessage } from '../api';
 import { floatUnlocked, mainApi, paneState, resetLayout as resetMainLayout, setFloatUnlocked, togglePane } from '../dock/main';

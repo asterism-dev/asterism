@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { DockviewApi, IDockviewGroupPanel } from 'dockview-vue';
-import { Plus } from 'lucide-vue-next';
+import { Plus } from '@lucide/vue';
 import { addTool, paneState } from '../dock/main';
 import type { ToolPane } from '../dock/model';
 import { newSessionMenu } from '../sessionActions';
