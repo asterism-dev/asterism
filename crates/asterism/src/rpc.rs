@@ -175,6 +175,21 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             daemon.remove_project(params::<ProjectIdParams>(raw)?.project_id)?;
             Ok(Value::Null)
         }
+        method::STORE_LIST => to_value(daemon.store_list()),
+        method::STORE_ADD => to_value(daemon.store_add(&params::<StoreAddParams>(raw)?.source).await?),
+        method::STORE_REMOVE => {
+            let p: StoreRemoveParams = params(raw)?;
+            daemon.store_remove(&p.name, p.uninstall_plugins).await?;
+            Ok(Value::Null)
+        }
+        method::STORE_REFRESH => {
+            daemon.refresh_stores(params::<StoreRefreshParams>(raw)?.name.as_deref()).await?;
+            Ok(Value::Null)
+        }
+        method::STORE_SET_AUTO_UPDATE => {
+            daemon.set_auto_update(params::<AutoUpdateParams>(raw)?.enabled).await?;
+            Ok(Value::Null)
+        }
         method::PLUGIN_LIST => to_value(daemon.plugin_list()?),
         method::PLUGIN_LINK => to_value(daemon.plugin_link(&params::<PluginPathParams>(raw)?.path).await?),
         method::PLUGIN_UNLINK => {

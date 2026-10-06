@@ -66,6 +66,7 @@ impl Node {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_asterism"));
         cmd.args(args)
             .env("ASTERISM_HOME", self.home.path())
+            .env("ASTERISM_OFFICIAL_STORE", "")
             .env_remove("ASTERISM_SOCKET")
             .env_remove("ASTERISM_TASK")
             .env_remove("ASTERISM_SESSION")
@@ -159,4 +160,17 @@ pub fn store_repo(dir: &Path, store: &str, entries: serde_json::Value) {
     }
     let index = serde_json::json!({ "format": 1, "name": store, "plugins": entries });
     std::fs::write(dir.join("store.json"), serde_json::to_string_pretty(&index).unwrap()).unwrap();
+}
+
+/// A daemon whose stores.toml starts empty, so nothing reaches the network.
+pub fn daemon_with_stores(home: &Path) -> (Paths, std::sync::Arc<asterism_core::daemon::Daemon>) {
+    let paths = Paths { home: home.join("h") };
+    paths.ensure_dirs().unwrap();
+    std::fs::create_dir_all(paths.plugins_dir()).unwrap();
+    if !paths.plugin_stores_file().exists() {
+        std::fs::write(paths.plugin_stores_file(), "auto_update = false\n").unwrap();
+    }
+    let options = DaemonOptions { git_env: isolated_git_env(), ..daemon_options() };
+    let daemon = asterism_core::daemon::Daemon::with_options(paths.clone(), options).unwrap();
+    (paths, daemon)
 }

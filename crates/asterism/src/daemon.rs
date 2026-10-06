@@ -20,7 +20,9 @@ use crate::paths::Paths;
 use crate::plugins::manifest::{self, AgentDecl, LaunchKind};
 use crate::plugins::process::{self, HostFn};
 use crate::plugins::registry::{self, Plugin, Status};
-use crate::plugins::{settings, PluginSet, Runtime};
+use crate::git::GitEnv;
+use crate::plugins::catalog::{self, StoreConfig};
+use crate::plugins::{install, settings, source, store_ops, PluginSet, Runtime, STORE_LOCK};
 use crate::proc_stats::{self, CpuTracker};
 use crate::session::{Pty, Snapshot, SpawnSpec, SCROLLBACK_LINES};
 use crate::store::Store;
@@ -90,6 +92,18 @@ fn plugin_env(paths: &Paths, extra: &[(String, String)]) -> Result<Vec<(String, 
     Ok(env)
 }
 
+pub const STORE_REFRESH_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+
+#[derive(Debug, Clone, Default)]
+struct StoreStatus {
+    last_refreshed: Option<i64>,
+    last_error: Option<String>,
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+}
+
 pub struct Daemon {
     options: DaemonOptions,
     paths: Paths,
@@ -102,6 +116,7 @@ pub struct Daemon {
     host: HostFn,
     runtime: Runtime,
     builtin_dir: PathBuf,
+    store_status: Mutex<BTreeMap<String, StoreStatus>>,
 }
 
 impl Daemon {
@@ -139,6 +154,7 @@ impl Daemon {
                 host,
                 runtime,
                 builtin_dir,
+                store_status: Mutex::new(BTreeMap::new()),
             }
         }))
     }
@@ -229,6 +245,141 @@ impl Daemon {
     pub fn plugin_list(&self) -> Result<Vec<PluginInfo>> {
         let set = self.plugin_set();
         Ok(set.registry.plugins().iter().map(|p| self.plugin_info(&set, p)).collect())
+    }
+
+    /// Runs a store/install operation off the async runtime under the global store lock.
+    pub(crate) async fn plugin_op<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(&Paths, &GitEnv) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        let (paths, env) = (self.paths.clone(), self.options.git_env.clone());
+        tokio::task::spawn_blocking(move || {
+            // ponytail: one lock for every store/install operation, git fetches included; split it if refreshes start blocking installs.
+            let _guard = crate::lock(&STORE_LOCK);
+            f(&paths, &env)
+        })
+        .await
+        .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?
+    }
+
+    fn set_store_status<T>(&self, name: &str, result: &Result<T>) {
+        let mut status = lock(&self.store_status);
+        let entry = status.entry(name.to_string()).or_default();
+        match result {
+            Ok(_) => {
+                entry.last_refreshed = Some(unix_now());
+                entry.last_error = None;
+            }
+            Err(e) => entry.last_error = Some(e.message.clone()),
+        }
+    }
+
+    pub fn store_list(&self) -> StoreList {
+        let file = match store_ops::load(&self.paths) {
+            Ok(file) => file,
+            Err(e) => return StoreList { error: Some(e.message), ..Default::default() },
+        };
+        let status = lock(&self.store_status);
+        let stores = file
+            .stores
+            .iter()
+            .map(|s| {
+                let st = status.get(&s.name).cloned().unwrap_or_default();
+                StoreInfo {
+                    name: s.name.clone(),
+                    source: s.source.clone(),
+                    official: s.official,
+                    last_refreshed: st.last_refreshed,
+                    last_error: st.last_error,
+                    plugin_count: source::read_index(&store_ops::store_dir(&self.paths, s)).map_or(0, |i| i.plugins.len()),
+                }
+            })
+            .collect();
+        StoreList { auto_update: file.auto_update, stores, error: None }
+    }
+
+    pub async fn store_add(&self, source_url: &str) -> Result<StoreInfo> {
+        let source_url = source_url.trim().to_string();
+        let added = self.plugin_op(move |paths, env| store_ops::add_store(paths, &source_url, env)).await?;
+        self.set_store_status(&added.name, &Ok(()));
+        self.emit(Event::StoresChanged {});
+        self.store_list()
+            .stores
+            .into_iter()
+            .find(|s| s.name == added.name)
+            .ok_or_else(|| Error::new(ErrorKind::Internal, "added store vanished"))
+    }
+
+    pub async fn store_remove(&self, name: &str, uninstall_plugins: bool) -> Result<()> {
+        let store = name.to_string();
+        let uninstalled = self
+            .plugin_op(move |paths, _| {
+                store_ops::find_store(&store_ops::load(paths)?, &store)?;
+                let owned: Vec<String> =
+                    install::load(paths)?.plugins.into_iter().filter(|(_, e)| e.store == store).map(|(n, _)| n).collect();
+                if !owned.is_empty() && !uninstall_plugins {
+                    return Err(Error::new(
+                        ErrorKind::InvalidParams,
+                        format!("store {store} provides installed plugins ({}); remove them together with the store", owned.join(", ")),
+                    ));
+                }
+                for plugin in &owned {
+                    install::uninstall(paths, plugin)?;
+                }
+                store_ops::remove_store(paths, &store)?;
+                Ok(owned)
+            })
+            .await?;
+        lock(&self.store_status).remove(name);
+        if !uninstalled.is_empty() {
+            self.reload_plugins(None).await?;
+        }
+        self.emit(Event::StoresChanged {});
+        Ok(())
+    }
+
+    /// Refreshes one store (its error is returned) or all of them (errors are recorded and logged).
+    pub async fn refresh_stores(&self, name: Option<&str>) -> Result<()> {
+        let file = store_ops::load(&self.paths)?;
+        let targets: Vec<StoreConfig> = file.stores.iter().filter(|s| name.is_none_or(|n| n == s.name)).cloned().collect();
+        if let (Some(name), true) = (name, targets.is_empty()) {
+            return Err(Error::new(ErrorKind::NotFound, format!("no store named {name}")));
+        }
+        let mut failed = None;
+        for store in targets {
+            let config = store.clone();
+            let result = self.plugin_op(move |paths, env| store_ops::sync_store(paths, &config, env)).await;
+            self.set_store_status(&store.name, &result);
+            if let Err(e) = result {
+                eprintln!("asterismd: refreshing store {}: {}", store.name, e.message);
+                failed = Some(e);
+            }
+        }
+        self.emit(Event::StoresChanged {});
+        match (name, failed) {
+            (Some(_), Some(e)) => Err(e),
+            _ => Ok(()),
+        }
+    }
+
+    pub async fn set_auto_update(&self, enabled: bool) -> Result<()> {
+        self.plugin_op(move |paths, _| {
+            let mut file = store_ops::load(paths)?;
+            file.auto_update = enabled;
+            catalog::save_stores(&paths.plugin_stores_file(), &file)
+        })
+        .await?;
+        self.emit(Event::StoresChanged {});
+        Ok(())
+    }
+
+    pub async fn store_refresh_loop(self: Arc<Self>) {
+        loop {
+            if let Err(e) = self.refresh_stores(None).await {
+                eprintln!("asterismd: store refresh failed: {}", e.message);
+            }
+            tokio::time::sleep(STORE_REFRESH_INTERVAL).await;
+        }
     }
 
     /// Re-reads every manifest; backends restart lazily on their next call.

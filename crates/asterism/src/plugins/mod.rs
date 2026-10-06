@@ -7,6 +7,9 @@ pub mod settings;
 pub mod source;
 pub mod store_ops;
 
+/// Serialises every store and install operation; the files they touch are read-modify-write.
+pub static STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::Arc;
