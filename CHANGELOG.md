@@ -1,3 +1,9 @@
+## v0.3.1 (2026-10-06)
+
+### Fix
+
+- **desktop**: ad-hoc sign the whole app bundle (#6)
+
 ## v0.3.0 (2026-10-06)
 
 ### Feat
