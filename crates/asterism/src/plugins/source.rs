@@ -128,10 +128,10 @@ pub fn checkout_git(cache: &Path, url: &str, git_ref: &str, env: &GitEnv) -> Res
         std::fs::create_dir_all(cache)?;
         git_timed(None, &["clone", "-q", "--no-checkout", "--", url, &dir.to_string_lossy()], env, NETWORK_TIMEOUT)?;
     }
-    let target = if git_local(&dir, &["show-ref", "--verify", "--quiet", &format!("refs/tags/{git_ref}")], env).is_ok() {
-        format!("refs/tags/{git_ref}^{{commit}}")
-    } else if is_full_sha(git_ref) {
+    let target = if is_full_sha(git_ref) {
         format!("{git_ref}^{{commit}}")
+    } else if git_local(&dir, &["show-ref", "--verify", "--quiet", &format!("refs/tags/{git_ref}")], env).is_ok() {
+        format!("refs/tags/{git_ref}^{{commit}}")
     } else if git_local(&dir, &["show-ref", "--verify", "--quiet", &format!("refs/remotes/origin/{git_ref}")], env).is_ok() {
         return Err(invalid(format!("ref {git_ref} is a branch; store entries must pin a tag or commit")));
     } else {
@@ -139,6 +139,9 @@ pub fn checkout_git(cache: &Path, url: &str, git_ref: &str, env: &GitEnv) -> Res
     };
     let commit = git_local(&dir, &["rev-parse", "--verify", "--quiet", &target], env)
         .map_err(|_| invalid(format!("unknown ref {git_ref} in {url}")))?;
+    if is_full_sha(git_ref) && commit.trim() != git_ref {
+        return Err(invalid(format!("ref {git_ref} does not resolve to that commit")));
+    }
     git_local(&dir, &["checkout", "-q", "--force", "--detach", commit.trim()], env)?;
     Ok(dir)
 }

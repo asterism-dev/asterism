@@ -135,3 +135,20 @@ fn readme_truncates_on_char_boundary() {
     assert_eq!(text.len(), README_LIMIT);
     assert!(text.chars().all(|c| c == 'é'));
 }
+
+#[test]
+fn sha_pins_ignore_tags_named_like_the_sha() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    run_git(&repo, &["init", "-q", "-b", "main"]);
+    write_plugin(&repo, "one", "1.0.0", &[]);
+    commit_all(&repo, "a");
+    let sha_a = run_git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
+    write_plugin(&repo, "one", "2.0.0", &[]);
+    commit_all(&repo, "b");
+    run_git(&repo, &["tag", &sha_a, "HEAD"]);
+    let dir = checkout_git(&root.path().join("cache"), &url(&repo), &sha_a, &isolated_git_env()).unwrap();
+    assert_eq!(run_git(&dir, &["rev-parse", "HEAD"]).trim(), sha_a);
+    assert!(std::fs::read_to_string(dir.join("plugin.toml")).unwrap().contains("1.0.0"));
+}
