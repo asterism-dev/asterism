@@ -79,6 +79,12 @@ enum ProjectCmd {
         #[arg(long)]
         project: Option<String>,
     },
+    /// Set the default base branch for new tasks; "auto" uses origin's default branch.
+    SetBase {
+        base: String,
+        #[arg(long)]
+        project: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -92,6 +98,9 @@ enum TaskCmd {
         agent: Option<String>,
         #[arg(long)]
         prompt: Option<String>,
+        /// Branch or ref to start from (default: the project's default base).
+        #[arg(long)]
+        base: Option<String>,
     },
     List {
         #[arg(long)]
@@ -228,14 +237,26 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
                 })
             });
         }
+        Cmd::Project(ProjectCmd::SetBase { base, project }) => {
+            let project_id = resolve_project(&client, project).await?;
+            let default_base = (base != "auto").then_some(base);
+            let updated: Project = client.call(method::PROJECT_UPDATE, ProjectUpdateParams { project_id, default_base }).await?;
+            print(json, &updated, || format!("default base: {}", updated.default_base.as_deref().unwrap_or("auto")));
+        }
         Cmd::Project(ProjectCmd::Remove { id }) => {
             client.call::<_, ()>(method::PROJECT_REMOVE, ProjectIdParams { project_id: id }).await?;
             print_ok(json);
         }
-        Cmd::Task(TaskCmd::New { title, project, agent, prompt }) => {
+        Cmd::Task(TaskCmd::New { title, project, agent, prompt, base }) => {
             let project_id = resolve_project(&client, project).await?;
+            // Also fetches origin, so the default and `--base origin/…` see the remote's current state.
+            let branches: ProjectBranches = client.call(method::PROJECT_BRANCHES, ProjectIdParams { project_id }).await?;
+            if let Some(e) = &branches.fetch_error {
+                eprintln!("warning: could not fetch origin: {e}");
+            }
+            let base = base.or(branches.default);
             let created: TaskCreateResult =
-                client.call(method::TASK_CREATE, TaskCreateParams { project_id, title, prompt, agent, base: None }).await?;
+                client.call(method::TASK_CREATE, TaskCreateParams { project_id, title, prompt, agent, base }).await?;
             print(json, &created, || {
                 let mut out = task_line(&created.task);
                 if let Some(session) = &created.session {
