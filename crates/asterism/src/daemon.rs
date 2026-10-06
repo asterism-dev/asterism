@@ -16,6 +16,7 @@ use crate::agent_settings;
 use crate::agents;
 use crate::config::{self, Config};
 use crate::error::{Error, Result};
+use crate::files;
 use crate::git::GitEnv;
 use crate::paths::Paths;
 use crate::plugins::manifest::{self, AgentDecl, LaunchKind, Manifest};
@@ -1138,6 +1139,12 @@ impl Daemon {
     pub fn diff(&self, task_id: i64) -> Result<TaskDiffResult> {
         let task = self.task(task_id)?;
         Ok(TaskDiffResult { patch: git::diff(Path::new(&task.worktree_path), &task.base_branch)? })
+    }
+
+    pub fn file(&self, params: TaskFileParams) -> Result<TaskFileResult> {
+        let task = self.task(params.task_id)?;
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        files::read(Path::new(&task.worktree_path), home.as_deref(), &params.path, params.known_mtime)
     }
 
     pub fn agent_infos(&self) -> Vec<AgentInfo> {
