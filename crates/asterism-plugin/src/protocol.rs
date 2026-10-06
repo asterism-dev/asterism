@@ -1,4 +1,4 @@
-use asterism_proto::types::Visibility;
+use asterism_proto::types::{PullRequest, Visibility};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -17,6 +17,7 @@ pub mod method {
     pub const FORGE_RESOLVE_OWNER: &str = "forge.resolve_owner";
     pub const FORGE_CLONE: &str = "forge.clone";
     pub const FORGE_CREATE_REMOTE: &str = "forge.create_remote";
+    pub const FORGE_PULL_REQUESTS: &str = "forge.pull_requests";
     pub const AGENT_PREPARE: &str = "agent.prepare";
 }
 
@@ -139,4 +140,17 @@ pub struct GetIssueParams {
     pub source: String,
     pub key: String,
     pub project_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PullRequestsParams {
+    pub forge: String,
+    pub project_path: String,
+    pub branches: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BranchPr {
+    pub branch: String,
+    pub pr: PullRequest,
 }

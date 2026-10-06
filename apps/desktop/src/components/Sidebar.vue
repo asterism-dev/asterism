@@ -5,7 +5,7 @@ import { ArrowDownUp, ChevronDown, ChevronRight, Plus, Settings, SquarePlus } fr
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
 import {
-  isConnected, nextWaiting, selectSession, showMenu, state, taskStatus, toast,
+  applyPrList, isConnected, nextWaiting, selectSession, showMenu, state, taskStatus, toast,
   waitingSessions,
 } from '../store';
 import {
@@ -14,6 +14,7 @@ import {
 import { leaveSettings } from '../settingsGuard';
 import { startSession } from '../sessionActions';
 import { archiveTask, deleteTask } from '../taskActions';
+import PrBadge from './PrBadge.vue';
 import StatusIndicator from './StatusIndicator.vue';
 import { installUpdate, updateLabel, updater } from '../updater';
 import type { Project, Task } from '../types';
@@ -110,6 +111,7 @@ function projectMenu(e: MouseEvent, p: Project) {
   showMenu(e, [
     { label: 'Open project page', action: () => openProject(p) },
     { label: 'New task…', action: () => (state.newTaskFor = p.id) },
+    { label: 'Refresh PR status', action: () => api.refreshPrs(p.id).then((l) => applyPrList(state, l, p.id)).catch(report) },
     { label: 'Reveal in file manager', action: () => revealItemInDir(p.path).catch(report) },
     { label: 'Remove project', danger: true, action: () => removeProject(p) },
   ]);
@@ -171,6 +173,7 @@ function taskMenu(e: MouseEvent, t: Task) {
             <span class="name">{{ t.title }}</span>
             <a v-if="t.issue" class="issue-key muted" :href="t.issue.url" :title="t.issue.url"
               @click.prevent.stop="openIssue(t.issue.url)">{{ t.issue.key }}</a>
+            <PrBadge v-if="state.prs[t.id]" :pr="state.prs[t.id]!" />
             <span class="age muted" :title="`Created ${formatDate(t.created_at)} · Last activity ${formatDate(t.last_activity_at)}`">
               {{ relativeTime(t.last_activity_at, now) }}
             </span>

@@ -251,6 +251,36 @@ fn task_source_params_default_query_and_assignment() {
 }
 
 #[test]
+fn pull_requests_use_snake_case_states() {
+    let pr = PullRequest {
+        number: 7,
+        url: "https://github.com/acme/api/pull/7".into(),
+        title: "Fix login".into(),
+        state: PrState::Draft,
+        review: ReviewState::ChangesRequested,
+        checks: PrChecks { state: ChecksState::Failure, failing: vec!["lint".into()] },
+    };
+    let v = serde_json::to_value(&pr).unwrap();
+    assert_eq!((v["state"].as_str(), v["review"].as_str(), v["checks"]["state"].as_str()), (Some("draft"), Some("changes_requested"), Some("failure")));
+    assert_eq!(serde_json::from_value::<PullRequest>(v).unwrap(), pr);
+    let none: PrChecks = serde_json::from_value(json!({"state": "none"})).unwrap();
+    assert!(none.failing.is_empty());
+}
+
+#[test]
+fn pr_changed_events_round_trip_with_and_without_a_pr() {
+    let cleared = Event::PrChanged { task_id: 3, pr: None };
+    let n = cleared.to_notification();
+    assert_eq!(n.method, "pr.changed");
+    assert_eq!(n.params, json!({"task_id": 3, "pr": null}));
+    assert_eq!(Event::from_notification(&n), Some(cleared));
+    let list: PrList = serde_json::from_value(json!({"prs": [], "errors": [{"project_id": 1, "message": "gh: not logged in"}]})).unwrap();
+    assert_eq!(list.errors[0].project_id, 1);
+    let p: PrListParams = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(p.project_id, None);
+}
+
+#[test]
 fn older_clients_omit_base_and_default_base() {
     let params: TaskCreateParams = serde_json::from_str(r#"{"project_id":1,"title":"t"}"#).unwrap();
     assert_eq!(params.base, None);

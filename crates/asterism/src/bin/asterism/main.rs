@@ -69,6 +69,8 @@ enum Cmd {
         agent_ref: Option<String>,
     },
     #[command(subcommand)]
+    Pr(PrCmd),
+    #[command(subcommand)]
     Issue(IssueCmd),
     #[command(subcommand)]
     Daemon(DaemonCmd),
@@ -190,6 +192,15 @@ enum ProjectCmd {
     /// Set the default base branch for new tasks; "auto" uses origin's default branch.
     SetBase {
         base: String,
+        #[arg(long)]
+        project: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum PrCmd {
+    /// Fetch the pull request status of a project's tasks now.
+    Refresh {
         #[arg(long)]
         project: Option<String>,
     },
@@ -436,7 +447,30 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
             };
             let tasks: Vec<Task> =
                 client.call(method::TASK_LIST, TaskListParams { project_id, include_archived: all }).await?;
-            print(json, &tasks, || lines(&tasks, task_line));
+            let prs: PrList = client.call(method::PR_LIST, PrListParams { project_id }).await.unwrap_or_default();
+            let pr_of = |id: i64| prs.prs.iter().find(|p| p.task_id == id).map(|p| &p.pr);
+            if json {
+                let rows: Vec<serde_json::Value> = tasks
+                    .iter()
+                    .map(|t| {
+                        let mut row = serde_json::to_value(t).unwrap_or_default();
+                        row["pr"] = serde_json::to_value(pr_of(t.id)).unwrap_or_default();
+                        row
+                    })
+                    .collect();
+                print(json, &rows, String::new);
+            } else {
+                print(json, &tasks, || lines(&tasks, |t| format!("{}{}", task_line(t), pr_suffix(pr_of(t.id)))));
+            }
+        }
+        Cmd::Pr(PrCmd::Refresh { project }) => {
+            let project_id = resolve_project(&client, project).await?;
+            let list: PrList = client.call(method::PR_REFRESH, ProjectIdParams { project_id }).await?;
+            print(json, &list, || {
+                let mut out: Vec<String> = list.prs.iter().map(|p| format!("{}\t{}{}", p.task_id, p.branch, pr_suffix(Some(&p.pr)))).collect();
+                out.extend(list.errors.iter().map(|e| format!("error\t{}", e.message)));
+                out.join("\n")
+            });
         }
         Cmd::Task(TaskCmd::Archive { id }) => {
             let task: Task = client.call(method::TASK_ARCHIVE, TaskArchiveParams { task_id: id, force: false }).await?;
@@ -920,6 +954,16 @@ async fn run_external(client: &Client, args: Vec<String>) -> Result<(), ClientEr
 
 fn project_line(p: &Project) -> String {
     format!("{}\t{}\t{}", p.id, p.name, p.path)
+}
+
+fn pr_suffix(pr: Option<&PullRequest>) -> String {
+    let Some(pr) = pr else { return String::new() };
+    let checks = match pr.checks.state {
+        ChecksState::Failure => ", checks failing",
+        ChecksState::Pending => ", checks running",
+        ChecksState::Success | ChecksState::None => "",
+    };
+    format!("\t#{} {}{checks}", pr.number, label(&pr.state))
 }
 
 fn task_line(t: &Task) -> String {

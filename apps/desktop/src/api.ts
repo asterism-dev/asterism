@@ -1,6 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type {
-  AgentConfig, AgentConfigRaw, AgentInfo, CapabilityKind, PluginDetails, PluginInfo, SearchHit, StoreInfo, StoreList, PluginSettings, SettingValue, ForgeInfo, ForgeRepo, ForgeStatus, NodeConfig, NodeConfigInfo, NodeStats, NodeStatus, Project, ProjectBranches, ProjectCreateResult, RemoteTarget, Session, SessionAttachResult, SessionKind,
+  AgentConfig, AgentConfigRaw, AgentInfo, CapabilityKind, PluginDetails, PluginInfo, SearchHit, StoreInfo, StoreList, PluginSettings, SettingValue, ForgeInfo, ForgeRepo, ForgeStatus, NodeConfig, NodeConfigInfo, NodeStats, NodeStatus, PrList, Project, ProjectBranches, ProjectCreateResult, RemoteTarget, Session, SessionAttachResult, SessionKind,
   SessionReadResult, IssueDetails, IssueHit, Task, TaskCreateResult, TaskIssue, TaskSourceInfo, TaskDeleteCheck, TaskDeleteResult, TaskDiffResult, Worktree, WorktreeSize,
 } from './types';
 
@@ -86,6 +86,8 @@ export const api = {
   restoreTask: (taskId: number) => call<Task>('task.restore', { task_id: taskId }),
   deleteCheck: (taskId: number) => call<TaskDeleteCheck>('task.delete_check', { task_id: taskId }),
   deleteTask: (taskId: number, deleteBranch: boolean) => call<TaskDeleteResult>('task.delete', { task_id: taskId, delete_branch: deleteBranch }),
+  prList: (projectId?: number) => call<PrList>('pr.list', { project_id: projectId ?? null }),
+  refreshPrs: (projectId: number) => call<PrList>('pr.refresh', { project_id: projectId }),
   projectTasks: (projectId: number) => call<Task[]>('task.list', { project_id: projectId, include_archived: true }),
   worktrees: (projectId: number) => call<Worktree[]>('project.worktrees', { project_id: projectId }),
   worktreeSizes: (projectId: number) => call<WorktreeSize[]>('project.worktree_sizes', { project_id: projectId }),
