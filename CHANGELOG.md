@@ -1,3 +1,9 @@
+## v0.6.0 (2026-10-06)
+
+### Feat
+
+- fetch and choose the base branch for new tasks (#2)
+
 ## v0.5.0 (2026-10-06)
 
 ### Feat
