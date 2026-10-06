@@ -11,3 +11,7 @@ command = ["./asterism-plugin-github"]
 id = "github"
 display_name = "GitHub"
 hosts = ["github.com"]
+
+[[provides.task_source]]
+id = "github-issues"
+display_name = "GitHub Issues"

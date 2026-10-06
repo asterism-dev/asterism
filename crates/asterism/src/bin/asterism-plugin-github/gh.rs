@@ -4,7 +4,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use asterism_plugin::{ErrorKind, RpcError};
-use asterism_proto::types::{ForgeRepo, ForgeStatus, Visibility};
+use asterism_proto::types::{ForgeRepo, ForgeStatus, Issue, IssueHit, Visibility};
 use serde_json::Value;
 
 const REPO_LIMIT: &str = "200";
@@ -12,6 +12,9 @@ const METADATA_TIMEOUT: Duration = Duration::from_secs(20);
 // Stays under the daemon's 20 s call cap so status answers instead of timing out.
 const STATUS_BUDGET: Duration = Duration::from_secs(15);
 const MESSAGE_LIMIT: usize = 2_000;
+const ISSUE_LIMIT: &str = "50";
+// Stays under the daemon's 20 s call cap.
+const ISSUE_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn truncate(message: &str) -> String {
     let trimmed = message.trim();
@@ -63,13 +66,17 @@ fn wait_with_timeout(child: &mut Child, timeout: Duration) -> Result<Option<std:
     }
 }
 
-fn run_with_timeout(gh: &Path, args: &[&str], timeout: Duration) -> Result<String, RpcError> {
-    let mut child = Command::new(gh)
-        .args(args)
+fn run_with_timeout(gh: &Path, args: &[&str], timeout: Duration, dir: Option<&Path>) -> Result<String, RpcError> {
+    let mut cmd = Command::new(gh);
+    cmd.args(args)
         .env("GH_PROMPT_DISABLED", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(dir) = dir {
+        cmd.current_dir(dir);
+    }
+    let mut child = cmd
         .spawn()
         .map_err(|e| RpcError::new(ErrorKind::Git, e.to_string()))?;
     let stdout = read_pipe(child.stdout.take());
@@ -88,12 +95,12 @@ fn run_with_timeout(gh: &Path, args: &[&str], timeout: Duration) -> Result<Strin
 }
 
 fn metadata(gh: &Path, args: &[&str]) -> Result<String, RpcError> {
-    run_with_timeout(gh, args, METADATA_TIMEOUT)
+    run_with_timeout(gh, args, METADATA_TIMEOUT, None)
 }
 
 pub fn status(gh: &Path) -> ForgeStatus {
     let deadline = Instant::now() + STATUS_BUDGET;
-    let call = |args: &[&str]| run_with_timeout(gh, args, deadline.saturating_duration_since(Instant::now()));
+    let call = |args: &[&str]| run_with_timeout(gh, args, deadline.saturating_duration_since(Instant::now()), None);
     if call(&["--version"]).is_err() {
         return ForgeStatus { error: Some("the GitHub CLI (gh) is not installed".into()), ..Default::default() };
     }
@@ -158,6 +165,65 @@ pub fn create(gh: &Path, owner: &str, name: &str, visibility: Visibility, dir: &
     run(gh, &["repo", "create", &format!("{owner}/{name}"), flag, "--source", &source, "--remote", "origin", "--push"], env).map(|_| ())
 }
 
+pub fn github_repo_from_url(url: &str) -> Option<String> {
+    let url = url.trim();
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let (authority, path) = rest.split_once(['/', ':'])?;
+    if authority.rsplit('@').next()? != "github.com" {
+        return None;
+    }
+    let mut parts = path.trim_matches('/').trim_end_matches(".git").split('/');
+    let owner = parts.next().filter(|s| !s.is_empty())?;
+    let repo = parts.next().filter(|s| !s.is_empty())?;
+    Some(format!("{owner}/{repo}"))
+}
+
+pub fn origin_repo(project: &Path) -> Result<String, RpcError> {
+    let out = Command::new("git").arg("-C").arg(project).args(["remote", "get-url", "origin"]).output();
+    let url = out.ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+    url.as_deref()
+        .and_then(github_repo_from_url)
+        .ok_or_else(|| RpcError::new(ErrorKind::NotFound, "project has no GitHub repository"))
+}
+
+fn parse<T: serde::de::DeserializeOwned>(out: &str) -> Result<T, RpcError> {
+    serde_json::from_str(out).map_err(|e| RpcError::new(ErrorKind::Internal, format!("unexpected gh output: {e}")))
+}
+
+pub fn search_issues(gh: &Path, project: &Path, query: &str, assigned_to_me: bool) -> Result<Vec<IssueHit>, RpcError> {
+    let repo = origin_repo(project)?;
+    let search = format!("{} sort:updated-desc", query.trim()).trim().to_string();
+    let mut args = vec!["issue", "list", "-R", &repo, "--state", "open", "--limit", ISSUE_LIMIT, "--json", "number,title,url,state,assignees,updatedAt", "--search", &search];
+    if assigned_to_me {
+        args.extend(["--assignee", "@me"]);
+    }
+    let items: Vec<Value> = parse(&run_with_timeout(gh, &args, ISSUE_TIMEOUT, Some(project))?)?;
+    Ok(items
+        .iter()
+        .filter_map(|item| {
+            Some(IssueHit {
+                key: format!("#{}", item["number"].as_u64()?),
+                title: item["title"].as_str()?.to_string(),
+                url: item["url"].as_str()?.to_string(),
+                state: item["state"].as_str().unwrap_or("open").to_lowercase(),
+                assignee: item["assignees"][0]["login"].as_str().map(String::from),
+                updated_at: item["updatedAt"].as_str().map(String::from),
+            })
+        })
+        .collect())
+}
+
+pub fn get_issue(gh: &Path, project: &Path, key: &str) -> Result<Issue, RpcError> {
+    let number = key.trim_start_matches('#');
+    if number.is_empty() || !number.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(RpcError::new(ErrorKind::InvalidParams, format!("{key:?} is not a GitHub issue number")));
+    }
+    let repo = origin_repo(project)?;
+    let item: Value = parse(&run_with_timeout(gh, &["issue", "view", number, "-R", &repo, "--json", "number,title,url,body"], ISSUE_TIMEOUT, Some(project))?)?;
+    let field = |name: &str| item[name].as_str().map(String::from).ok_or_else(|| RpcError::new(ErrorKind::Internal, format!("gh issue view has no {name}")));
+    Ok(Issue { key: format!("#{number}"), title: field("title")?, url: field("url")?, description: item["body"].as_str().unwrap_or_default().to_string(), branch: None })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,7 +274,7 @@ exit 0
         std::fs::write(&bin, "#!/bin/sh\nexec sleep 30\n").unwrap();
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
         let started = Instant::now();
-        let err = run_with_timeout(&bin, &["api", "user"], Duration::from_millis(200)).unwrap_err();
+        let err = run_with_timeout(&bin, &["api", "user"], Duration::from_millis(200), None).unwrap_err();
         assert!(err.message.starts_with("gh timed out after"), "{}", err.message);
         assert!(started.elapsed() < Duration::from_secs(5));
     }
@@ -240,5 +306,72 @@ exit 0
         assert!(resolve_owner(&status, "evil", Visibility::Public).unwrap_err().message.contains("not you or one of your organizations"));
         let logged_out = ForgeStatus { available: true, ..Default::default() };
         assert!(resolve_owner(&logged_out, "acme", Visibility::Public).unwrap_err().message.contains("gh auth login"));
+    }
+
+    #[test]
+    fn github_repos_are_read_from_remote_urls() {
+        assert_eq!(github_repo_from_url("git@github.com:acme/api.git").as_deref(), Some("acme/api"));
+        assert_eq!(github_repo_from_url("https://github.com/acme/api").as_deref(), Some("acme/api"));
+        assert_eq!(github_repo_from_url("ssh://git@github.com/acme/api.git").as_deref(), Some("acme/api"));
+        assert_eq!(github_repo_from_url("https://gitlab.com/acme/api.git"), None);
+        assert_eq!(github_repo_from_url("https://github.com/acme"), None);
+    }
+
+    fn repo_with_origin(dir: &Path, origin: Option<&str>) -> PathBuf {
+        let repo = dir.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        Command::new("git").args(["init", "-q"]).current_dir(&repo).status().unwrap();
+        if let Some(url) = origin {
+            Command::new("git").args(["remote", "add", "origin", url]).current_dir(&repo).status().unwrap();
+        }
+        repo
+    }
+
+    #[test]
+    fn projects_without_a_github_origin_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let none = repo_with_origin(&dir.path().join("a"), None);
+        assert!(origin_repo(&none).unwrap_err().message.contains("no GitHub repository"));
+        let gitlab = repo_with_origin(&dir.path().join("b"), Some("https://gitlab.com/acme/api.git"));
+        assert!(origin_repo(&gitlab).is_err());
+        let github = repo_with_origin(&dir.path().join("c"), Some("git@github.com:acme/api.git"));
+        assert_eq!(origin_repo(&github).unwrap(), "acme/api");
+    }
+
+    fn fake_issue_gh(dir: &Path) -> PathBuf {
+        let log = dir.join("gh.log");
+        let script = format!(
+            r#"#!/bin/sh
+echo "$@" >> "{log}"
+case "$1 $2" in
+  "issue list") echo '[{{"number":42,"title":"Fix login","url":"https://github.com/acme/api/issues/42","state":"OPEN","assignees":[{{"login":"me"}}],"updatedAt":"2026-10-01T00:00:00Z"}},{{"number":7,"title":"Old","url":"u7","state":"OPEN","assignees":[],"updatedAt":"2026-09-01T00:00:00Z"}}]' ;;
+  "issue view") echo '{{"number":42,"title":"Fix login","url":"https://github.com/acme/api/issues/42","body":"Body text"}}' ;;
+esac
+exit 0
+"#,
+            log = log.display()
+        );
+        let bin = dir.join("gh");
+        std::fs::write(&bin, script).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        bin
+    }
+
+    #[test]
+    fn issues_are_searched_and_fetched_through_gh() {
+        let dir = tempfile::tempdir().unwrap();
+        let gh = fake_issue_gh(dir.path());
+        let repo = repo_with_origin(dir.path(), Some("https://github.com/acme/api.git"));
+        let hits = search_issues(&gh, &repo, "login", true).unwrap();
+        assert_eq!(hits[0].key, "#42");
+        assert_eq!((hits[0].state.as_str(), hits[0].assignee.as_deref()), ("open", Some("me")));
+        assert_eq!(hits[1].assignee, None);
+        let issue = get_issue(&gh, &repo, "#42").unwrap();
+        assert_eq!((issue.key.as_str(), issue.description.as_str(), issue.branch.clone()), ("#42", "Body text", None));
+        let log = std::fs::read_to_string(dir.path().join("gh.log")).unwrap();
+        assert!(log.contains("issue list -R acme/api --state open --limit 50"), "{log}");
+        assert!(log.contains("--assignee @me") && log.contains("login sort:updated-desc"), "{log}");
+        assert!(log.contains("issue view 42 -R acme/api"), "{log}");
+        assert_eq!(get_issue(&gh, &repo, "#x").unwrap_err().kind(), ErrorKind::InvalidParams);
     }
 }

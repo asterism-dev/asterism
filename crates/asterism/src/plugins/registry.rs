@@ -238,6 +238,7 @@ mod tests {
         let (plugin, forge) = registry.forge("github").unwrap();
         assert_eq!((plugin.name.as_str(), forge.hosts.as_slice()), ("github", &["github.com".to_string()][..]));
         assert_eq!(registry.agent("claude").unwrap().1.binary, "claude");
+        assert_eq!(registry.task_source("github-issues").unwrap().0.name, "github");
         assert_eq!(plugin.backend_command().unwrap(), ["/opt/asterism/bin/./asterism-plugin-github"]);
     }
 
