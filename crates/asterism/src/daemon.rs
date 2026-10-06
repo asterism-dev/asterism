@@ -347,6 +347,7 @@ impl Daemon {
         let store = store.to_string();
         let name = resolved.manifest.name.clone();
         self.plugin_op(move |paths, _| {
+            install::ensure_store(paths, &store, &resolved.manifest.name)?;
             install::install_files(paths, &resolved)?;
             install::record(paths, &store, &resolved)
         })

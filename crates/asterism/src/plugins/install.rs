@@ -103,6 +103,18 @@ pub fn record(paths: &Paths, store: &str, resolved: &Resolved) -> Result<Install
     })
 }
 
+/// Must run under the store lock before `install_files`, so a foreign store never overwrites a live version.
+pub fn ensure_store(paths: &Paths, store: &str, name: &str) -> Result<()> {
+    load(paths)?.plugins.get(name).map_or(Ok(()), |old| same_store(name, old, store))
+}
+
+fn same_store(name: &str, old: &InstalledEntry, store: &str) -> Result<()> {
+    if old.store != store {
+        return Err(invalid(format!("{name} is installed from store {}; uninstall it first", old.store)));
+    }
+    Ok(())
+}
+
 fn record_entry(paths: &Paths, store: &str, resolved: &Resolved) -> Result<InstalledEntry> {
     let mut file = load(paths)?;
     let name = &resolved.manifest.name;
@@ -110,9 +122,7 @@ fn record_entry(paths: &Paths, store: &str, resolved: &Resolved) -> Result<Insta
     let old = file.plugins.get(name).cloned();
     if let Some(old) = &old {
         check_version(&old.version)?;
-        if old.store != store {
-            return Err(invalid(format!("{name} is installed from store {}; uninstall it first", old.store)));
-        }
+        same_store(name, old, store)?;
         old.previous.as_deref().map(check_version).transpose()?;
     }
     let previous = match &old {
