@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 type ApiKey = Arc<Mutex<Option<String>>>;
 
 fn store_key(key: &ApiKey, settings: &Map<String, Value>) {
-    *key.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = settings.get("api_key").and_then(Value::as_str).map(String::from);
+    *key.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = settings.get("api_key").and_then(Value::as_str).filter(|k| !k.is_empty()).map(String::from);
 }
 
 fn api_key(key: &ApiKey) -> Result<String, RpcError> {

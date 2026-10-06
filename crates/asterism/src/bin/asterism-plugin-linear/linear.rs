@@ -69,9 +69,13 @@ pub fn parse_hits(response: &Value) -> Result<Vec<IssueHit>, RpcError> {
 }
 
 pub fn parse_issue(response: &Value, key: &str) -> Result<Issue, RpcError> {
+    let not_found = || error(ErrorKind::NotFound, format!("no Linear issue {key}"));
+    if response["errors"][0]["message"].as_str().is_some_and(|m| m.starts_with("Entity not found")) {
+        return Err(not_found());
+    }
     let issue = &data(response)?["issue"];
     if issue.is_null() {
-        return Err(error(ErrorKind::NotFound, format!("no Linear issue {key}")));
+        return Err(not_found());
     }
     let field = |name: &str| issue[name].as_str().map(String::from).ok_or_else(|| error(ErrorKind::Internal, format!("Linear issue has no {name}")));
     Ok(Issue {
@@ -89,10 +93,11 @@ pub fn post(api_key: &str, body: &Value) -> Result<Value, RpcError> {
         Ok(r) => r.into_json().map_err(|e| error(ErrorKind::Internal, format!("invalid Linear response: {e}"))),
         Err(ureq::Error::Status(401, _)) => Err(error(ErrorKind::PluginError, "Linear API key is invalid")),
         Err(ureq::Error::Status(code, r)) => {
-            let text: String = r.into_string().unwrap_or_default().chars().take(MESSAGE_LIMIT).collect();
-            if let Ok(body) = serde_json::from_str::<Value>(&text) {
-                data(&body)?;
+            let body = r.into_string().unwrap_or_default();
+            if let Ok(json) = serde_json::from_str::<Value>(&body) {
+                data(&json)?;
             }
+            let text: String = body.chars().take(MESSAGE_LIMIT).collect();
             Err(error(ErrorKind::PluginError, format!("Linear returned HTTP {code}: {}", text.trim())))
         }
         Err(e) => Err(error(ErrorKind::PluginError, format!("cannot reach Linear: {e}"))),
@@ -151,5 +156,7 @@ mod tests {
         assert_eq!(issue.description, "");
         let missing = parse_issue(&json!({"data": {"issue": null}}), "TRA-9").unwrap_err();
         assert_eq!(missing.kind(), ErrorKind::NotFound);
+        let unknown = json!({"errors": [{"message": "Entity not found: Issue", "extensions": {"code": "INVALID_INPUT"}}], "data": null});
+        assert_eq!(parse_issue(&unknown, "TRA-9").unwrap_err().kind(), ErrorKind::NotFound);
     }
 }
