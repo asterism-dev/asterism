@@ -1,0 +1,39 @@
+name = "echo"
+version = "0.1.0"
+protocol = 1
+description = "Test fixture"
+permissions = ["network"]
+
+[backend]
+command = ["./backend.py"]
+
+[[provides.forge]]
+id = "echo-forge"
+display_name = "Echo"
+hosts = ["echo.test"]
+
+[[provides.command]]
+name = "echo-cmd"
+description = "Prints its arguments"
+
+[[provides.agent]]
+id = "echo-agent"
+display_name = "Echo agent"
+binary = "sh"
+launch = "static"
+start = ["{binary}", "-c", "echo started \"$@\"; sleep 30", "echo", "{args...}"]
+settings = ["args"]
+waiting_patterns = ["(y/n)"]
+
+[[settings]]
+key = "token"
+title = "Token"
+type = "secret"
+required = true
+
+[[settings]]
+key = "region"
+title = "Region"
+type = "enum"
+options = ["eu", "us"]
+default = "eu"

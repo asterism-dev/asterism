@@ -28,10 +28,6 @@ impl Paths {
         self.home.join("worktrees")
     }
 
-    pub fn claude_settings(&self) -> PathBuf {
-        self.home.join("claude-settings.json")
-    }
-
     pub fn config(&self) -> PathBuf {
         self.home.join("config.toml")
     }
@@ -61,5 +57,21 @@ impl Paths {
 
     pub fn agent_hooks(&self, agent: &str) -> PathBuf {
         self.agent_dir(agent).join("hooks.json")
+    }
+
+    pub fn plugins_dir(&self) -> PathBuf {
+        self.home.join("plugins")
+    }
+
+    pub fn plugin_links(&self) -> PathBuf {
+        self.plugins_dir().join("links.toml")
+    }
+
+    pub fn plugin_data(&self, plugin: &str) -> PathBuf {
+        self.plugins_dir().join("data").join(plugin)
+    }
+
+    pub fn secrets(&self) -> PathBuf {
+        self.home.join("secrets.toml")
     }
 }

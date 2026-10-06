@@ -7,12 +7,13 @@ import { state } from '../store';
 import { setTheme, themeChoice, type ThemeChoice } from '../theme';
 import AgentSettings from './AgentSettings.vue';
 import PathsSettings from './PathsSettings.vue';
+import PluginsSettings from './PluginsSettings.vue';
 
-const profiles = computed(() => ('hello' in state.node ? state.node.hello.agents : []));
+const profiles = computed(() => state.agents);
 const agents = computed(() => [...profiles.value.map((a) => a.name), ...BASE_AGENTS]);
 const agent = ref(agents.value[0] ?? 'shell');
 let picked = false;
-const section = ref<'interface' | 'paths' | 'agents'>('interface');
+const section = ref<'interface' | 'paths' | 'agents' | 'plugins'>('interface');
 const themes: { value: ThemeChoice; label: string }[] = [
   { value: 'system', label: 'System' },
   { value: 'light', label: 'Light' },
@@ -39,7 +40,7 @@ async function pick(name: string) {
   agent.value = name;
 }
 
-async function open(next: 'interface' | 'paths' | 'agents') {
+async function open(next: 'interface' | 'paths' | 'agents' | 'plugins') {
   if (next === section.value || !(await discardChanges())) return;
   state.settingsDirty = false;
   section.value = next;
@@ -57,6 +58,7 @@ async function open(next: 'interface' | 'paths' | 'agents') {
         <button :class="{ active: section === 'interface' }" @click="open('interface')">Interface</button>
         <button :class="{ active: section === 'paths' }" @click="open('paths')">Paths</button>
         <button :class="{ active: section === 'agents' }" @click="open('agents')">Agents</button>
+        <button :class="{ active: section === 'plugins' }" @click="open('plugins')">Plugins</button>
       </nav>
       <div v-if="section === 'interface'" class="settings-content">
         <section>
@@ -79,14 +81,17 @@ async function open(next: 'interface' | 'paths' | 'agents') {
       <div v-else-if="section === 'paths'" class="settings-content">
         <PathsSettings />
       </div>
+      <div v-else-if="section === 'plugins'" class="settings-content">
+        <PluginsSettings />
+      </div>
       <div v-else class="settings-content">
         <div class="agent-picker">
           <button v-for="name in agents" :key="name" :class="{ active: name === agent }" @click="pick(name)">
-            {{ name }}
+            {{ profiles.find((a) => a.name === name)?.display_name || name }}
             <span v-if="installed(name) === false" class="muted">(not installed)</span>
           </button>
         </div>
-        <AgentSettings :key="agent" :agent="agent" />
+        <AgentSettings :key="agent" :agent="agent" :info="profiles.find((a) => a.name === agent)" />
       </div>
     </div>
   </section>

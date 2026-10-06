@@ -34,8 +34,6 @@ pub mod method {
     pub const SESSION_REMOVE: &str = "session.remove";
     pub const NODE_CONFIG_GET: &str = "node_config.get";
     pub const NODE_CONFIG_SET: &str = "node_config.set";
-    pub const GITHUB_STATUS: &str = "github.status";
-    pub const GITHUB_REPOS: &str = "github.repos";
     pub const PROJECT_CLONE: &str = "project.clone";
     pub const PROJECT_CREATE: &str = "project.create";
     pub const NODE_STATS: &str = "node.stats";
@@ -43,6 +41,16 @@ pub mod method {
     pub const PROJECT_WORKTREE_SIZES: &str = "project.worktree_sizes";
     pub const PROJECT_WORKTREE_REMOVE: &str = "project.worktree_remove";
     pub const PROJECT_WORKTREE_PRUNE: &str = "project.worktree_prune";
+    pub const FORGE_LIST: &str = "forge.list";
+    pub const FORGE_STATUS: &str = "forge.status";
+    pub const FORGE_REPOS: &str = "forge.repos";
+    pub const AGENT_LIST: &str = "agent.list";
+    pub const PLUGIN_LIST: &str = "plugin.list";
+    pub const PLUGIN_LINK: &str = "plugin.link";
+    pub const PLUGIN_UNLINK: &str = "plugin.unlink";
+    pub const PLUGIN_RELOAD: &str = "plugin.reload";
+    pub const PLUGIN_SETTINGS: &str = "plugin.settings";
+    pub const PLUGIN_SET_SETTINGS: &str = "plugin.set_settings";
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -58,10 +66,25 @@ pub struct HelloParams {
     pub client_kind: ClientKind,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentSettingKind {
+    Args,
+    Mcp,
+    Hooks,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentInfo {
     pub name: String,
     pub available: bool,
+    #[serde(default)]
+    pub display_name: String,
+    /// Which agent settings sections apply; environment settings always do.
+    #[serde(default)]
+    pub settings: Vec<AgentSettingKind>,
+    #[serde(default)]
+    pub plugin: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -177,27 +200,6 @@ pub struct NodeStats {
     pub processes: Vec<PidStats>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GithubStatus {
-    pub available: bool,
-    pub logged_in: bool,
-    pub login: Option<String>,
-    pub orgs: Vec<String>,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GithubRepo {
-    pub name_with_owner: String,
-    pub description: Option<String>,
-    pub private: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GithubOwnerParams {
-    pub owner: String,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Visibility {
@@ -207,27 +209,177 @@ pub enum Visibility {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GithubTarget {
+pub struct ForgeInfo {
+    pub id: String,
+    pub display_name: String,
+    pub hosts: Vec<String>,
+    pub plugin: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForgeStatus {
+    pub available: bool,
+    pub authenticated: bool,
+    pub account: Option<String>,
+    /// Organizations or groups the account can create repositories in.
+    #[serde(default)]
+    pub owners: Vec<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForgeRepo {
+    pub owner: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub private: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForgeParams {
+    pub forge: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForgeOwnerParams {
+    pub forge: String,
+    pub owner: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteTarget {
+    pub forge: String,
     pub owner: String,
     pub visibility: Visibility,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginOrigin {
+    Builtin,
+    Linked,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum PluginState {
+    Ok,
+    NeedsSetup { missing: Vec<String> },
+    Broken { reason: String },
+    Failing { reason: String },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityKind {
+    Forge,
+    Agent,
+    Command,
+    TaskSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Capability {
+    pub kind: CapabilityKind,
+    pub id: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginInfo {
+    pub name: String,
+    /// `None` when the manifest could not be read.
+    pub version: Option<String>,
+    pub description: String,
+    pub origin: PluginOrigin,
+    pub path: String,
+    pub capabilities: Vec<Capability>,
+    pub permissions: Vec<String>,
+    pub state: PluginState,
+    /// The backend argv with its program resolved; the CLI runs plugin commands with it.
+    pub backend: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SettingType {
+    String,
+    Secret,
+    Bool,
+    Number,
+    Enum,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SettingSpec {
+    pub key: String,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub kind: SettingType,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub default: Option<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PluginSettings {
+    pub schema: Vec<SettingSpec>,
+    /// Non-secret values, defaults included.
+    pub values: BTreeMap<String, Value>,
+    /// Keys of secrets that are set; their values never leave the daemon.
+    pub secrets_set: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginPathParams {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginNameParams {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginReloadParams {
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PluginSetSettingsParams {
+    pub name: String,
+    /// A `null` value restores the default, or clears a secret.
+    pub values: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectCloneParams {
     pub source: String,
+    /// Forge for an `owner/repo` shorthand; the default forge when absent.
+    #[serde(default)]
+    pub forge: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectCreateParams {
     pub name: String,
     #[serde(default)]
-    pub github: Option<GithubTarget>,
+    pub remote: Option<RemoteTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectCreateResult {
     pub project: Project,
-    pub github_error: Option<String>,
+    /// Set when the local repository was created but the remote was not.
+    pub remote_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -486,6 +638,8 @@ pub enum Event {
     ProjectChanged(Project),
     #[serde(rename = "project.removed")]
     ProjectRemoved { project_id: i64 },
+    #[serde(rename = "plugins.changed")]
+    PluginsChanged {},
 }
 
 impl Event {

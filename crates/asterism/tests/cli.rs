@@ -19,7 +19,7 @@ fn task_new_autostarts_the_daemon_and_creates_a_worktree() {
     assert!(node.home().join("asterismd.sock").exists());
 
     let status = node.json(&["daemon", "status"]);
-    assert_eq!(status["proto_version"], 1);
+    assert_eq!(status["proto_version"], 2);
 }
 
 #[test]
@@ -79,14 +79,13 @@ fn hook_reports_status_and_is_silent_outside_sessions() {
     assert!(outside.status.success());
     assert!(outside.stdout.is_empty() && outside.stderr.is_empty());
 
-    let mut child = node
-        .command(&["hook", "notification"])
+    let inside = node
+        .command(&["hook", "notification", "--agent-ref", "claude-abc"])
         .env("ASTERISM_SESSION", &session)
-        .stdin(Stdio::piped())
-        .spawn()
+        .stdin(Stdio::null())
+        .status()
         .unwrap();
-    child.stdin.take().unwrap().write_all(br#"{"session_id":"claude-abc"}"#).unwrap();
-    assert!(child.wait().unwrap().success());
+    assert!(inside.success());
 
     let waiting = node.json(&["wait", &session, "--until", "waiting_input", "--timeout", "5s"]);
     assert_eq!(waiting["status"], "waiting_input");
@@ -156,13 +155,20 @@ fn hook_with_hung_stdin_returns_promptly() {
 }
 
 #[test]
-fn idle_prompt_notification_means_idle() {
+fn claude_hook_payloads_are_normalized_by_the_plugin() {
     let node = Node::new();
     let task = node.json(&["task", "new", "idle prompt"])["task"]["id"].to_string();
     let session = node.json(&["session", "start", &task, "--", "sh", "-c", "sleep 30"])["id"].to_string();
     let hook = |event: &str, payload: &[u8]| {
-        let mut child =
-            node.command(&["hook", event]).env("ASTERISM_SESSION", &session).stdin(Stdio::piped()).spawn().unwrap();
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_asterism-plugin-claude"))
+            .args(["hook", event])
+            .env("ASTERISM_HOME", node.home())
+            .env("ASTERISM_SESSION", &session)
+            .env("ASTERISM_CLI", env!("CARGO_BIN_EXE_asterism"))
+            .env_remove("ASTERISM_SOCKET")
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
         child.stdin.take().unwrap().write_all(payload).unwrap();
         assert!(child.wait().unwrap().success());
     };
@@ -172,7 +178,6 @@ fn idle_prompt_notification_means_idle() {
         node.json(&["session", "list", "--task", &task])[0]["status"] == "working"
     });
     assert!(working);
-
     hook("notification", br#"{"session_id":"x","message":"Claude is waiting for your input"}"#);
     let idle = node.json(&["wait", &session, "--until", "idle", "--timeout", "5s"]);
     assert_eq!(idle["status"], "idle");

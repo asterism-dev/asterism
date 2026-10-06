@@ -76,6 +76,7 @@ pub enum ErrorKind {
     IncompatibleVersion,
     Timeout,
     Git,
+    PluginError,
     /// A kind from a newer peer; keeps older clients decoding its errors.
     #[serde(other)]
     Unknown,
@@ -96,6 +97,7 @@ impl ErrorKind {
             Self::IncompatibleVersion => -32006,
             Self::Timeout => -32007,
             Self::Git => -32008,
+            Self::PluginError => -32009,
             Self::Unknown => -32099,
         }
     }
@@ -106,10 +108,17 @@ pub struct ErrorData {
     pub kind: ErrorKind,
 }
 
+impl Default for ErrorData {
+    fn default() -> Self {
+        Self { kind: ErrorKind::Unknown }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RpcError {
     pub code: i64,
     pub message: String,
+    #[serde(default)]
     pub data: ErrorData,
 }
 

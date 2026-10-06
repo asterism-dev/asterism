@@ -108,12 +108,12 @@ fn session_removed_event_roundtrips() {
 #[test]
 fn project_and_path_types_roundtrip() {
     let create: ProjectCreateParams = serde_json::from_value(json!({"name": "demo"})).unwrap();
-    assert!(create.github.is_none());
+    assert!(create.remote.is_none());
     let create: ProjectCreateParams = serde_json::from_value(json!({
-        "name": "demo", "github": {"owner": "acme", "visibility": "internal"}
+        "name": "demo", "remote": {"forge": "github", "owner": "acme", "visibility": "internal"}
     }))
     .unwrap();
-    assert_eq!(create.github.unwrap().visibility, Visibility::Internal);
+    assert_eq!(create.remote.unwrap().visibility, Visibility::Internal);
 
     let info = NodeConfigInfo {
         config: NodeConfig { paths: PathSettings { repos: "~/r".into(), worktrees: "~/w".into() } },
@@ -122,9 +122,45 @@ fn project_and_path_types_roundtrip() {
     let back: NodeConfigInfo = serde_json::from_value(serde_json::to_value(&info).unwrap()).unwrap();
     assert_eq!(back, info);
 
-    let status: GithubStatus = serde_json::from_value(json!({
-        "available": true, "logged_in": false, "login": null, "orgs": [], "error": "not logged in"
+    let status: ForgeStatus = serde_json::from_value(json!({
+        "available": true, "authenticated": false, "account": null, "owners": [], "error": "not logged in"
     }))
     .unwrap();
-    assert!(status.available && !status.logged_in);
+    assert!(status.available && !status.authenticated);
+}
+
+#[test]
+fn plugin_types_roundtrip() {
+    use asterism_proto::rpc::{ErrorKind, RpcError};
+    use asterism_proto::types::*;
+    use serde_json::json;
+
+    let info = PluginInfo {
+        name: "github".into(),
+        version: Some("0.2.0".into()),
+        description: "GitHub".into(),
+        origin: PluginOrigin::Builtin,
+        path: "/bin".into(),
+        capabilities: vec![Capability { kind: CapabilityKind::Forge, id: "github".into(), description: String::new() }],
+        permissions: vec!["network".into()],
+        state: PluginState::NeedsSetup { missing: vec!["Token".into()] },
+        backend: Some(vec!["/bin/asterism-plugin-github".into()]),
+    };
+    let value = serde_json::to_value(&info).unwrap();
+    assert_eq!(value["state"], json!({"state": "needs_setup", "missing": ["Token"]}));
+    assert_eq!(value["capabilities"][0]["kind"], "forge");
+    assert_eq!(serde_json::from_value::<PluginInfo>(value).unwrap(), info);
+
+    let spec: SettingSpec = serde_json::from_value(json!({"key": "api_key", "title": "API key", "type": "secret", "required": true})).unwrap();
+    assert_eq!(spec.kind, SettingType::Secret);
+    assert!(spec.options.is_empty() && spec.default.is_none());
+
+    let event = Event::PluginsChanged {};
+    assert_eq!(event.to_notification().method, "plugins.changed");
+    assert_eq!(Event::from_notification(&event.to_notification()), Some(event));
+
+    // Plain JSON-RPC errors from third-party plugins carry no `data`.
+    let bare: RpcError = serde_json::from_value(json!({"code": -32000, "message": "boom"})).unwrap();
+    assert_eq!(bare.kind(), ErrorKind::Unknown);
+    assert_eq!(ErrorKind::PluginError.code(), -32009);
 }

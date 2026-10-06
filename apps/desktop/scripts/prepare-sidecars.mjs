@@ -14,6 +14,6 @@ execFileSync('cargo', ['build', '-p', 'asterism', '--bins', ...(release ? ['--re
 });
 const triple = execFileSync('rustc', ['--print', 'host-tuple']).toString().trim();
 mkdirSync(binaries, { recursive: true });
-for (const bin of ['asterismd', 'asterism']) {
+for (const bin of ['asterismd', 'asterism', 'asterism-plugin-claude', 'asterism-plugin-github']) {
   copyFileSync(join(root, 'target', release ? 'release' : 'debug', bin), join(binaries, `${bin}-${triple}`));
 }

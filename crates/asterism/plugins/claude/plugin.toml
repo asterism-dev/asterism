@@ -1,0 +1,17 @@
+name = "claude"
+version = "0.2.0"
+protocol = 1
+description = "Claude Code with asterism's status hooks"
+permissions = ["exec:claude"]
+
+[backend]
+command = ["./asterism-plugin-claude"]
+
+[[provides.agent]]
+id = "claude"
+display_name = "Claude Code"
+binary = "claude"
+launch = "backend"
+waiting_patterns = ["Do you want to", "❯ 1. Yes"]
+settings = ["args", "mcp", "hooks"]
+reserved_args = ["--", "--settings", "--mcp-config", "--resume", "-r", "--continue", "-c", "--print", "-p", "--settings=", "--mcp-config=", "--resume="]

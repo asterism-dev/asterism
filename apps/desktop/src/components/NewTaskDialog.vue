@@ -7,7 +7,7 @@ import { addSession, addTask, state } from '../store';
 const props = defineProps<{ projectId: number }>();
 const emit = defineEmits<{ close: [] }>();
 
-const agents = computed(() => ('hello' in state.node ? state.node.hello.agents.filter((a) => a.available) : []));
+const agents = computed(() => state.agents.filter((a) => a.available));
 const projectId = ref(props.projectId);
 const title = ref('');
 const prompt = ref('');
@@ -64,7 +64,7 @@ async function submit() {
       /></label>
       <label>Agent
         <select v-model="agent">
-          <option v-for="a in agents" :key="a.name" :value="a.name">{{ a.name }}</option>
+          <option v-for="a in agents" :key="a.name" :value="a.name">{{ a.display_name || a.name }}</option>
           <option value="">No agent (empty worktree)</option>
         </select>
       </label>

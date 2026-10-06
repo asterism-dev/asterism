@@ -6,7 +6,7 @@ use crate::error::{Error, Result};
 pub struct RepoSource {
     pub owner: String,
     pub repo: String,
-    /// `None` for the GitHub `owner/repo` shorthand.
+    /// `None` for the `owner/repo` shorthand, which is cloned through the default forge.
     pub url: Option<String>,
 }
 
@@ -39,6 +39,7 @@ fn url_path(url: &str) -> Option<&str> {
     }
 }
 
+// ponytail: GitHub web-URL normalization stays here; move it into forge plugins once another forge needs URL rules.
 fn is_github(url: &str) -> bool {
     let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
     let authority = rest.split(['/', ':']).next().unwrap_or("");

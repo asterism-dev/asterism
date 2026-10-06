@@ -13,7 +13,6 @@ use asterism_proto::types::{method, *};
 use asterism_proto::PROTO_VERSION;
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
-use tokio::io::AsyncReadExt;
 use tokio::net::UnixStream;
 
 const SPAWN_ATTEMPTS: u32 = 60;
@@ -62,10 +61,38 @@ enum Cmd {
     },
     /// Bridge stdin/stdout to the local daemon socket.
     Attach,
-    /// Report an agent hook event for the current session; never fails.
-    Hook { event: HookArg },
+    /// Report a normalized agent hook event for the current session; never fails.
+    Hook {
+        event: HookArg,
+        /// The agent's own session id, used to resume after a daemon restart.
+        #[arg(long)]
+        agent_ref: Option<String>,
+    },
     #[command(subcommand)]
     Daemon(DaemonCmd),
+    #[command(subcommand)]
+    Plugin(PluginCmd),
+    /// A command contributed by a plugin (see `asterism plugin list`).
+    #[command(external_subcommand)]
+    External(Vec<String>),
+}
+
+#[derive(Subcommand)]
+enum PluginCmd {
+    List,
+    /// Use the plugin in PATH directly, for local development.
+    Link { path: PathBuf },
+    Unlink { name: String },
+    /// Re-read manifests and restart plugin backends.
+    Reload { name: Option<String> },
+    /// Show settings, or set one; secrets are read from the terminal.
+    Config {
+        name: String,
+        key: Option<String>,
+        value: Option<String>,
+        #[arg(long)]
+        clear: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -181,9 +208,8 @@ async fn main() {
         Err(_) if std::env::args().nth(1).as_deref() == Some("hook") => std::process::exit(0),
         Err(err) => err.exit(),
     };
-    if let Cmd::Hook { event } = cli.command {
-        let _ = tokio::time::timeout(HOOK_TIMEOUT, hook(event)).await;
-        // A pending stdin read would otherwise stall runtime shutdown.
+    if let Cmd::Hook { event, agent_ref } = cli.command {
+        let _ = tokio::time::timeout(HOOK_TIMEOUT, hook(event, agent_ref)).await;
         std::process::exit(0);
     }
     if let Err(e) = run(cli).await {
@@ -317,6 +343,25 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
                 format!("asterismd {} (pid {}) on {}", hello.daemon_version, hello.pid, hello.hostname)
             });
         }
+        Cmd::Plugin(PluginCmd::List) => {
+            let plugins: Vec<PluginInfo> = client.call(method::PLUGIN_LIST, ()).await?;
+            print(json, &plugins, || lines(&plugins, plugin_line));
+        }
+        Cmd::Plugin(PluginCmd::Link { path }) => {
+            let path = std::path::absolute(&path)?;
+            let info: PluginInfo = client.call(method::PLUGIN_LINK, PluginPathParams { path: path.display().to_string() }).await?;
+            print(json, &info, || plugin_line(&info));
+        }
+        Cmd::Plugin(PluginCmd::Unlink { name }) => {
+            client.call::<_, ()>(method::PLUGIN_UNLINK, PluginNameParams { name }).await?;
+            print_ok(json);
+        }
+        Cmd::Plugin(PluginCmd::Reload { name }) => {
+            client.call::<_, ()>(method::PLUGIN_RELOAD, PluginReloadParams { name }).await?;
+            print_ok(json);
+        }
+        Cmd::Plugin(PluginCmd::Config { name, key, value, clear }) => plugin_config(&client, json, name, key, value, clear).await?,
+        Cmd::External(args) => return run_external(&client, args).await,
         Cmd::Attach | Cmd::Hook { .. } | Cmd::Daemon(DaemonCmd::Stop) => {}
     }
     Ok(())
@@ -385,24 +430,12 @@ async fn attach() -> std::io::Result<()> {
 }
 
 /// Runs inside agent hooks: must never fail, block, or start a daemon.
-async fn hook(event: HookArg) {
+async fn hook(event: HookArg, agent_ref: Option<String>) {
     let Some(session_id) = env_id("ASTERISM_SESSION") else { return };
-    let mut input = String::new();
-    if !std::io::stdin().is_terminal() {
-        let _ = tokio::io::stdin().read_to_string(&mut input).await;
-    }
-    let payload = serde_json::from_str::<serde_json::Value>(&input).unwrap_or_default();
-    let agent_ref = payload["session_id"].as_str().map(String::from);
-    let message = payload["message"].as_str().unwrap_or_default().to_lowercase();
-    // ponytail: matches Claude's idle-prompt Notification text; verify against real Claude and update if it changes.
-    let event = match event {
-        HookArg::Notification if message.contains("waiting for your input") => HookEvent::Stop,
-        other => other.into(),
-    };
     let Ok(stream) = UnixStream::connect(socket_path()).await else { return };
     let (reader, writer) = stream.into_split();
     let client = Client::new(reader, writer);
-    let params = SessionHookParams { session_id, event, agent_ref };
+    let params = SessionHookParams { session_id, event: event.into(), agent_ref };
     let _ = client.call::<_, ()>(method::SESSION_HOOK, params).await;
 }
 
@@ -463,6 +496,100 @@ fn lines<T>(items: &[T], line: impl Fn(&T) -> String) -> String {
 
 fn label<T: Serialize>(value: &T) -> String {
     serde_json::to_value(value).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default()
+}
+
+fn plugin_line(p: &PluginInfo) -> String {
+    let state = match &p.state {
+        PluginState::Ok => "ok".to_string(),
+        PluginState::NeedsSetup { missing } => format!("needs setup ({})", missing.join(", ")),
+        PluginState::Broken { reason } => format!("broken: {reason}"),
+        PluginState::Failing { reason } => format!("failing: {reason}"),
+    };
+    let origin = match p.origin {
+        PluginOrigin::Builtin => "builtin",
+        PluginOrigin::Linked => "linked",
+    };
+    let capabilities: Vec<String> = p.capabilities.iter().map(|c| format!("{}:{}", label(&c.kind), c.id)).collect();
+    format!("{}\t{}\t{origin}\t{state}\t{}", p.name, p.version.as_deref().unwrap_or("?"), capabilities.join(","))
+}
+
+async fn plugin_config(client: &Client, json: bool, name: String, key: Option<String>, value: Option<String>, clear: bool) -> Result<(), ClientError> {
+    let settings: PluginSettings = client.call(method::PLUGIN_SETTINGS, PluginNameParams { name: name.clone() }).await?;
+    let Some(key) = key else {
+        print(json, &settings, || {
+            lines(&settings.schema, |spec| match spec.kind {
+                SettingType::Secret => {
+                    let set = if settings.secrets_set.contains(&spec.key) { "<set>" } else { "<not set>" };
+                    format!("{} = {set}", spec.key)
+                }
+                _ => format!("{} = {}", spec.key, settings.values.get(&spec.key).map_or("<unset>".into(), |v| v.to_string())),
+            })
+        });
+        return Ok(());
+    };
+    let spec = settings.schema.iter().find(|s| s.key == key).ok_or_else(|| invalid(format!("{name} has no setting {key:?}")))?;
+    let new = match (clear, spec.kind, value) {
+        (true, _, _) => serde_json::Value::Null,
+        (false, SettingType::Secret, None) => match read_secret(&spec.title)? {
+            secret if secret.is_empty() => return Err(invalid("a secret cannot be empty; use --clear to remove it".into())),
+            secret => serde_json::Value::String(secret),
+        },
+        (false, SettingType::Secret, Some(_)) => return Err(invalid("secrets are read from the terminal; omit the value".into())),
+        (false, SettingType::Bool, Some(v)) => serde_json::Value::Bool(v.parse().map_err(|_| invalid(format!("{key}: expected true or false")))?),
+        (false, SettingType::Number, Some(v)) => serde_json::from_str::<serde_json::Number>(&v)
+            .map(serde_json::Value::Number)
+            .map_err(|_| invalid(format!("{key}: expected a number")))?,
+        (false, _, Some(v)) => serde_json::Value::String(v),
+        (false, _, None) => {
+            let current = settings.values.get(&key).cloned().unwrap_or_default();
+            print(json, &current, || current.to_string());
+            return Ok(());
+        }
+    };
+    let values = [(key, new)].into();
+    client.call::<_, ()>(method::PLUGIN_SET_SETTINGS, PluginSetSettingsParams { name, values }).await?;
+    print_ok(json);
+    Ok(())
+}
+
+/// ponytail: `stty -echo` instead of a password-prompt crate; Unix terminals only.
+fn read_secret(title: &str) -> std::io::Result<String> {
+    let tty = std::io::stdin().is_terminal();
+    if tty {
+        eprint!("{title}: ");
+        let _ = Command::new("stty").arg("-echo").stdin(Stdio::inherit()).status();
+    }
+    let mut line = String::new();
+    let read = std::io::stdin().read_line(&mut line);
+    if tty {
+        let _ = Command::new("stty").arg("echo").stdin(Stdio::inherit()).status();
+        eprintln!();
+    }
+    read?;
+    Ok(line.trim_end_matches(['\r', '\n']).to_string())
+}
+
+/// Replaces this process with the plugin backend in command mode, so its exit code is ours.
+async fn run_external(client: &Client, args: Vec<String>) -> Result<(), ClientError> {
+    let (name, rest) = args.split_first().ok_or_else(|| invalid("missing command".into()))?;
+    let plugins: Vec<PluginInfo> = client.call(method::PLUGIN_LIST, ()).await?;
+    let runnable = |p: &&PluginInfo| matches!(p.state, PluginState::Ok | PluginState::NeedsSetup { .. });
+    let argv = plugins
+        .iter()
+        .filter(runnable)
+        .find(|p| p.capabilities.iter().any(|c| c.kind == CapabilityKind::Command && &c.id == name))
+        .and_then(|p| p.backend.clone())
+        .ok_or_else(|| invalid(format!("unknown command {name:?}; see `asterism --help` and `asterism plugin list`")))?;
+    let err = Command::new(&argv[0])
+        .args(&argv[1..])
+        .arg("command")
+        .arg(name)
+        .args(rest)
+        .env("ASTERISM_SOCKET", socket_path())
+        .env("ASTERISM_CLI", std::env::current_exe()?)
+        .env("ASTERISM_PLUGIN_BIN", &argv[0])
+        .exec();
+    Err(err.into())
 }
 
 fn project_line(p: &Project) -> String {

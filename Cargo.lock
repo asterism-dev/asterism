@@ -119,6 +119,7 @@ checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 name = "asterism"
 version = "0.2.0"
 dependencies = [
+ "asterism-plugin",
  "asterism-proto",
  "base64 0.22.1",
  "clap",
@@ -158,6 +159,16 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "asterism-plugin"
+version = "0.2.0"
+dependencies = [
+ "asterism-proto",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 

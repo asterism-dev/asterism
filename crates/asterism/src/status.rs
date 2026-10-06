@@ -11,8 +11,8 @@ use crate::session::Pty;
 
 pub const IDLE_AFTER: Duration = Duration::from_secs(2);
 
-pub fn idle_status(screen: &str, waiting_patterns: &[&str]) -> SessionStatus {
-    if waiting_patterns.iter().any(|p| screen.contains(p)) {
+pub fn idle_status(screen: &str, waiting_patterns: &[String]) -> SessionStatus {
+    if waiting_patterns.iter().any(|p| screen.contains(p.as_str())) {
         SessionStatus::WaitingInput
     } else {
         SessionStatus::Idle
@@ -30,7 +30,7 @@ pub fn hook_status(event: HookEvent) -> SessionStatus {
 /// Derives status from PTY activity; once hooks report for a session, only the exit transition is applied here.
 pub async fn track(
     pty: Arc<Pty>,
-    waiting_patterns: &'static [&'static str],
+    waiting_patterns: Arc<[String]>,
     status: Arc<watch::Sender<SessionStatus>>,
     hooks_active: Arc<AtomicBool>,
 ) {
@@ -58,7 +58,7 @@ pub async fn track(
             _ = sleep_until(idle_at.unwrap_or_else(Instant::now)), if idle_at.is_some() => {
                 idle_at = None;
                 if !hooks_active.load(Ordering::Relaxed) {
-                    set(idle_status(&pty.text(), waiting_patterns));
+                    set(idle_status(&pty.text(), &waiting_patterns));
                 }
             }
             _ = exited.wait_for(|done| *done) => {

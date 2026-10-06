@@ -15,7 +15,16 @@ path = "src/bin/asterismd.rs"
 name = "asterism"
 path = "src/bin/asterism/main.rs"
 
+[[bin]]
+name = "asterism-plugin-github"
+path = "src/bin/asterism-plugin-github/main.rs"
+
+[[bin]]
+name = "asterism-plugin-claude"
+path = "src/bin/asterism-plugin-claude/main.rs"
+
 [dependencies]
+asterism-plugin = { path = "../asterism-plugin" }
 asterism-proto = { path = "../asterism-proto" }
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }

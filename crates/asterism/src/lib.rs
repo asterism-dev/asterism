@@ -9,9 +9,9 @@ pub mod config;
 pub mod daemon;
 pub mod error;
 pub mod git;
-pub mod github;
 pub mod node_settings;
 pub mod paths;
+pub mod plugins;
 pub mod proc_stats;
 pub mod repo_source;
 pub mod rpc;
@@ -45,7 +45,12 @@ pub async fn run(paths: Paths) -> io::Result<()> {
     }
     let daemon = Daemon::new(paths).map_err(io::Error::other)?;
     let listener = UnixListener::bind(&socket)?;
-    daemon.recover().map_err(io::Error::other)?;
+    let recovering = daemon.clone();
+    tokio::spawn(async move {
+        if let Err(e) = recovering.recover().await {
+            eprintln!("asterismd: session recovery failed: {e}");
+        }
+    });
     tokio::select! {
         _ = rpc::serve(daemon.clone(), listener) => {}
         _ = daemon.shutdown_requested() => {}

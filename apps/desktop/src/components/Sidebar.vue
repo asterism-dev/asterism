@@ -105,9 +105,9 @@ function projectMenu(e: MouseEvent, p: Project) {
 }
 
 function taskMenu(e: MouseEvent, t: Task) {
-  const agents = 'hello' in state.node ? state.node.hello.agents.filter((a) => a.available) : [];
+  const agents = state.agents.filter((a) => a.available);
   showMenu(e, [
-    ...agents.map((a) => ({ label: `New ${a.name} session`, action: () => startSession(t.id, { type: 'agent', name: a.name }) })),
+    ...agents.map((a) => ({ label: `New ${a.display_name || a.name} session`, action: () => startSession(t.id, { type: 'agent', name: a.name }) })),
     { label: 'New shell', action: () => startSession(t.id, { type: 'shell' }) },
     { label: 'Reveal worktree', action: () => revealItemInDir(t.worktree_path).catch(report) },
     { label: 'Archive task', action: () => archiveTask(t) },

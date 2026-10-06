@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use asterism_proto::rpc::{ErrorKind, Request, Response, RpcError};
@@ -18,6 +18,7 @@ use tokio::task::{JoinHandle, JoinSet};
 use crate::daemon::Daemon;
 use crate::error::{Error, Result};
 use crate::lock;
+use crate::plugins::process::HostFn;
 
 const MAX_OUTPUT_FRAME: usize = 64 * 1024;
 // Bounded so a client that stops reading backs up into the broadcast channels, which drop on lag.
@@ -143,7 +144,6 @@ async fn blocking(f: impl FnOnce() -> Result<Value> + Send + 'static) -> Result<
 async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result<Value> {
     let raw = request.params;
     match request.method.as_str() {
-        method::HELLO => to_value(daemon.hello(params(raw)?)?),
         method::SHUTDOWN => {
             let daemon = daemon.clone();
             tokio::spawn(async move {
@@ -157,10 +157,38 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
             conn.replace_forwarder("subscribe".into(), forwarder);
             Ok(Value::Null)
         }
+        method::SESSION_DETACH => {
+            conn.stop_forwarder(&format!("attach:{}", params::<SessionIdParams>(raw)?.session_id));
+            Ok(Value::Null)
+        }
+        other => dispatch_method(daemon, other, raw).await,
+    }
+}
+
+/// Every method that does not need the client connection; plugins reach these through the host API.
+pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value) -> Result<Value> {
+    match method_name {
+        method::HELLO => to_value(daemon.hello(params(raw)?)?),
         method::PROJECT_LIST => to_value(daemon.projects()?),
         method::PROJECT_ADD => to_value(daemon.add_project(&params::<ProjectAddParams>(raw)?.path)?),
         method::PROJECT_REMOVE => {
             daemon.remove_project(params::<ProjectIdParams>(raw)?.project_id)?;
+            Ok(Value::Null)
+        }
+        method::PLUGIN_LIST => to_value(daemon.plugin_list()?),
+        method::PLUGIN_LINK => to_value(daemon.plugin_link(&params::<PluginPathParams>(raw)?.path).await?),
+        method::PLUGIN_UNLINK => {
+            daemon.plugin_unlink(&params::<PluginNameParams>(raw)?.name).await?;
+            Ok(Value::Null)
+        }
+        method::PLUGIN_RELOAD => {
+            daemon.reload_plugins(params::<PluginReloadParams>(raw)?.name.as_deref()).await?;
+            Ok(Value::Null)
+        }
+        method::PLUGIN_SETTINGS => to_value(daemon.plugin_settings(&params::<PluginNameParams>(raw)?.name)?),
+        method::PLUGIN_SET_SETTINGS => {
+            let p: PluginSetSettingsParams = params(raw)?;
+            daemon.set_plugin_settings(&p.name, &p.values).await?;
             Ok(Value::Null)
         }
         method::NODE_CONFIG_GET => {
@@ -208,22 +236,18 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
             })
             .await
         }
-        method::GITHUB_STATUS => {
-            let daemon = daemon.clone();
-            blocking(move || to_value(daemon.github_status())).await
-        }
-        method::GITHUB_REPOS => {
-            let daemon = daemon.clone();
-            blocking(move || to_value(daemon.github_repos(&params::<GithubOwnerParams>(raw)?.owner)?)).await
+        method::FORGE_LIST => to_value(daemon.forges()),
+        method::FORGE_STATUS => to_value(daemon.forge_status(&params::<ForgeParams>(raw)?.forge).await?),
+        method::FORGE_REPOS => {
+            let p: ForgeOwnerParams = params(raw)?;
+            to_value(daemon.forge_repos(&p.forge, &p.owner).await?)
         }
         method::PROJECT_CLONE => {
-            let daemon = daemon.clone();
-            blocking(move || to_value(daemon.clone_project(&params::<ProjectCloneParams>(raw)?.source)?)).await
+            let p = params::<ProjectCloneParams>(raw)?;
+            to_value(daemon.clone_project(&p.source, p.forge.as_deref()).await?)
         }
-        method::PROJECT_CREATE => {
-            let daemon = daemon.clone();
-            blocking(move || to_value(daemon.create_project(&params::<ProjectCreateParams>(raw)?)?)).await
-        }
+        method::PROJECT_CREATE => to_value(daemon.create_project(&params::<ProjectCreateParams>(raw)?).await?),
+        method::AGENT_LIST => to_value(daemon.agent_infos()),
         method::AGENT_CONFIG_GET => {
             let daemon = daemon.clone();
             blocking(move || to_value(daemon.agent_config(&params::<AgentParams>(raw)?.agent)?)).await
@@ -246,7 +270,7 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
             Ok(Value::Null)
         }
         method::TASK_LIST => to_value(daemon.tasks(params(raw)?)?),
-        method::TASK_CREATE => to_value(daemon.create_task(params(raw)?)?),
+        method::TASK_CREATE => to_value(daemon.create_task(params(raw)?).await?),
         method::TASK_ARCHIVE => to_value(daemon.archive_task(params::<TaskArchiveParams>(raw)?.task_id)?),
         method::TASK_RESTORE => {
             let daemon = daemon.clone();
@@ -265,7 +289,7 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
         }
         method::TASK_DIFF => to_value(daemon.diff(params::<TaskIdParams>(raw)?.task_id)?),
         method::SESSION_LIST => to_value(daemon.sessions(params::<SessionListParams>(raw)?.task_id)?),
-        method::SESSION_START => to_value(daemon.start_session(params(raw)?)?),
+        method::SESSION_START => to_value(daemon.start_session(params(raw)?).await?),
         method::SESSION_KILL => {
             daemon.kill_session(params::<SessionIdParams>(raw)?.session_id)?;
             Ok(Value::Null)
@@ -279,10 +303,6 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
             Ok(Value::Null)
         }
         method::SESSION_READ => to_value(daemon.read(params(raw)?)?),
-        method::SESSION_DETACH => {
-            conn.stop_forwarder(&format!("attach:{}", params::<SessionIdParams>(raw)?.session_id));
-            Ok(Value::Null)
-        }
         method::SESSION_WAIT => to_value(SessionWaitResult { status: daemon.wait(params(raw)?).await? }),
         method::SESSION_HOOK => {
             daemon.hook(params(raw)?)?;
@@ -290,6 +310,23 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
         }
         other => Err(Error::new(ErrorKind::MethodNotFound, format!("unknown method {other}"))),
     }
+}
+
+const HOST_DENIED: &[&str] = &[method::SHUTDOWN, method::SUBSCRIBE, method::SESSION_ATTACH, method::SESSION_DETACH];
+
+pub fn host_fn(daemon: Weak<Daemon>) -> HostFn {
+    Arc::new(move |_plugin: String, method_name: String, params: Value| {
+        let daemon = daemon.clone();
+        Box::pin(async move {
+            if method_name.starts_with("plugin.") || HOST_DENIED.contains(&method_name.as_str()) {
+                return Err(RpcError::new(ErrorKind::MethodNotFound, format!("{method_name} is not available to plugins")));
+            }
+            let Some(daemon) = daemon.upgrade() else {
+                return Err(RpcError::new(ErrorKind::Internal, "the daemon is shutting down"));
+            };
+            dispatch_method(&daemon, &method_name, params).await.map_err(Into::into)
+        })
+    })
 }
 
 async fn forward_events(mut rx: broadcast::Receiver<Event>, out: mpsc::Sender<String>) {

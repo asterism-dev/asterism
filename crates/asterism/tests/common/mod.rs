@@ -89,3 +89,32 @@ impl Drop for Node {
         let _ = self.cmd(&["daemon", "stop"]);
     }
 }
+
+use std::path::PathBuf;
+
+use asterism_core::daemon::DaemonOptions;
+use asterism_core::paths::Paths;
+
+/// Where cargo puts this package's binaries, including the built-in plugin backends.
+pub fn bin_dir() -> PathBuf {
+    Path::new(env!("CARGO_BIN_EXE_asterism")).parent().unwrap().to_path_buf()
+}
+
+pub fn fixture_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/plugins/echo")
+}
+
+pub fn daemon_options() -> DaemonOptions {
+    DaemonOptions { builtin_plugins_dir: Some(bin_dir()), ..Default::default() }
+}
+
+pub fn link_fixture(paths: &Paths) {
+    std::fs::create_dir_all(paths.plugins_dir()).unwrap();
+    std::fs::write(paths.plugin_links(), format!("[links]\necho = {:?}\n", fixture_dir().display().to_string())).unwrap();
+}
+
+pub fn set_fixture_token(paths: &Paths) {
+    let manifest = asterism_core::plugins::manifest::parse(&std::fs::read_to_string(fixture_dir().join("plugin.toml")).unwrap()).unwrap();
+    let values = [("token".to_string(), serde_json::json!("t"))].into();
+    asterism_core::plugins::settings::save(paths, "echo", &manifest.settings, &values).unwrap();
+}
