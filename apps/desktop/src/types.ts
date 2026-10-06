@@ -69,6 +69,7 @@ export interface Worktree {
 export interface WorktreeSize { path: string; bytes: number }
 export interface TaskCreateResult { task: Task; session: Session | null }
 export interface TaskDiffResult { patch: string }
+export interface TaskFileResult { path: string; mtime: number; content: string | null }
 export interface SessionAttachResult { snapshot: string; rows: number; cols: number }
 export interface SessionReadResult { text: string }
 
