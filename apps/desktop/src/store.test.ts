@@ -6,7 +6,7 @@ import type { Session, SessionStatus, Task } from './types';
 
 const task = (id: number, projectId = 1): Task => ({
   id, project_id: projectId, title: `t${id}`, slug: `${id}`, branch: `asterism/${id}`, base_branch: 'main',
-  worktree_path: `/wt/${id}`, prompt: null, archived: false, created_at: 0, last_activity_at: 0,
+  worktree_path: `/wt/${id}`, prompt: null, issue: null, archived: false, created_at: 0, last_activity_at: 0,
 });
 const session = (id: number, taskId: number, status: SessionStatus = 'working'): Session => ({
   id, task_id: taskId, kind: { type: 'shell' }, status,

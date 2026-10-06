@@ -15,6 +15,7 @@ fn sample_task() -> Task {
         archived: false,
         created_at: 1_700_000_000,
         last_activity_at: 1_700_000_060,
+        issue: None,
     }
 }
 
@@ -206,4 +207,45 @@ fn store_types_roundtrip() {
     let event = Event::StoresChanged {};
     assert_eq!(event.to_notification().method, "stores.changed");
     assert_eq!(ErrorKind::PermissionsChanged.code(), -32010);
+}
+
+#[test]
+fn needs_setup_has_its_own_code() {
+    let e = RpcError::new(ErrorKind::NeedsSetup, "linear: API key is not set");
+    let v = serde_json::to_value(&e).unwrap();
+    assert_eq!(v["code"], -32011);
+    assert_eq!(v["data"]["kind"], "needs_setup");
+}
+
+#[test]
+fn tasks_carry_an_optional_issue() {
+    let mut task = sample_task();
+    assert_eq!(serde_json::to_value(&task).unwrap()["issue"], serde_json::Value::Null);
+    task.issue = Some(IssueRef { source: "linear".into(), key: "TRA-1".into(), url: "https://linear.app/x/issue/TRA-1".into() });
+    let back: Task = serde_json::from_value(serde_json::to_value(&task).unwrap()).unwrap();
+    assert_eq!(back, task);
+    let mut old = serde_json::to_value(sample_task()).unwrap();
+    old.as_object_mut().unwrap().remove("issue");
+    assert_eq!(serde_json::from_value::<Task>(old).unwrap().issue, None);
+}
+
+#[test]
+fn task_create_accepts_an_issue_and_defaults_it() {
+    let p: TaskCreateParams = serde_json::from_value(json!({"project_id": 1, "title": "x"})).unwrap();
+    assert_eq!(p.issue, None);
+    let p: TaskCreateParams = serde_json::from_value(json!({
+        "project_id": 1, "title": "", "issue": {"source": "github-issues", "key": "#4", "title": "T", "url": "u"}
+    }))
+    .unwrap();
+    assert_eq!(p.issue.unwrap().branch, None);
+}
+
+#[test]
+fn task_source_params_default_query_and_assignment() {
+    let p: TaskSourceSearchParams = serde_json::from_value(json!({"project_id": 1, "source": "linear"})).unwrap();
+    assert_eq!((p.query.as_str(), p.assigned_to_me), ("", false));
+    let l: TaskSourceListParams = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(l.project_id, None);
+    let hit: IssueHit = serde_json::from_value(json!({"key": "#1", "title": "t", "url": "u", "state": "open"})).unwrap();
+    assert_eq!((hit.assignee, hit.updated_at), (None, None));
 }

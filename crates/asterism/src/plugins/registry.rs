@@ -6,13 +6,14 @@ use std::sync::Arc;
 use asterism_proto::types::{Capability, CapabilityKind, PluginOrigin};
 use serde::{Deserialize, Serialize};
 
-use super::manifest::{self, AgentDecl, CommandDecl, ForgeDecl, Manifest};
+use super::manifest::{self, AgentDecl, CommandDecl, ForgeDecl, Manifest, TaskSourceDecl};
 use crate::agent_settings::write_atomic;
 
 /// Manifests of the plugins shipped with asterism; their backends sit next to `asterismd`.
 pub const BUILTIN: &[(&str, &str)] = &[
     ("claude", include_str!("../../plugins/claude/plugin.toml")),
     ("github", include_str!("../../plugins/github/plugin.toml")),
+    ("linear", include_str!("../../plugins/linear/plugin.toml")),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,12 +139,20 @@ impl Registry {
         self.ok().flat_map(|(p, m)| m.provides.command.iter().map(move |c| (p, c)))
     }
 
+    pub fn task_sources(&self) -> impl Iterator<Item = (&Arc<Plugin>, &TaskSourceDecl)> {
+        self.ok().flat_map(|(p, m)| m.provides.task_source.iter().map(move |t| (p, t)))
+    }
+
     pub fn agent(&self, id: &str) -> Option<(&Arc<Plugin>, &AgentDecl)> {
         self.agents().find(|(_, a)| a.id == id)
     }
 
     pub fn forge(&self, id: &str) -> Option<(&Arc<Plugin>, &ForgeDecl)> {
         self.forges().find(|(_, f)| f.id == id)
+    }
+
+    pub fn task_source(&self, id: &str) -> Option<(&Arc<Plugin>, &TaskSourceDecl)> {
+        self.task_sources().find(|(_, t)| t.id == id)
     }
 }
 
@@ -226,10 +235,11 @@ mod tests {
     fn builtins_are_discovered() {
         let registry = Registry::discover(&sources(&[]));
         let names: Vec<_> = registry.plugins().iter().map(|p| (p.name.as_str(), p.is_ok())).collect();
-        assert_eq!(names, [("claude", true), ("github", true)]);
+        assert_eq!(names, [("claude", true), ("github", true), ("linear", true)]);
         let (plugin, forge) = registry.forge("github").unwrap();
         assert_eq!((plugin.name.as_str(), forge.hosts.as_slice()), ("github", &["github.com".to_string()][..]));
         assert_eq!(registry.agent("claude").unwrap().1.binary, "claude");
+        assert_eq!(registry.task_source("github-issues").unwrap().0.name, "github");
         assert_eq!(plugin.backend_command().unwrap(), ["/opt/asterism/bin/./asterism-plugin-github"]);
     }
 
@@ -240,7 +250,7 @@ mod tests {
         let registry = Registry::discover(&sources(&[("github", dir.clone())]));
         let github = registry.get("github").unwrap();
         assert_eq!((github.origin, github.dir.clone()), (PluginOrigin::Linked, dir));
-        assert_eq!(registry.plugins().len(), 2);
+        assert_eq!(registry.plugins().len(), 3);
         assert_eq!(github.backend_command().unwrap(), ["python3", "x.py"]);
     }
 

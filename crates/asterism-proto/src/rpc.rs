@@ -79,6 +79,8 @@ pub enum ErrorKind {
     PluginError,
     /// The plugin asks for permissions the caller did not accept.
     PermissionsChanged,
+    /// The plugin is missing required settings.
+    NeedsSetup,
     /// A kind from a newer peer; keeps older clients decoding its errors.
     #[serde(other)]
     Unknown,
@@ -101,6 +103,7 @@ impl ErrorKind {
             Self::Git => -32008,
             Self::PluginError => -32009,
             Self::PermissionsChanged => -32010,
+            Self::NeedsSetup => -32011,
             Self::Unknown => -32099,
         }
     }

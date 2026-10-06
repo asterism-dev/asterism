@@ -5,7 +5,7 @@ use asterism_proto::types::{AgentSettingKind, Capability, CapabilityKind, Settin
 use serde::Deserialize;
 
 /// CLI subcommands a plugin command may not shadow.
-pub const BUILTIN_COMMANDS: &[&str] = &["project", "task", "session", "send", "read", "wait", "attach", "hook", "daemon", "plugin", "store", "help"];
+pub const BUILTIN_COMMANDS: &[&str] = &["project", "task", "session", "send", "read", "wait", "attach", "hook", "daemon", "plugin", "store", "issue", "help"];
 /// Built-in session kinds that share the agent namespace for settings.
 const SESSION_KINDS: &[&str] = &["shell", "command"];
 
@@ -113,6 +113,7 @@ impl Manifest {
             ("forge", !provides.forge.is_empty()),
             ("agent", provides.agent.iter().any(|a| a.launch == LaunchKind::Backend)),
             ("command", !provides.command.is_empty()),
+            ("task_source", !provides.task_source.is_empty()),
         ]
         .into_iter()
         .filter(|(_, present)| *present)
@@ -175,7 +176,7 @@ fn validate(m: &Manifest) -> Result<(), String> {
         return Err("backend.command must not be empty".into());
     }
     if !m.backend_capabilities().is_empty() && m.backend.is_none() {
-        return Err("forges, commands and backend agents need a [backend] section".into());
+        return Err("forges, commands, task sources and backend agents need a [backend] section".into());
     }
     let p = &m.provides;
     unique("forge", p.forge.iter().map(|f| &f.id))?;
@@ -258,7 +259,7 @@ required = true
         assert_eq!(m.provides.forge[0].hosts, ["github.com"]);
         assert_eq!(m.provides.task_source[0].id, "github-issues");
         assert_eq!(m.settings[0].kind, SettingType::Secret);
-        assert_eq!(m.backend_capabilities(), ["forge".to_string()].into());
+        assert_eq!(m.backend_capabilities(), ["forge", "task_source"].map(String::from).into());
     }
 
     #[test]
@@ -308,7 +309,7 @@ required = true
                      [[provides.agent]]\nid = \"aider\"\nbinary = \"aider\"\nlaunch = \"static\"\nstart = [\"{binary}\"]\n\
                      [[provides.command]]\nname = \"gh-sync\"\n";
         let m = parse(&with(extra)).unwrap();
-        assert_eq!(m.backend_capabilities(), ["agent", "command", "forge"].map(String::from).into());
+        assert_eq!(m.backend_capabilities(), ["agent", "command", "forge", "task_source"].map(String::from).into());
         assert_eq!(m.provides.agent[0].display_name(), "claude");
     }
 

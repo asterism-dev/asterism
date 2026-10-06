@@ -46,7 +46,7 @@ async fn missing_required_settings_block_calls() {
     let home = tempfile::tempdir().unwrap();
     let daemon = daemon(home.path(), false);
     let err = daemon.plugin_call("echo", "forge.status", json!({}), Some(daemon.call_timeout())).await.unwrap_err();
-    assert_eq!(err.kind, ErrorKind::PluginError);
+    assert_eq!(err.kind, ErrorKind::NeedsSetup);
     assert!(err.message.contains("Token is not set"), "{}", err.message);
 }
 
@@ -60,6 +60,6 @@ async fn broken_links_file_does_not_stop_the_daemon() {
     let daemon = Daemon::with_options(paths, common::daemon_options()).unwrap();
     let set = daemon.plugin_set();
     let names: Vec<_> = set.registry.plugins().iter().map(|p| p.name.clone()).collect();
-    assert_eq!(names, ["claude", "github"]);
+    assert_eq!(names, ["claude", "github", "linear"]);
     assert_eq!(daemon.plugin_call("nope", "x", json!({}), None).await.unwrap_err().kind, ErrorKind::PluginError);
 }

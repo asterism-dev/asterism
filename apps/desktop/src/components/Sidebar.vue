@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ask } from '@tauri-apps/plugin-dialog';
-import { revealItemInDir } from '@tauri-apps/plugin-opener';
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { ArrowDownUp, ChevronDown, ChevronRight, Plus, Settings, SquarePlus } from '@lucide/vue';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
@@ -41,6 +41,10 @@ const now = ref(Date.now() / 1000);
 let clock: ReturnType<typeof setInterval> | undefined;
 const formatDate = (seconds: number) => new Date(seconds * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const report = (e: unknown) => toast(errorMessage(e));
+
+function openIssue(url: string) {
+  openUrl(url).catch(report);
+}
 
 onMounted(() => {
   Object.assign(state.collapsed, loadCollapsed());
@@ -163,6 +167,8 @@ function taskMenu(e: MouseEvent, t: Task) {
             @contextmenu="taskMenu($event, t)"
           >
             <span class="name">{{ t.title }}</span>
+            <a v-if="t.issue" class="issue-key muted" :href="t.issue.url" :title="t.issue.url"
+              @click.prevent.stop="openIssue(t.issue.url)">{{ t.issue.key }}</a>
             <span class="age muted" :title="`Created ${formatDate(t.created_at)} · Last activity ${formatDate(t.last_activity_at)}`">
               {{ relativeTime(t.last_activity_at, now) }}
             </span>
@@ -182,6 +188,7 @@ function taskMenu(e: MouseEvent, t: Task) {
 .sidebar { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
 .sidebar-scroll { flex: 1; overflow-y: auto; padding: 8px 6px; }
 .row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; min-height: 28px; }
+.issue-key { flex: none; font-size: 12px; text-decoration: none; }
 .row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .node-row { font-weight: 600; }
 .project-row { margin-top: 8px; font-weight: 500; }

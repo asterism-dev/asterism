@@ -20,10 +20,16 @@ export interface Task {
   base_branch: string;
   worktree_path: string;
   prompt: string | null;
+  issue: IssueRef | null;
   archived: boolean;
   created_at: number;
   last_activity_at: number;
 }
+export interface IssueRef { source: string; key: string; url: string }
+export interface TaskIssue { source: string; key: string; title: string; url: string; branch: string | null }
+export interface IssueHit { key: string; title: string; url: string; state: string; assignee: string | null; updated_at: string | null }
+export interface IssueDetails { source: string; key: string; title: string; url: string; description: string; name: string; branch: string; prompt: string }
+export interface TaskSourceInfo { id: string; display_name: string; plugin: string; available: boolean; reason: string | null }
 export interface Session { id: number; task_id: number; kind: SessionKind; status: SessionStatus }
 export interface AgentInfo { name: string; available: boolean }
 export interface HelloResult {

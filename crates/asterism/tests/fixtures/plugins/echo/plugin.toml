@@ -25,6 +25,10 @@ start = ["{binary}", "-c", "echo started \"$@\"; sleep 30", "echo", "{args...}"]
 settings = ["args"]
 waiting_patterns = ["(y/n)"]
 
+[[provides.task_source]]
+id = "echo-issues"
+display_name = "Echo issues"
+
 [[settings]]
 key = "token"
 title = "Token"

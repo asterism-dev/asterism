@@ -21,6 +21,7 @@ fn link_list_command_and_unlink() {
     for name in ["claude", "github"] {
         assert_eq!(plugin(&builtins, name).unwrap()["state"]["state"], "ok", "{builtins}");
     }
+    assert_eq!(plugin(&builtins, "linear").unwrap()["state"], serde_json::json!({"state": "needs_setup", "missing": ["API key"]}), "{builtins}");
 
     let linked = node.json(&["plugin", "link", &fixture()]);
     assert_eq!((linked["name"].as_str(), linked["origin"].as_str()), (Some("echo"), Some("linked")));
@@ -28,7 +29,7 @@ fn link_list_command_and_unlink() {
     let echo = plugin(&list, "echo").unwrap();
     assert_eq!(echo["state"], serde_json::json!({"state": "needs_setup", "missing": ["Token"]}));
     let kinds: Vec<_> = echo["capabilities"].as_array().unwrap().iter().map(|c| c["kind"].as_str().unwrap()).collect();
-    assert_eq!(kinds, ["forge", "agent", "command"]);
+    assert_eq!(kinds, ["forge", "agent", "command", "task_source"]);
 
     let out = node.cmd(&["echo-cmd", "hello", "--exit", "4"]);
     assert_eq!(out.status.code(), Some(4));

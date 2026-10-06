@@ -69,6 +69,8 @@ enum Cmd {
         agent_ref: Option<String>,
     },
     #[command(subcommand)]
+    Issue(IssueCmd),
+    #[command(subcommand)]
     Daemon(DaemonCmd),
     #[command(subcommand)]
     Plugin(PluginCmd),
@@ -188,16 +190,38 @@ enum ProjectCmd {
 }
 
 #[derive(Subcommand)]
+enum IssueCmd {
+    /// List open issues from a task source; by default only yours.
+    Search {
+        source: String,
+        query: Option<String>,
+        /// Include issues not assigned to you.
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        project: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum TaskCmd {
     /// Create a task with its own branch and worktree, optionally starting an agent.
+    #[command(alias = "create")]
     New {
-        title: String,
+        /// Required unless --issue is given.
+        #[arg(conflicts_with = "title_flag")]
+        title: Option<String>,
+        #[arg(long = "title")]
+        title_flag: Option<String>,
         #[arg(long)]
         project: Option<String>,
         #[arg(long)]
         agent: Option<String>,
         #[arg(long)]
         prompt: Option<String>,
+        /// Create the task from an issue, e.g. linear:TRA-1343 or github-issues:#42.
+        #[arg(long)]
+        issue: Option<String>,
     },
     List {
         #[arg(long)]
@@ -337,10 +361,35 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
             client.call::<_, ()>(method::PROJECT_REMOVE, ProjectIdParams { project_id: id }).await?;
             print_ok(json);
         }
-        Cmd::Task(TaskCmd::New { title, project, agent, prompt }) => {
+        Cmd::Task(TaskCmd::New { title, title_flag, project, agent, prompt, issue }) => {
+            let title = title.or(title_flag);
             let project_id = resolve_project(&client, project).await?;
-            let created: TaskCreateResult =
-                client.call(method::TASK_CREATE, TaskCreateParams { project_id, title, prompt, agent }).await?;
+            let params = match issue {
+                Some(spec) => {
+                    let (source, key) = spec.split_once(':').ok_or_else(|| invalid("--issue takes <source>:<key>".into()))?;
+                    let details: IssueDetails = client
+                        .call(method::TASK_SOURCE_GET, TaskSourceGetParams { project_id, source: source.into(), key: key.into() })
+                        .await?;
+                    TaskCreateParams {
+                        project_id,
+                        title: title.unwrap_or_default(),
+                        prompt: prompt.or(Some(details.prompt)),
+                        agent,
+                        issue: Some(TaskIssue {
+                            source: details.source,
+                            key: details.key,
+                            title: details.title,
+                            url: details.url,
+                            branch: Some(details.branch).filter(|b| !b.is_empty()),
+                        }),
+                    }
+                }
+                None => {
+                    let title = title.ok_or_else(|| invalid("give the task a title or --issue <source>:<key>".into()))?;
+                    TaskCreateParams { project_id, title, prompt, agent, issue: None }
+                }
+            };
+            let created: TaskCreateResult = client.call(method::TASK_CREATE, params).await?;
             print(json, &created, || {
                 let mut out = task_line(&created.task);
                 if let Some(session) = &created.session {
@@ -348,6 +397,14 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
                     out.push_str(&session_line(session));
                 }
                 out
+            });
+        }
+        Cmd::Issue(IssueCmd::Search { source, query, all, project }) => {
+            let project_id = resolve_project(&client, project).await?;
+            let params = TaskSourceSearchParams { project_id, source, query: query.unwrap_or_default(), assigned_to_me: !all };
+            let hits: Vec<IssueHit> = client.call(method::TASK_SOURCE_SEARCH, params).await?;
+            print(json, &hits, || {
+                lines(&hits, |h| format!("{}\t{}\t{}\t{}", h.key, h.state, h.title, h.assignee.clone().unwrap_or_default()))
             });
         }
         Cmd::Task(TaskCmd::List { project, all }) => {

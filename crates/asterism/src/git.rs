@@ -60,6 +60,14 @@ pub fn remove_worktree(repo: &Path, worktree: &Path, force: bool) -> Result<()> 
     git(repo, &args).map(|_| ())
 }
 
+/// Rejects names git would refuse or expand (`@{-1}`) and names that read as options.
+pub fn check_branch_name(repo: &Path, name: &str) -> Result<()> {
+    if name.starts_with('-') || name.contains("@{") || git(repo, &["check-ref-format", "--branch", name]).is_err() {
+        return Err(Error::new(ErrorKind::InvalidParams, format!("invalid branch name {name:?}")));
+    }
+    Ok(())
+}
+
 pub fn branch_exists(repo: &Path, branch: &str) -> bool {
     git(repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).is_ok()
 }

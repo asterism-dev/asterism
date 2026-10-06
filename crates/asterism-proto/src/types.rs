@@ -63,6 +63,9 @@ pub mod method {
     pub const PLUGIN_ROLLBACK: &str = "plugin.rollback";
     pub const PLUGIN_UNINSTALL: &str = "plugin.uninstall";
     pub const PLUGIN_SET_ENABLED: &str = "plugin.set_enabled";
+    pub const TASK_SOURCE_LIST: &str = "task_source.list";
+    pub const TASK_SOURCE_SEARCH: &str = "task_source.search";
+    pub const TASK_SOURCE_GET: &str = "task_source.get";
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -523,6 +526,8 @@ pub struct Task {
     /// Unix seconds (like `created_at`) of the last session start or status change.
     #[serde(default)]
     pub last_activity_at: i64,
+    #[serde(default)]
+    pub issue: Option<IssueRef>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -536,11 +541,103 @@ pub struct TaskListParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskCreateParams {
     pub project_id: i64,
+    #[serde(default)]
     pub title: String,
     #[serde(default)]
     pub prompt: Option<String>,
     #[serde(default)]
     pub agent: Option<String>,
+    #[serde(default)]
+    pub issue: Option<TaskIssue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IssueRef {
+    pub source: String,
+    pub key: String,
+    pub url: String,
+}
+
+/// The issue a task is created from; `branch` is the branch to create.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskIssue {
+    pub source: String,
+    pub key: String,
+    pub title: String,
+    pub url: String,
+    #[serde(default)]
+    pub branch: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IssueHit {
+    pub key: String,
+    pub title: String,
+    pub url: String,
+    pub state: String,
+    #[serde(default)]
+    pub assignee: Option<String>,
+    /// RFC 3339, as the source reports it.
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+/// An issue as a task-source plugin returns it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Issue {
+    pub key: String,
+    pub title: String,
+    pub url: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub branch: Option<String>,
+}
+
+/// An issue plus the task name, branch and prompt the daemon derives from it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IssueDetails {
+    pub source: String,
+    pub key: String,
+    pub title: String,
+    pub url: String,
+    pub description: String,
+    pub name: String,
+    pub branch: String,
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskSourceInfo {
+    pub id: String,
+    pub display_name: String,
+    pub plugin: String,
+    pub available: bool,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskSourceListParams {
+    #[serde(default)]
+    pub project_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskSourceSearchParams {
+    pub project_id: i64,
+    pub source: String,
+    #[serde(default)]
+    pub query: String,
+    #[serde(default)]
+    pub assigned_to_me: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskSourceGetParams {
+    pub project_id: i64,
+    pub source: String,
+    pub key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

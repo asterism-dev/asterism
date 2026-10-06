@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
+import { state } from '../store';
 import DiscoverTab from './plugins/DiscoverTab.vue';
 import InstalledTab from './plugins/InstalledTab.vue';
 import StoresTab from './plugins/StoresTab.vue';
@@ -16,6 +17,12 @@ function configure(name: string) {
   tab.value = 'installed';
   configureRequest.value = name;
 }
+
+watch(() => state.pluginSettingsRequest, (name) => {
+  if (!name) return;
+  configure(name);
+  state.pluginSettingsRequest = null;
+}, { immediate: true });
 </script>
 
 <template>

@@ -24,6 +24,7 @@ export interface State {
   menu: { x: number; y: number; items: MenuItem[] } | null;
   newTaskFor: number | null;
   settingsOpen: boolean;
+  pluginSettingsRequest: string | null;
   settingsDirty: boolean;
   projectPage: number | null;
   tasksVersion: number;
@@ -48,6 +49,7 @@ export function initialState(): State {
     menu: null,
     newTaskFor: null,
     settingsOpen: false,
+    pluginSettingsRequest: null,
     settingsDirty: false,
     projectPage: null,
     tasksVersion: 0,
