@@ -139,7 +139,7 @@ pub fn parse(text: &str) -> Result<Manifest, String> {
     Ok(manifest)
 }
 
-fn is_slug(s: &str) -> bool {
+pub(crate) fn is_slug(s: &str) -> bool {
     !s.is_empty() && !s.starts_with('-') && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
@@ -147,7 +147,7 @@ fn is_key(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
-fn is_version(s: &str) -> bool {
+pub(crate) fn is_version(s: &str) -> bool {
     !s.is_empty() && !s.starts_with('.') && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'))
 }
 

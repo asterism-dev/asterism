@@ -1,9 +1,11 @@
 pub mod catalog;
+pub mod install;
 pub mod manifest;
 pub mod process;
 pub mod registry;
 pub mod settings;
 pub mod source;
+pub mod store_ops;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
