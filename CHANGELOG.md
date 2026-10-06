@@ -1,3 +1,9 @@
+## v0.7.0 (2026-10-06)
+
+### Feat
+
+- **plugins**: show pull request and CI status per task (#9)
+
 ## v0.6.0 (2026-10-06)
 
 ### Feat
