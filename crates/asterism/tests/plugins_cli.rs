@@ -28,7 +28,7 @@ fn link_list_command_and_unlink() {
     let echo = plugin(&list, "echo").unwrap();
     assert_eq!(echo["state"], serde_json::json!({"state": "needs_setup", "missing": ["Token"]}));
     let kinds: Vec<_> = echo["capabilities"].as_array().unwrap().iter().map(|c| c["kind"].as_str().unwrap()).collect();
-    assert_eq!(kinds, ["forge", "agent", "command"]);
+    assert_eq!(kinds, ["forge", "agent", "command", "task_source"]);
 
     let out = node.cmd(&["echo-cmd", "hello", "--exit", "4"]);
     assert_eq!(out.status.code(), Some(4));

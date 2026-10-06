@@ -6,7 +6,7 @@ use std::sync::Arc;
 use asterism_proto::types::{Capability, CapabilityKind, PluginOrigin};
 use serde::{Deserialize, Serialize};
 
-use super::manifest::{self, AgentDecl, CommandDecl, ForgeDecl, Manifest};
+use super::manifest::{self, AgentDecl, CommandDecl, ForgeDecl, Manifest, TaskSourceDecl};
 use crate::agent_settings::write_atomic;
 
 /// Manifests of the plugins shipped with asterism; their backends sit next to `asterismd`.
@@ -138,12 +138,20 @@ impl Registry {
         self.ok().flat_map(|(p, m)| m.provides.command.iter().map(move |c| (p, c)))
     }
 
+    pub fn task_sources(&self) -> impl Iterator<Item = (&Arc<Plugin>, &TaskSourceDecl)> {
+        self.ok().flat_map(|(p, m)| m.provides.task_source.iter().map(move |t| (p, t)))
+    }
+
     pub fn agent(&self, id: &str) -> Option<(&Arc<Plugin>, &AgentDecl)> {
         self.agents().find(|(_, a)| a.id == id)
     }
 
     pub fn forge(&self, id: &str) -> Option<(&Arc<Plugin>, &ForgeDecl)> {
         self.forges().find(|(_, f)| f.id == id)
+    }
+
+    pub fn task_source(&self, id: &str) -> Option<(&Arc<Plugin>, &TaskSourceDecl)> {
+        self.task_sources().find(|(_, t)| t.id == id)
     }
 }
 

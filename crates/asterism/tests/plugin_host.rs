@@ -46,7 +46,7 @@ async fn missing_required_settings_block_calls() {
     let home = tempfile::tempdir().unwrap();
     let daemon = daemon(home.path(), false);
     let err = daemon.plugin_call("echo", "forge.status", json!({}), Some(daemon.call_timeout())).await.unwrap_err();
-    assert_eq!(err.kind, ErrorKind::PluginError);
+    assert_eq!(err.kind, ErrorKind::NeedsSetup);
     assert!(err.message.contains("Token is not set"), "{}", err.message);
 }
 

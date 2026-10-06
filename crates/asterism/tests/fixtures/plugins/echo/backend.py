@@ -9,6 +9,13 @@ import time
 out_lock = threading.Lock()
 pending = {}
 next_id = [1000]
+ISSUES = {
+    "ECH-1": {"title": "Fix login timeout", "description": "Users get logged out.", "branch": "feature/ech-1-fix-login-timeout"},
+    "ECH-2": {"title": "Add dark mode", "description": "", "branch": None},
+    "ECH-3": {"title": "Bad branch", "description": "", "branch": "bad..branch"},
+    "ECH-4": {"title": "!!!", "description": "", "branch": None},
+    "%%": {"title": "%%", "description": "", "branch": None},
+}
 
 
 def send(message):
@@ -48,10 +55,31 @@ def handle(request):
         if mode == "hang-init":
             time.sleep(60)
         record("init " + json.dumps(params.get("settings", {}), sort_keys=True))
-        caps = [c for c in os.environ.get("FIXTURE_CAPS", "command,forge").split(",") if c]
+        caps = [c for c in os.environ.get("FIXTURE_CAPS", "command,forge,task_source").split(",") if c]
         result = {"capabilities": caps}
     elif method == "forge.status":
         result = {"available": True, "authenticated": True, "account": "me", "owners": ["acme"], "error": None}
+    elif method == "task_source.check":
+        record("check " + params["project_path"])
+        if mode == "no-repo":
+            result = {"available": False, "reason": "project has no echo repository"}
+        else:
+            result = {"available": True}
+    elif method == "task_source.search":
+        record("search %s %s" % (params.get("query", ""), params.get("assigned_to_me", False)))
+        q = params.get("query", "").lower()
+        result = [
+            {"key": k, "title": v["title"], "url": "https://echo.test/" + k, "state": "open",
+             "assignee": "me" if params.get("assigned_to_me") else None, "updated_at": "2026-10-0%dT00:00:00Z" % (i + 1)}
+            for i, (k, v) in enumerate(ISSUES.items()) if q in v["title"].lower()
+        ]
+    elif method == "task_source.get":
+        issue = ISSUES.get(params["key"])
+        if issue is None:
+            error(rid, -32001, "not_found", "no issue " + params["key"])
+            return
+        result = {"key": params["key"], "title": issue["title"], "url": "https://echo.test/" + params["key"],
+                  "description": issue["description"], "branch": issue["branch"]}
     elif method == "echo.sleep":
         time.sleep(params.get("ms", 0) / 1000)
         result = params

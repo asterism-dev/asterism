@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
-use asterism_plugin::protocol::{self, CloneParams, CreateRemoteParams, LaunchMode, ListReposParams, PrepareParams, PrepareResult, ResolveOwnerParams, ResolveOwnerResult};
+use asterism_plugin::protocol::{self, CloneParams, CreateRemoteParams, GetIssueParams, LaunchMode, ListReposParams, SearchIssuesParams, TaskSourceCheck, TaskSourceCheckParams, PrepareParams, PrepareResult, ResolveOwnerParams, ResolveOwnerResult};
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
 use asterism_proto::PROTO_VERSION;
@@ -35,6 +35,8 @@ const REMOVE_GRACE: Duration = Duration::from_secs(2);
 // ponytail: fixed pause so TUIs treat Enter as a submit, not part of the paste; make it per-profile if an agent needs more.
 const SUBMIT_DELAY: Duration = Duration::from_millis(100);
 const SLUG_MAX: usize = 40;
+const ISSUE_NAME_MAX: usize = 80;
+const PROMPT_DESCRIPTION_MAX: usize = 32 * 1024;
 
 struct LiveSession {
     pty: Arc<Pty>,
@@ -181,7 +183,7 @@ impl Daemon {
             let missing = settings::missing(&self.paths, plugin, &manifest.settings)?;
             if !missing.is_empty() {
                 return Err(Error::new(
-                    ErrorKind::PluginError,
+                    ErrorKind::NeedsSetup,
                     format!("{plugin}: {} is not set, see Settings → Plugins", missing.join(", ")),
                 ));
             }
@@ -728,6 +730,75 @@ impl Daemon {
         let params = serde_json::to_value(params).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
         let reply = self.plugin_call(&plugin, method, params, timeout).await?;
         serde_json::from_value(reply).map_err(|e| Error::new(ErrorKind::PluginError, format!("{plugin}: unexpected {method} reply: {e}")))
+    }
+
+    async fn task_source_call<P: Serialize, R: DeserializeOwned>(&self, source: &str, method: &str, params: P) -> Result<R> {
+        let plugin = self
+            .plugin_set()
+            .registry
+            .task_source(source)
+            .map(|(plugin, _)| plugin.name.clone())
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, format!("no task source {source:?} is installed")))?;
+        let params = serde_json::to_value(params).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+        let reply = self.plugin_call(&plugin, method, params, Some(self.call_timeout())).await?;
+        serde_json::from_value(reply).map_err(|e| Error::new(ErrorKind::PluginError, format!("{plugin}: unexpected {method} reply: {e}")))
+    }
+
+    pub async fn task_sources(&self, project_id: Option<i64>) -> Result<Vec<TaskSourceInfo>> {
+        let project_path = project_id.map(|id| self.project_path(id)).transpose()?;
+        let sources: Vec<(String, String, String)> = self
+            .plugin_set()
+            .registry
+            .task_sources()
+            .map(|(plugin, source)| (source.id.clone(), source.display_name.clone(), plugin.name.clone()))
+            .collect();
+        let mut infos = Vec::new();
+        for (id, display_name, plugin) in sources {
+            let (available, reason) = match &project_path {
+                None => (true, None),
+                Some(path) => {
+                    let params = TaskSourceCheckParams { source: id.clone(), project_path: path.display().to_string() };
+                    match self.task_source_call::<_, TaskSourceCheck>(&id, protocol::method::TASK_SOURCE_CHECK, params).await {
+                        Ok(check) => (check.available, check.reason),
+                        // Searching surfaces the setup error with a way to fix it.
+                        Err(e) if e.kind == ErrorKind::NeedsSetup => (true, None),
+                        Err(e) => (false, Some(e.message)),
+                    }
+                }
+            };
+            infos.push(TaskSourceInfo { id, display_name, plugin, available, reason });
+        }
+        Ok(infos)
+    }
+
+    pub async fn task_source_search(&self, p: &TaskSourceSearchParams) -> Result<Vec<IssueHit>> {
+        let project_path = self.project_path(p.project_id)?;
+        let params = SearchIssuesParams {
+            source: p.source.clone(),
+            query: p.query.trim().to_string(),
+            assigned_to_me: p.assigned_to_me,
+            project_path: project_path.display().to_string(),
+        };
+        self.task_source_call(&p.source, protocol::method::TASK_SOURCE_SEARCH, params).await
+    }
+
+    pub async fn task_source_get(&self, p: &TaskSourceGetParams) -> Result<IssueDetails> {
+        let project_path = self.project_path(p.project_id)?;
+        let params = GetIssueParams { source: p.source.clone(), key: p.key.clone(), project_path: project_path.display().to_string() };
+        let issue: Issue = self.task_source_call(&p.source, protocol::method::TASK_SOURCE_GET, params).await?;
+        let name = issue_name(&issue.key, &issue.title);
+        let branch = issue.branch.clone().unwrap_or_else(|| format!("asterism/{name}"));
+        let prompt = issue_prompt(&issue);
+        Ok(IssueDetails {
+            source: p.source.clone(),
+            key: issue.key,
+            title: issue.title,
+            url: issue.url,
+            description: issue.description,
+            name,
+            branch,
+            prompt,
+        })
     }
 
     pub async fn forge_status(&self, forge: &str) -> Result<ForgeStatus> {
@@ -1407,22 +1478,50 @@ fn not_found(what: &str, id: i64) -> Error {
     Error::new(ErrorKind::NotFound, format!("{what} {id} not found"))
 }
 
-pub fn slugify(id: i64, title: &str) -> String {
+fn slug_text(text: &str) -> String {
     let mut slug = String::new();
-    for c in title.chars().flat_map(char::to_lowercase) {
+    for c in text.chars().flat_map(char::to_lowercase) {
         if c.is_ascii_alphanumeric() {
             slug.push(c);
         } else if !slug.is_empty() && !slug.ends_with('-') {
             slug.push('-');
         }
     }
-    let slug: String = slug.chars().take(SLUG_MAX).collect();
+    slug.trim_end_matches('-').to_string()
+}
+
+pub fn slugify(id: i64, title: &str) -> String {
+    let slug: String = slug_text(title).chars().take(SLUG_MAX).collect();
     let slug = slug.trim_end_matches('-');
     if slug.is_empty() {
         id.to_string()
     } else {
         format!("{id}-{slug}")
     }
+}
+
+/// `<key>-<title>` as a branch-safe slug; empty when neither has letters or digits.
+pub fn issue_name(key: &str, title: &str) -> String {
+    let joined = [slug_text(key), slug_text(title)].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("-");
+    let cut: String = joined.chars().take(ISSUE_NAME_MAX).collect();
+    cut.trim_end_matches('-').to_string()
+}
+
+pub fn issue_prompt(issue: &Issue) -> String {
+    let mut description = issue.description.trim();
+    if description.len() > PROMPT_DESCRIPTION_MAX {
+        let mut end = PROMPT_DESCRIPTION_MAX;
+        while !description.is_char_boundary(end) {
+            end -= 1;
+        }
+        description = &description[..end];
+    }
+    let mut prompt = format!("# {}\n\n{}", issue.title, issue.url);
+    if !description.is_empty() {
+        prompt.push_str("\n\n");
+        prompt.push_str(description);
+    }
+    prompt
 }
 
 pub fn last_lines(text: &str, n: usize) -> String {

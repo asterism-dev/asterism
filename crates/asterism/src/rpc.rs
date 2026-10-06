@@ -280,6 +280,9 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             let p: ForgeOwnerParams = params(raw)?;
             to_value(daemon.forge_repos(&p.forge, &p.owner).await?)
         }
+        method::TASK_SOURCE_LIST => to_value(daemon.task_sources(params::<TaskSourceListParams>(raw)?.project_id).await?),
+        method::TASK_SOURCE_SEARCH => to_value(daemon.task_source_search(&params(raw)?).await?),
+        method::TASK_SOURCE_GET => to_value(daemon.task_source_get(&params(raw)?).await?),
         method::PROJECT_CLONE => {
             let p = params::<ProjectCloneParams>(raw)?;
             to_value(daemon.clone_project(&p.source, p.forge.as_deref()).await?)
@@ -356,7 +359,7 @@ pub fn host_fn(daemon: Weak<Daemon>) -> HostFn {
     Arc::new(move |_plugin: String, method_name: String, params: Value| {
         let daemon = daemon.clone();
         Box::pin(async move {
-            if method_name.starts_with("plugin.") || method_name.starts_with("store.") || HOST_DENIED.contains(&method_name.as_str()) {
+            if method_name.starts_with("plugin.") || method_name.starts_with("store.") || method_name.starts_with("task_source.") || HOST_DENIED.contains(&method_name.as_str()) {
                 return Err(RpcError::new(ErrorKind::MethodNotFound, format!("{method_name} is not available to plugins")));
             }
             let Some(daemon) = daemon.upgrade() else {
