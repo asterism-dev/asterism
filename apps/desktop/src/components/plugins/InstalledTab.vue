@@ -67,6 +67,7 @@ async function act(name: string, action: () => Promise<unknown>) {
     await action();
   } catch (e) {
     rowError.value[name] = errorMessage(e);
+    await load();
   } finally {
     busy.value[name] = false;
   }
@@ -93,15 +94,17 @@ async function updateAll() {
 }
 
 async function uninstall(p: PluginInfo) {
-  if (await ask(`Uninstall ${p.name}? Its settings are kept.`, { title: 'Uninstall plugin', kind: 'warning' })) {
-    await act(p.name, () => api.uninstallPlugin(p.name));
-  }
+  await act(p.name, async () => {
+    if (await ask(`Uninstall ${p.name}? Its settings are kept.`, { title: 'Uninstall plugin', kind: 'warning' })) {
+      await api.uninstallPlugin(p.name);
+    }
+  });
 }
 
 async function linkLocal() {
-  const path = await openDialog({ directory: true, multiple: false });
-  if (typeof path !== 'string') return;
   try {
+    const path = await openDialog({ directory: true, multiple: false });
+    if (typeof path !== 'string') return;
     const linked = await api.linkPlugin(path);
     toast(`Linked ${linked.name}`);
   } catch (e) {
@@ -110,7 +113,7 @@ async function linkLocal() {
 }
 
 onMounted(load);
-watch(() => state.pluginsVersion, load);
+watch(() => [state.pluginsVersion, state.storesVersion], load);
 watch(
   () => props.configureRequest,
   async (name) => {
