@@ -8,12 +8,16 @@ const release = process.argv.includes('--release');
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const binaries = join(root, 'apps', 'desktop', 'src-tauri', 'binaries');
 
-execFileSync('cargo', ['build', '-p', 'asterism', '--bins', ...(release ? ['--release'] : [])], {
+const host = execFileSync('rustc', ['--print', 'host-tuple']).toString().trim();
+// Tauri sets this during `tauri build --target`; cross builds land in target/<triple>/.
+const triple = process.env.TAURI_ENV_TARGET_TRIPLE ?? host;
+const cross = triple !== host;
+
+execFileSync('cargo', ['build', '-p', 'asterism', '--bins', ...(release ? ['--release'] : []), ...(cross ? ['--target', triple] : [])], {
   cwd: root,
   stdio: 'inherit',
 });
-const triple = execFileSync('rustc', ['--print', 'host-tuple']).toString().trim();
 mkdirSync(binaries, { recursive: true });
 for (const bin of ['asterismd', 'asterism', 'asterism-plugin-claude', 'asterism-plugin-github', 'asterism-plugin-linear']) {
-  copyFileSync(join(root, 'target', release ? 'release' : 'debug', bin), join(binaries, `${bin}-${triple}`));
+  copyFileSync(join(root, 'target', ...(cross ? [triple] : []), release ? 'release' : 'debug', bin), join(binaries, `${bin}-${triple}`));
 }
