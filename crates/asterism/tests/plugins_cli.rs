@@ -21,6 +21,7 @@ fn link_list_command_and_unlink() {
     for name in ["claude", "github"] {
         assert_eq!(plugin(&builtins, name).unwrap()["state"]["state"], "ok", "{builtins}");
     }
+    assert_eq!(plugin(&builtins, "linear").unwrap()["state"], serde_json::json!({"state": "needs_setup", "missing": ["API key"]}), "{builtins}");
 
     let linked = node.json(&["plugin", "link", &fixture()]);
     assert_eq!((linked["name"].as_str(), linked["origin"].as_str()), (Some("echo"), Some("linked")));

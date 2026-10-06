@@ -13,6 +13,7 @@ use crate::agent_settings::write_atomic;
 pub const BUILTIN: &[(&str, &str)] = &[
     ("claude", include_str!("../../plugins/claude/plugin.toml")),
     ("github", include_str!("../../plugins/github/plugin.toml")),
+    ("linear", include_str!("../../plugins/linear/plugin.toml")),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -234,7 +235,7 @@ mod tests {
     fn builtins_are_discovered() {
         let registry = Registry::discover(&sources(&[]));
         let names: Vec<_> = registry.plugins().iter().map(|p| (p.name.as_str(), p.is_ok())).collect();
-        assert_eq!(names, [("claude", true), ("github", true)]);
+        assert_eq!(names, [("claude", true), ("github", true), ("linear", true)]);
         let (plugin, forge) = registry.forge("github").unwrap();
         assert_eq!((plugin.name.as_str(), forge.hosts.as_slice()), ("github", &["github.com".to_string()][..]));
         assert_eq!(registry.agent("claude").unwrap().1.binary, "claude");
@@ -249,7 +250,7 @@ mod tests {
         let registry = Registry::discover(&sources(&[("github", dir.clone())]));
         let github = registry.get("github").unwrap();
         assert_eq!((github.origin, github.dir.clone()), (PluginOrigin::Linked, dir));
-        assert_eq!(registry.plugins().len(), 2);
+        assert_eq!(registry.plugins().len(), 3);
         assert_eq!(github.backend_command().unwrap(), ["python3", "x.py"]);
     }
 
