@@ -66,6 +66,8 @@ pub mod method {
     pub const TASK_SOURCE_LIST: &str = "task_source.list";
     pub const TASK_SOURCE_SEARCH: &str = "task_source.search";
     pub const TASK_SOURCE_GET: &str = "task_source.get";
+    pub const PR_LIST: &str = "pr.list";
+    pub const PR_REFRESH: &str = "pr.refresh";
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -607,6 +609,75 @@ pub struct IssueDetails {
     pub prompt: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PrState {
+    Open,
+    Draft,
+    Merged,
+    Closed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewState {
+    Approved,
+    ChangesRequested,
+    ReviewRequired,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChecksState {
+    Pending,
+    Success,
+    Failure,
+    None,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrChecks {
+    pub state: ChecksState,
+    #[serde(default)]
+    pub failing: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PullRequest {
+    pub number: u64,
+    pub url: String,
+    pub title: String,
+    pub state: PrState,
+    pub review: ReviewState,
+    pub checks: PrChecks,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskPr {
+    pub task_id: i64,
+    pub branch: String,
+    pub pr: PullRequest,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrProjectError {
+    pub project_id: i64,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrList {
+    pub prs: Vec<TaskPr>,
+    pub errors: Vec<PrProjectError>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrListParams {
+    #[serde(default)]
+    pub project_id: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskSourceInfo {
     pub id: String,
@@ -864,6 +935,8 @@ pub enum Event {
     PluginsChanged {},
     #[serde(rename = "stores.changed")]
     StoresChanged {},
+    #[serde(rename = "pr.changed")]
+    PrChanged { task_id: i64, pr: Option<PullRequest> },
 }
 
 impl Event {

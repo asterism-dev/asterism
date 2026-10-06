@@ -89,12 +89,42 @@ pub fn parse_source(source: &str) -> Result<RepoSource> {
     Ok(RepoSource { owner: owner.to_string(), repo: repo.to_string(), url: None })
 }
 
+/// Lowercase host of a remote URL (scheme or scp style), without userinfo and port; `None` for local paths.
+pub fn url_host(url: &str) -> Option<String> {
+    let url = url.trim();
+    let authority = match url.split_once("://") {
+        Some(("file", _)) => return None,
+        Some((_, rest)) => rest.split('/').next()?,
+        None => {
+            let (host, _) = url.split_once(':')?;
+            if host.contains('/') {
+                return None;
+            }
+            host
+        }
+    };
+    let host = authority.rsplit('@').next()?;
+    let host = host.split(':').next()?;
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn src(owner: &str, repo: &str, url: Option<&str>) -> RepoSource {
         RepoSource { owner: owner.into(), repo: repo.into(), url: url.map(String::from) }
+    }
+
+    #[test]
+    fn hosts_are_read_from_every_remote_url_form() {
+        assert_eq!(url_host("git@github.com:acme/api.git").as_deref(), Some("github.com"));
+        assert_eq!(url_host("https://github.com/acme/api").as_deref(), Some("github.com"));
+        assert_eq!(url_host("ssh://git@GitHub.com:22/acme/api.git").as_deref(), Some("github.com"));
+        assert_eq!(url_host("https://user:secret@gitlab.example.org/a/b.git").as_deref(), Some("gitlab.example.org"));
+        assert_eq!(url_host("/srv/git/api.git"), None);
+        assert_eq!(url_host("file:///srv/git/api.git"), None);
+        assert_eq!(url_host(""), None);
     }
 
     #[test]
