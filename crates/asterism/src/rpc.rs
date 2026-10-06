@@ -274,6 +274,12 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             })
             .await
         }
+        method::PROJECT_BRANCHES => {
+            let daemon = daemon.clone();
+            let id = params::<ProjectIdParams>(raw)?.project_id;
+            blocking(move || to_value(daemon.project_branches(id)?)).await
+        }
+        method::PROJECT_UPDATE => to_value(daemon.update_project(params(raw)?)?),
         method::FORGE_LIST => to_value(daemon.forges()),
         method::FORGE_STATUS => to_value(daemon.forge_status(&params::<ForgeParams>(raw)?.forge).await?),
         method::FORGE_REPOS => {

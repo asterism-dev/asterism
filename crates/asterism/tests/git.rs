@@ -54,3 +54,12 @@ fn worktree_lifecycle_and_diff() {
     git::remove_worktree(repo.path(), &wt, true).unwrap();
     assert!(!wt.exists());
 }
+
+#[test]
+fn resolves_rejects_options_and_missing_refs() {
+    let repo = tempfile::tempdir().unwrap();
+    init_repo(repo.path());
+    assert!(git::resolves(repo.path(), "main"));
+    assert!(!git::resolves(repo.path(), "nope"));
+    assert!(!git::resolves(repo.path(), "--all"));
+}

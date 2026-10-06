@@ -249,3 +249,11 @@ fn task_source_params_default_query_and_assignment() {
     let hit: IssueHit = serde_json::from_value(json!({"key": "#1", "title": "t", "url": "u", "state": "open"})).unwrap();
     assert_eq!((hit.assignee, hit.updated_at), (None, None));
 }
+
+#[test]
+fn older_clients_omit_base_and_default_base() {
+    let params: TaskCreateParams = serde_json::from_str(r#"{"project_id":1,"title":"t"}"#).unwrap();
+    assert_eq!(params.base, None);
+    let project: Project = serde_json::from_str(r#"{"id":1,"name":"n","path":"/p"}"#).unwrap();
+    assert_eq!(project.default_base, None);
+}
