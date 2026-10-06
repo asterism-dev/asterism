@@ -27,15 +27,26 @@ const searchError = ref<{ message: string; plugin: string | null; setup: boolean
 const searching = ref(false);
 const details = ref<IssueDetails | null>(null);
 let searchSeq = 0;
+let pickSeq = 0;
+let sourcesSeq = 0;
 let debounce: ReturnType<typeof setTimeout> | undefined;
 
 async function loadSources() {
+  const seq = ++sourcesSeq;
+  let loaded: TaskSourceInfo[];
   try {
-    sources.value = await api.taskSources(projectId.value);
+    loaded = await api.taskSources(projectId.value);
   } catch {
-    sources.value = [];
+    loaded = [];
   }
+  if (seq !== sourcesSeq) return;
+  sources.value = loaded;
   if (source.value && !options.value.some((o) => o.id === source.value && !o.disabled)) source.value = '';
+}
+
+function searchFailure(e: unknown) {
+  const plugin = options.value.find((o) => o.id === source.value)?.plugin ?? null;
+  return { message: errorMessage(e), plugin, setup: e instanceof RpcError && e.kind === 'needs_setup' };
 }
 
 async function search() {
@@ -49,21 +60,27 @@ async function search() {
   } catch (e) {
     if (seq !== searchSeq) return;
     hits.value = [];
-    const plugin = options.value.find((o) => o.id === source.value)?.plugin ?? null;
-    searchError.value = { message: errorMessage(e), plugin, setup: e instanceof RpcError && e.kind === 'needs_setup' };
+    searchError.value = searchFailure(e);
   } finally {
     if (seq === searchSeq) searching.value = false;
   }
 }
 
 async function pick(hit: IssueHit) {
+  const seq = ++pickSeq;
   try {
     const d = await api.getIssue(projectId.value, source.value, hit.key);
+    if (seq !== pickSeq) return;
     details.value = d;
     title.value = d.name;
     prompt.value = d.prompt;
+    error.value = null;
+    searchError.value = null;
   } catch (e) {
-    error.value = errorMessage(e);
+    if (seq !== pickSeq) return;
+    const failure = searchFailure(e);
+    if (failure.setup) searchError.value = failure;
+    else error.value = failure.message;
   }
 }
 
@@ -73,8 +90,22 @@ function openSettings(plugin: string) {
   emit('close');
 }
 
-watch(projectId, () => { details.value = null; loadSources().then(search); });
-watch(source, () => { details.value = null; hits.value = []; searchError.value = null; search(); });
+watch(projectId, () => {
+  searchSeq++;
+  pickSeq++;
+  details.value = null;
+  hits.value = [];
+  searchError.value = null;
+  loadSources().then(search);
+});
+watch(source, () => {
+  clearTimeout(debounce);
+  pickSeq++;
+  details.value = null;
+  hits.value = [];
+  searchError.value = null;
+  search();
+});
 watch(query, () => { clearTimeout(debounce); debounce = setTimeout(search, 250); });
 onMounted(() => {
   titleInput.value?.focus();
@@ -83,7 +114,7 @@ onMounted(() => {
 onUnmounted(() => clearTimeout(debounce));
 
 async function submit() {
-  if (source.value && !details.value) {
+  if (source.value && details.value?.source !== source.value) {
     error.value = 'Pick an issue.';
     return;
   }
@@ -129,7 +160,7 @@ async function submit() {
           :aria-pressed="source === o.id" :class="{ active: source === o.id }" @click="source = o.id">{{ o.label }}</button>
       </div>
       <template v-if="source">
-        <label>Search <input v-model="query" placeholder="Empty shows your open issues" /></label>
+        <label>Search <input v-model="query" @keydown.enter.prevent placeholder="Empty shows your open issues" /></label>
         <p v-if="searchError" class="error">
           {{ searchError.message }}
           <button v-if="searchError.setup && searchError.plugin" type="button" @click="openSettings(searchError.plugin)">Open settings</button>
