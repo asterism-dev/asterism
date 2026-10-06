@@ -69,6 +69,18 @@ pub fn resolves(repo: &Path, rev: &str) -> bool {
     !rev.starts_with('-') && git(repo, &["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")]).is_ok()
 }
 
+/// Branch names stay symbolic; anything else (`HEAD~2`, tags, SHAs) is pinned to its commit so it can't drift later.
+pub fn pin_base(repo: &Path, base: &str) -> Result<String> {
+    let is_branch = ["refs/heads/", "refs/remotes/"]
+        .iter()
+        .any(|prefix| git(repo, &["show-ref", "--verify", "--quiet", &format!("{prefix}{base}")]).is_ok());
+    if is_branch {
+        Ok(base.to_string())
+    } else {
+        Ok(git(repo, &["rev-parse", "--verify", &format!("{base}^{{commit}}")])?.trim().to_string())
+    }
+}
+
 /// `refs/heads` and `refs/remotes` as short names, without the symbolic `<remote>/HEAD`.
 pub fn branches(repo: &Path) -> Result<Vec<String>> {
     let out = git(repo, &["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"])?;

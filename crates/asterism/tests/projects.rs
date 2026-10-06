@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use asterism_core::daemon::{Daemon, DaemonOptions};
+use asterism_core::git;
 use asterism_core::paths::Paths;
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
@@ -338,4 +339,38 @@ async fn fetch_failure_is_reported_and_missing_origin_head_falls_back() {
     assert!(branches.fetch_error.is_some());
     assert_eq!(branches.default.as_deref(), Some("origin/main"));
     assert!(!branches.branches.is_empty());
+}
+
+#[tokio::test]
+async fn pruned_base_still_counts_unmerged_commits() {
+    let env = setup(false);
+    let url = bare_origin(env.home.path());
+    let project = env.daemon.clone_project(&url).unwrap();
+    let pusher = env.home.path().join("pusher");
+    run_git(env.home.path(), &["clone", "-q", &url, &pusher.display().to_string()]);
+    run_git(&pusher, &["push", "-q", "origin", "HEAD:feature"]);
+    env.daemon.project_branches(project.id).unwrap();
+
+    let task = create(&env, project.id, "on feature", Some("origin/feature")).unwrap().task;
+    let worktree = Path::new(&task.worktree_path);
+    std::fs::write(worktree.join("work.txt"), "w\n").unwrap();
+    run_git(worktree, &["add", "."]);
+    run_git(worktree, &["commit", "-q", "-m", "work"]);
+
+    run_git(&pusher, &["push", "-q", "origin", "--delete", "feature"]);
+    env.daemon.project_branches(project.id).unwrap();
+    assert!(!git::resolves(Path::new(&project.path), "origin/feature"));
+
+    assert_eq!(env.daemon.delete_check(task.id).unwrap().unmerged_commits, 1);
+    assert!(env.daemon.diff(task.id).is_ok());
+}
+
+#[tokio::test]
+async fn relative_bases_are_stored_as_commits() {
+    let env = setup(false);
+    let url = bare_origin(env.home.path());
+    let project = env.daemon.clone_project(&url).unwrap();
+    let head = run_git(Path::new(&project.path), &["rev-parse", "HEAD"]).trim().to_string();
+    assert_eq!(create(&env, project.id, "from head", Some("HEAD")).unwrap().task.base_branch, head);
+    assert_eq!(create(&env, project.id, "from main", Some("main")).unwrap().task.base_branch, "main");
 }

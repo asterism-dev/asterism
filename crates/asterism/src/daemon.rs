@@ -273,6 +273,7 @@ impl Daemon {
             None => default_base(&repo, &project)
                 .ok_or_else(|| Error::new(ErrorKind::Git, "repository has no commits yet — create an initial commit first"))?,
         };
+        let base = git::pin_base(&repo, &base)?;
         let origin = git::remote_url(&repo, "origin");
         let (owner, repo_name) = node_settings::layout_owner_repo(origin.as_deref(), &project.name);
         let worktree_root = node_settings::worktrees_dir(&self.paths)?.join(owner).join(repo_name);
@@ -358,7 +359,7 @@ impl Daemon {
         let branch_exists = git::branch_exists(&repo, &task.branch);
         Ok(TaskDeleteCheck {
             dirty: worktree.exists() && git::is_dirty(worktree).unwrap_or(false),
-            unmerged_commits: if branch_exists { git::unmerged_commits(&repo, &task.base_branch, &task.branch) } else { 0 },
+            unmerged_commits: if branch_exists { git::unmerged_commits(&repo, &self.effective_base(&repo, &task), &task.branch) } else { 0 },
             branch: task.branch,
             branch_exists,
         })
@@ -451,7 +452,17 @@ impl Daemon {
 
     pub fn diff(&self, task_id: i64) -> Result<TaskDiffResult> {
         let task = self.task(task_id)?;
-        Ok(TaskDiffResult { patch: git::diff(Path::new(&task.worktree_path), &task.base_branch)? })
+        let base = self.effective_base(&self.project_path(task.project_id)?, &task);
+        Ok(TaskDiffResult { patch: git::diff(Path::new(&task.worktree_path), &base)? })
+    }
+
+    /// The task's base, or the project's default once that base is gone (e.g. a pruned remote branch).
+    fn effective_base(&self, repo: &Path, task: &Task) -> String {
+        if git::resolves(repo, &task.base_branch) {
+            return task.base_branch.clone();
+        }
+        let project = self.store().project(task.project_id).ok().flatten();
+        project.and_then(|p| default_base(repo, &p)).unwrap_or_else(|| task.base_branch.clone())
     }
 
     fn agent(&self, name: &str) -> Result<&'static AgentProfile> {
