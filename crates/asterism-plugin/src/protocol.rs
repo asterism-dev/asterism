@@ -10,6 +10,9 @@ pub mod method {
     pub const INITIALIZE: &str = "initialize";
     pub const SETTINGS_CHANGED: &str = "settings.changed";
     pub const FORGE_STATUS: &str = "forge.status";
+    pub const TASK_SOURCE_CHECK: &str = "task_source.check";
+    pub const TASK_SOURCE_SEARCH: &str = "task_source.search";
+    pub const TASK_SOURCE_GET: &str = "task_source.get";
     pub const FORGE_LIST_REPOS: &str = "forge.list_repos";
     pub const FORGE_RESOLVE_OWNER: &str = "forge.resolve_owner";
     pub const FORGE_CLONE: &str = "forge.clone";
@@ -104,4 +107,34 @@ pub struct PrepareResult {
     pub argv: Vec<String>,
     #[serde(default)]
     pub env: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskSourceCheckParams {
+    pub source: String,
+    pub project_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskSourceCheck {
+    pub available: bool,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SearchIssuesParams {
+    pub source: String,
+    #[serde(default)]
+    pub query: String,
+    #[serde(default)]
+    pub assigned_to_me: bool,
+    pub project_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetIssueParams {
+    pub source: String,
+    pub key: String,
+    pub project_path: String,
 }

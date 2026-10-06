@@ -340,7 +340,7 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
         Cmd::Task(TaskCmd::New { title, project, agent, prompt }) => {
             let project_id = resolve_project(&client, project).await?;
             let created: TaskCreateResult =
-                client.call(method::TASK_CREATE, TaskCreateParams { project_id, title, prompt, agent }).await?;
+                client.call(method::TASK_CREATE, TaskCreateParams { project_id, title, prompt, agent, issue: None }).await?;
             print(json, &created, || {
                 let mut out = task_line(&created.task);
                 if let Some(session) = &created.session {

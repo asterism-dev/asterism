@@ -260,6 +260,7 @@ fn task_row(row: &Row) -> rusqlite::Result<Task> {
         archived: row.get::<_, i64>(8)? != 0,
         created_at: row.get(9)?,
         last_activity_at: row.get(10)?,
+        issue: None,
     })
 }
 

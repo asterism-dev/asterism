@@ -30,7 +30,7 @@ fn sh(script: &str) -> SessionKind {
 
 async fn new_task(env: &Env, title: &str) -> Task {
     let project = env.daemon.add_project(&env.repo.path().display().to_string()).unwrap();
-    let params = TaskCreateParams { project_id: project.id, title: title.into(), prompt: None, agent: None };
+    let params = TaskCreateParams { project_id: project.id, title: title.into(), prompt: None, agent: None, issue: None };
     env.daemon.create_task(params).await.unwrap().task
 }
 
@@ -66,7 +66,7 @@ async fn create_task_makes_branch_and_worktree() {
 async fn unknown_agent_fails_before_creating_anything() {
     let env = setup();
     let project = env.daemon.add_project(&env.repo.path().display().to_string()).unwrap();
-    let params = TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: Some("nope".into()) };
+    let params = TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: Some("nope".into()), issue: None };
     assert_eq!(env.daemon.create_task(params).await.unwrap_err().kind, ErrorKind::AgentUnavailable);
     assert!(env.daemon.tasks(TaskListParams::default()).unwrap().is_empty());
 }
