@@ -41,9 +41,10 @@ const MIGRATIONS: &[&str] = &[
      ALTER TABLE tasks ADD COLUMN last_activity_at INTEGER NOT NULL DEFAULT 0;
      UPDATE projects SET created_at = unixepoch();
      UPDATE tasks SET created_at = unixepoch(), last_activity_at = unixepoch();",
+    "ALTER TABLE projects ADD COLUMN default_base TEXT;",
 ];
 
-const PROJECT_COLUMNS: &str = "id, name, path, created_at";
+const PROJECT_COLUMNS: &str = "id, name, path, created_at, default_base";
 const TASK_COLUMNS: &str =
     "id, project_id, title, slug, branch, base_branch, worktree_path, prompt, archived, created_at, last_activity_at";
 const SESSION_COLUMNS: &str = "id, task_id, kind, status, agent_ref";
@@ -105,6 +106,11 @@ impl Store {
         )?;
         self.conn.execute("DELETE FROM tasks WHERE project_id = ?1", [id])?;
         self.conn.execute("DELETE FROM projects WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn set_project_default_base(&self, id: i64, base: Option<&str>) -> rusqlite::Result<()> {
+        self.conn.execute("UPDATE projects SET default_base = ?2 WHERE id = ?1", params![id, base])?;
         Ok(())
     }
 
@@ -244,7 +250,7 @@ fn from_text<T: DeserializeOwned>(column: usize, text: String) -> rusqlite::Resu
 }
 
 fn project_row(row: &Row) -> rusqlite::Result<Project> {
-    Ok(Project { id: row.get(0)?, name: row.get(1)?, path: row.get(2)?, created_at: row.get(3)? })
+    Ok(Project { id: row.get(0)?, name: row.get(1)?, path: row.get(2)?, created_at: row.get(3)?, default_base: row.get(4)? })
 }
 
 fn task_row(row: &Row) -> rusqlite::Result<Task> {
@@ -354,6 +360,17 @@ mod tests {
         let task = store.task(id).unwrap().unwrap();
         assert!(task.created_at > 0);
         assert!(task.last_activity_at >= task.created_at);
+    }
+
+    #[test]
+    fn project_default_base_roundtrips() {
+        let store = Store::open_in_memory().unwrap();
+        let p = store.add_project("repo", "/src/repo").unwrap();
+        assert_eq!(p.default_base, None);
+        store.set_project_default_base(p.id, Some("origin/develop")).unwrap();
+        assert_eq!(store.project(p.id).unwrap().unwrap().default_base.as_deref(), Some("origin/develop"));
+        store.set_project_default_base(p.id, None).unwrap();
+        assert_eq!(store.project(p.id).unwrap().unwrap().default_base, None);
     }
 
     #[test]

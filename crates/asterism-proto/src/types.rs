@@ -43,6 +43,8 @@ pub mod method {
     pub const PROJECT_WORKTREE_SIZES: &str = "project.worktree_sizes";
     pub const PROJECT_WORKTREE_REMOVE: &str = "project.worktree_remove";
     pub const PROJECT_WORKTREE_PRUNE: &str = "project.worktree_prune";
+    pub const PROJECT_BRANCHES: &str = "project.branches";
+    pub const PROJECT_UPDATE: &str = "project.update";
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -84,6 +86,9 @@ pub struct Project {
     pub path: String,
     #[serde(default)]
     pub created_at: i64,
+    /// Base for new tasks; `None` means automatic (origin's default branch).
+    #[serde(default)]
+    pub default_base: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -100,6 +105,24 @@ pub struct ProjectIdParams {
 pub struct ProjectWorktreeParams {
     pub project_id: i64,
     pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectUpdateParams {
+    pub project_id: i64,
+    #[serde(default)]
+    pub default_base: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectBranches {
+    pub branches: Vec<String>,
+    /// What `task.create` uses without an explicit base; `None` when the repository has no commits.
+    pub default: Option<String>,
+    /// The default when no base is configured.
+    pub automatic: Option<String>,
+    pub configured: Option<String>,
+    pub fetch_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -264,6 +287,8 @@ pub struct TaskCreateParams {
     pub prompt: Option<String>,
     #[serde(default)]
     pub agent: Option<String>,
+    #[serde(default)]
+    pub base: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

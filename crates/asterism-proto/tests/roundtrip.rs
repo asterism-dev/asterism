@@ -128,3 +128,11 @@ fn project_and_path_types_roundtrip() {
     .unwrap();
     assert!(status.available && !status.logged_in);
 }
+
+#[test]
+fn older_clients_omit_base_and_default_base() {
+    let params: TaskCreateParams = serde_json::from_str(r#"{"project_id":1,"title":"t"}"#).unwrap();
+    assert_eq!(params.base, None);
+    let project: Project = serde_json::from_str(r#"{"id":1,"name":"n","path":"/p"}"#).unwrap();
+    assert_eq!(project.default_base, None);
+}

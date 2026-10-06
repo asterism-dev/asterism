@@ -42,7 +42,7 @@ async fn shell_session(client: &Client, repo: &Path) -> Session {
     let project: Project =
         client.call(method::PROJECT_ADD, ProjectAddParams { path: repo.display().to_string() }).await.unwrap();
     let created: TaskCreateResult = client
-        .call(method::TASK_CREATE, TaskCreateParams { project_id: project.id, title: "rpc".into(), prompt: None, agent: None })
+        .call(method::TASK_CREATE, TaskCreateParams { project_id: project.id, title: "rpc".into(), prompt: None, agent: None, base: None })
         .await
         .unwrap();
     let kind = SessionKind::Command { argv: vec!["sh".into(), "-c".into(), "echo ready; cat".into()] };
@@ -196,7 +196,7 @@ async fn stalled_attached_client_does_not_block_others() {
     let project: Project =
         good.call(method::PROJECT_ADD, ProjectAddParams { path: repo.path().display().to_string() }).await.unwrap();
     let created: TaskCreateResult = good
-        .call(method::TASK_CREATE, TaskCreateParams { project_id: project.id, title: "yes".into(), prompt: None, agent: None })
+        .call(method::TASK_CREATE, TaskCreateParams { project_id: project.id, title: "yes".into(), prompt: None, agent: None, base: None })
         .await
         .unwrap();
     let kind = SessionKind::Command { argv: vec!["yes".into()] };
