@@ -504,13 +504,16 @@ fn plugin_line(p: &PluginInfo) -> String {
         PluginState::NeedsSetup { missing } => format!("needs setup ({})", missing.join(", ")),
         PluginState::Broken { reason } => format!("broken: {reason}"),
         PluginState::Failing { reason } => format!("failing: {reason}"),
+        PluginState::Disabled => "disabled".to_string(),
     };
     let origin = match p.origin {
-        PluginOrigin::Builtin => "builtin",
-        PluginOrigin::Linked => "linked",
+        PluginOrigin::Builtin => "builtin".to_string(),
+        PluginOrigin::Linked => "linked".to_string(),
+        PluginOrigin::Installed => format!("installed from {}", p.store.as_deref().unwrap_or("?")),
     };
+    let update = if p.update_available { "\tupdate available" } else { "" };
     let capabilities: Vec<String> = p.capabilities.iter().map(|c| format!("{}:{}", label(&c.kind), c.id)).collect();
-    format!("{}\t{}\t{origin}\t{state}\t{}", p.name, p.version.as_deref().unwrap_or("?"), capabilities.join(","))
+    format!("{}\t{}\t{origin}\t{state}\t{}{update}", p.name, p.version.as_deref().unwrap_or("?"), capabilities.join(","))
 }
 
 async fn plugin_config(client: &Client, json: bool, name: String, key: Option<String>, value: Option<String>, clear: bool) -> Result<(), ClientError> {

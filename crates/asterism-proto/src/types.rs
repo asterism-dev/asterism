@@ -51,6 +51,18 @@ pub mod method {
     pub const PLUGIN_RELOAD: &str = "plugin.reload";
     pub const PLUGIN_SETTINGS: &str = "plugin.settings";
     pub const PLUGIN_SET_SETTINGS: &str = "plugin.set_settings";
+    pub const STORE_LIST: &str = "store.list";
+    pub const STORE_ADD: &str = "store.add";
+    pub const STORE_REMOVE: &str = "store.remove";
+    pub const STORE_REFRESH: &str = "store.refresh";
+    pub const STORE_SET_AUTO_UPDATE: &str = "store.set_auto_update";
+    pub const PLUGIN_SEARCH: &str = "plugin.search";
+    pub const PLUGIN_DETAILS: &str = "plugin.details";
+    pub const PLUGIN_INSTALL: &str = "plugin.install";
+    pub const PLUGIN_UPDATE: &str = "plugin.update";
+    pub const PLUGIN_ROLLBACK: &str = "plugin.rollback";
+    pub const PLUGIN_UNINSTALL: &str = "plugin.uninstall";
+    pub const PLUGIN_SET_ENABLED: &str = "plugin.set_enabled";
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -258,6 +270,7 @@ pub struct RemoteTarget {
 pub enum PluginOrigin {
     Builtin,
     Linked,
+    Installed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -267,6 +280,7 @@ pub enum PluginState {
     NeedsSetup { missing: Vec<String> },
     Broken { reason: String },
     Failing { reason: String },
+    Disabled,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -299,6 +313,13 @@ pub struct PluginInfo {
     pub state: PluginState,
     /// The backend argv with its program resolved; the CLI runs plugin commands with it.
     pub backend: Option<Vec<String>>,
+    /// Store an installed plugin came from.
+    #[serde(default)]
+    pub store: Option<String>,
+    #[serde(default)]
+    pub update_available: bool,
+    #[serde(default)]
+    pub previous_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -358,6 +379,110 @@ pub struct PluginSetSettingsParams {
     pub name: String,
     /// A `null` value restores the default, or clears a secret.
     pub values: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoreInfo {
+    pub name: String,
+    pub source: String,
+    pub official: bool,
+    /// Unix seconds of the last successful refresh in this daemon's lifetime.
+    pub last_refreshed: Option<i64>,
+    pub last_error: Option<String>,
+    pub plugin_count: usize,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoreList {
+    pub auto_update: bool,
+    pub stores: Vec<StoreInfo>,
+    /// Set when stores.toml cannot be read.
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoreAddParams {
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoreRemoveParams {
+    pub name: String,
+    #[serde(default)]
+    pub uninstall_plugins: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoreRefreshParams {
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AutoUpdateParams {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginSearchParams {
+    #[serde(default)]
+    pub query: Option<String>,
+    #[serde(default)]
+    pub capability: Option<CapabilityKind>,
+    #[serde(default)]
+    pub store: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SearchHit {
+    pub store: String,
+    pub name: String,
+    pub description: String,
+    pub tags: Vec<String>,
+    /// Set when this plugin is installed from this store.
+    pub installed_version: Option<String>,
+    pub update_available: bool,
+    /// A linked development copy overrides this plugin.
+    pub linked: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginRefParams {
+    pub store: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginDetails {
+    pub store: String,
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub permissions: Vec<String>,
+    pub capabilities: Vec<Capability>,
+    pub readme: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginInstallParams {
+    pub store: String,
+    pub name: String,
+    #[serde(default)]
+    pub accept_permissions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginUpdateParams {
+    pub name: String,
+    /// Without it, an update that adds permissions fails with PermissionsChanged.
+    #[serde(default)]
+    pub accept_permissions: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginEnableParams {
+    pub name: String,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -640,6 +765,8 @@ pub enum Event {
     ProjectRemoved { project_id: i64 },
     #[serde(rename = "plugins.changed")]
     PluginsChanged {},
+    #[serde(rename = "stores.changed")]
+    StoresChanged {},
 }
 
 impl Event {

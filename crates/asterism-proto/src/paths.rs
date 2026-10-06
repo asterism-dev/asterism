@@ -71,6 +71,26 @@ impl Paths {
         self.plugins_dir().join("data").join(plugin)
     }
 
+    pub fn plugin_stores_file(&self) -> PathBuf {
+        self.plugins_dir().join("stores.toml")
+    }
+
+    pub fn plugin_stores_dir(&self) -> PathBuf {
+        self.plugins_dir().join("stores")
+    }
+
+    pub fn plugin_cache(&self) -> PathBuf {
+        self.plugins_dir().join("cache").join("git")
+    }
+
+    pub fn plugins_installed(&self) -> PathBuf {
+        self.plugins_dir().join("installed")
+    }
+
+    pub fn plugin_installed_file(&self) -> PathBuf {
+        self.plugins_dir().join("installed.toml")
+    }
+
     pub fn secrets(&self) -> PathBuf {
         self.home.join("secrets.toml")
     }

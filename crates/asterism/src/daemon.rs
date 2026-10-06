@@ -218,6 +218,9 @@ impl Daemon {
             permissions: manifest.map(|m| m.permissions.clone()).unwrap_or_default(),
             state,
             backend: plugin.backend_command(),
+            store: None,
+            update_available: false,
+            previous_version: None,
         }
     }
 
