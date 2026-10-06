@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  activeTab, aggregate, applyEvent, initialState, nextWaiting, selectSession, taskSessions, taskStatus, waitingSessions,
+  activeTab, aggregate, applyEvent, applyPrList, initialState, nextWaiting, selectSession, taskSessions, taskStatus, waitingSessions,
 } from './store';
-import type { Session, SessionStatus, Task } from './types';
+import type { PullRequest, Session, SessionStatus, Task } from './types';
 
 const task = (id: number, projectId = 1): Task => ({
   id, project_id: projectId, title: `t${id}`, slug: `${id}`, branch: `asterism/${id}`, base_branch: 'main',
@@ -140,5 +140,20 @@ describe('collapsed projects', () => {
     selectSession(s, session(10, 1, 'waiting_input'));
     expect(s.collapsed[7]).toBeUndefined();
     expect(s.selectedTaskId).toBe(1);
+  });
+});
+
+describe('pull requests', () => {
+  it('applies pr.changed and project lists', () => {
+    const s = initialState();
+    const p: PullRequest = { number: 3, url: 'u', title: 't', state: 'open', review: 'none', checks: { state: 'success', failing: [] } };
+    applyEvent(s, { method: 'pr.changed', params: { task_id: 1, pr: p } });
+    expect(s.prs[1].number).toBe(3);
+    applyEvent(s, { method: 'pr.changed', params: { task_id: 1, pr: null } });
+    expect(s.prs[1]).toBeUndefined();
+    applyPrList(s, { prs: [{ task_id: 2, branch: 'b', pr: p }], errors: [{ project_id: 5, message: 'gh: not logged in' }] }, 5);
+    expect([s.prs[2].number, s.prErrors[5]]).toEqual([3, 'gh: not logged in']);
+    applyPrList(s, { prs: [], errors: [] }, 5);
+    expect(s.prErrors[5]).toBeUndefined();
   });
 });

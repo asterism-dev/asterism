@@ -3,9 +3,11 @@ import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { computed, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
+import PrBadge from './PrBadge.vue';
+import { prSummary } from '../prBadge';
 import { filterTasks, formatSize, taskState, worktreeActions, type TaskFilter } from '../projectPage';
 import { relativeTime } from '../projects';
-import { state, toast } from '../store';
+import { applyPrList, state, toast } from '../store';
 import { archiveTask, deleteTask, restoreTask } from '../taskActions';
 import type { Task, Worktree } from '../types';
 
@@ -47,6 +49,9 @@ async function removeWorktree(w: Worktree) {
 }
 
 watch(() => [props.projectId, state.tasksVersion], loadTasks, { immediate: true });
+watch(() => props.projectId, (id) => {
+  api.refreshPrs(id).then((l) => applyPrList(state, l, id)).catch(report);
+}, { immediate: true });
 watch(tab, (t) => { if (t === 'worktrees') loadWorktrees(); });
 watch(() => props.projectId, () => { sizes.value = {}; if (tab.value === 'worktrees') loadWorktrees(); });
 </script>
@@ -61,12 +66,14 @@ watch(() => props.projectId, () => { sizes.value = {}; if (tab.value === 'worktr
       <div class="segmented" role="group" aria-label="Filter">
         <button v-for="f in (['all', 'active', 'archived'] as const)" :key="f" :aria-pressed="filter === f" :class="{ active: filter === f }" @click="filter = f">{{ f }}</button>
       </div>
+      <p v-if="state.prErrors[projectId]" class="error">PR status: {{ state.prErrors[projectId] }}</p>
       <table>
-        <thead><tr><th>Task</th><th>Branch</th><th>Created</th><th>Activity</th><th>State</th><th></th></tr></thead>
+        <thead><tr><th>Task</th><th>Branch</th><th>PR</th><th>Created</th><th>Activity</th><th>State</th><th></th></tr></thead>
         <tbody>
           <tr v-for="t in shown" :key="t.id">
             <td>{{ t.title }} <a v-if="t.issue" class="muted" :href="t.issue.url" @click.prevent="openIssue(t.issue.url)">{{ t.issue.key }}</a></td>
             <td class="mono">{{ t.branch }}</td>
+            <td><template v-if="state.prs[t.id]"><PrBadge :pr="state.prs[t.id]!" /> <span class="muted">{{ prSummary(state.prs[t.id]!) }}</span></template></td>
             <td class="muted">{{ relativeTime(t.created_at, now) }}</td>
             <td class="muted">{{ relativeTime(t.last_activity_at, now) }}</td>
             <td>{{ taskState(t, state.sessions) }}</td>

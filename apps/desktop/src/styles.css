@@ -83,3 +83,11 @@ button.primary { background: var(--accent); color: #1d1f27; border-color: var(--
 .repo-list button { display: block; width: 100%; text-align: left; border: 0; border-radius: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .segmented { display: flex; gap: 6px; }
 .segmented button.active { background: var(--select); border-color: var(--accent); }
+
+.pr-badge { flex: none; font-size: 12px; font-weight: 600; text-decoration: none; }
+.pr-draft { color: var(--muted); }
+.pr-pending { color: #d4a72c; }
+.pr-success { color: #2da44e; }
+.pr-failure { color: var(--danger); }
+.pr-merged { color: #8250df; }
+.pr-closed { color: var(--muted); text-decoration: line-through; }
