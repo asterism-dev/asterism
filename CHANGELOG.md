@@ -1,3 +1,9 @@
+## v0.4.0 (2026-10-06)
+
+### Feat
+
+- **desktop**: copy branch name from task menu, drop archive hover button (#7)
+
 ## v0.3.1 (2026-10-06)
 
 ### Fix
