@@ -3,6 +3,7 @@ pub mod manifest;
 pub mod process;
 pub mod registry;
 pub mod settings;
+pub mod source;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;

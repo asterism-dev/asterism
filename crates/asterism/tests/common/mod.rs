@@ -118,3 +118,45 @@ pub fn set_fixture_token(paths: &Paths) {
     let values = [("token".to_string(), serde_json::json!("t"))].into();
     asterism_core::plugins::settings::save(paths, "echo", &manifest.settings, &values).unwrap();
 }
+
+/// A git environment that ignores the user's global config.
+pub fn isolated_git_env() -> Vec<(String, String)> {
+    [
+        ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_AUTHOR_NAME", "t"),
+        ("GIT_AUTHOR_EMAIL", "t@example.com"),
+        ("GIT_COMMITTER_NAME", "t"),
+        ("GIT_COMMITTER_EMAIL", "t@example.com"),
+    ]
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .to_vec()
+}
+
+pub fn commit_all(dir: &Path, message: &str) {
+    run_git(dir, &["add", "-A"]);
+    run_git(dir, &["commit", "-q", "--allow-empty", "-m", message]);
+}
+
+/// A plugin with one static agent `<name>-agent`, so it needs no backend.
+pub fn plugin_manifest(name: &str, version: &str, permissions: &[&str]) -> String {
+    format!(
+        "name = \"{name}\"\nversion = \"{version}\"\nprotocol = 1\ndescription = \"{name} test plugin\"\npermissions = {permissions:?}\n\n[[provides.agent]]\nid = \"{name}-agent\"\nbinary = \"sh\"\nlaunch = \"static\"\nstart = [\"{{binary}}\"]\n"
+    )
+}
+
+pub fn write_plugin(dir: &Path, name: &str, version: &str, permissions: &[&str]) {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join("plugin.toml"), plugin_manifest(name, version, permissions)).unwrap();
+    std::fs::write(dir.join("README.md"), format!("# {name}\n")).unwrap();
+}
+
+/// A git repository at `dir` whose store.json lists `entries`; plugins are written by the caller.
+pub fn store_repo(dir: &Path, store: &str, entries: serde_json::Value) {
+    std::fs::create_dir_all(dir).unwrap();
+    if !dir.join(".git").exists() {
+        run_git(dir, &["init", "-q", "-b", "main"]);
+    }
+    let index = serde_json::json!({ "format": 1, "name": store, "plugins": entries });
+    std::fs::write(dir.join("store.json"), serde_json::to_string_pretty(&index).unwrap()).unwrap();
+}
