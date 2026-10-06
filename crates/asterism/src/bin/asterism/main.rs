@@ -209,7 +209,10 @@ enum TaskCmd {
     #[command(alias = "create")]
     New {
         /// Required unless --issue is given.
+        #[arg(conflicts_with = "title_flag")]
         title: Option<String>,
+        #[arg(long = "title")]
+        title_flag: Option<String>,
         #[arg(long)]
         project: Option<String>,
         #[arg(long)]
@@ -358,7 +361,8 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
             client.call::<_, ()>(method::PROJECT_REMOVE, ProjectIdParams { project_id: id }).await?;
             print_ok(json);
         }
-        Cmd::Task(TaskCmd::New { title, project, agent, prompt, issue }) => {
+        Cmd::Task(TaskCmd::New { title, title_flag, project, agent, prompt, issue }) => {
+            let title = title.or(title_flag);
             let project_id = resolve_project(&client, project).await?;
             let params = match issue {
                 Some(spec) => {

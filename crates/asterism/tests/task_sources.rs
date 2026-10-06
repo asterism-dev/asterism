@@ -171,10 +171,12 @@ async fn odd_names_fall_back_and_invalid_branches_are_rejected() {
     assert_eq!(symbols.branch, "asterism/ech-4");
     let empty = create(&d, project_id, "", issue("%%", "%%", None)).await.unwrap();
     assert_eq!((empty.title.clone(), empty.branch.clone()), (empty.id.to_string(), format!("asterism/{}", empty.id)));
+    let blank = create(&d, project_id, "", issue("ECH-5", "Blank branch", Some(""))).await.unwrap();
+    assert_eq!(blank.branch, "asterism/ech-5-blank-branch");
     for bad in ["bad..branch", "-x", "a@{1}"] {
         let err = create(&d, project_id, "", issue("ECH-3", "Bad branch", Some(bad))).await.unwrap_err();
         assert_eq!(err.kind, ErrorKind::InvalidParams, "{bad}");
     }
     let tasks = d.tasks(TaskListParams { project_id: Some(project_id), include_archived: true }).unwrap();
-    assert_eq!(tasks.len(), 2, "rejected branches leave no task behind");
+    assert_eq!(tasks.len(), 3, "rejected branches leave no task behind");
 }

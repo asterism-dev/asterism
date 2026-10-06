@@ -35,6 +35,10 @@ fn tasks_are_created_from_issues() {
     let titled = node.json(&["task", "new", "Mine", "--issue", "echo-issues:ECH-2", "--prompt", "do it"]);
     assert_eq!((titled["task"]["title"].as_str(), titled["task"]["prompt"].as_str()), (Some("Mine"), Some("do it")));
 
+    let flagged = node.json(&["task", "create", "--issue", "echo-issues:ECH-2", "--title", "Flagged"]);
+    assert_eq!(flagged["task"]["title"], "Flagged");
+    assert!(flagged["task"]["branch"].as_str().unwrap().starts_with("asterism/ech-2"));
+
     assert!(!node.cmd(&["task", "new"]).status.success());
     let bad = node.cmd(&["task", "new", "--issue", "ECH-1"]);
     assert!(String::from_utf8_lossy(&bad.stderr).contains("<source>:<key>"));

@@ -76,9 +76,10 @@ fn run_with_timeout(gh: &Path, args: &[&str], timeout: Duration, dir: Option<&Pa
     if let Some(dir) = dir {
         cmd.current_dir(dir);
     }
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| RpcError::new(ErrorKind::Git, e.to_string()))?;
+    let mut child = cmd.spawn().map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => RpcError::new(ErrorKind::Git, "the GitHub CLI (gh) is not installed"),
+        _ => RpcError::new(ErrorKind::Git, e.to_string()),
+    })?;
     let stdout = read_pipe(child.stdout.take());
     let stderr = read_pipe(child.stderr.take());
     let Some(status) = wait_with_timeout(&mut child, timeout)? else {
@@ -227,6 +228,12 @@ pub fn get_issue(gh: &Path, project: &Path, key: &str) -> Result<Issue, RpcError
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_gh_says_it_is_not_installed() {
+        let err = run_with_timeout(Path::new("/nonexistent/gh"), &["--version"], Duration::from_secs(1), None).unwrap_err();
+        assert_eq!(err.message, "the GitHub CLI (gh) is not installed");
+    }
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
 

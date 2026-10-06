@@ -18,3 +18,9 @@ export function searchParams(query: string): { query: string; assigned_to_me: bo
 export function issueToCreate(d: IssueDetails): TaskIssue {
   return { source: d.source, key: d.key, title: d.title, url: d.url, branch: d.branch || null };
 }
+
+/** Sends '' when the title is still the issue's name, so the daemon derives it (and handles collisions). */
+export function createTitle(title: string, details: IssueDetails | null): string {
+  const trimmed = title.trim();
+  return details && trimmed === details.name ? '' : trimmed;
+}

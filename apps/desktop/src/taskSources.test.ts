@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { issueToCreate, searchParams, sourceOptions } from './taskSources';
+import { createTitle, issueToCreate, searchParams, sourceOptions } from './taskSources';
 import type { IssueDetails, TaskSourceInfo } from './types';
 
 describe('taskSources', () => {
@@ -33,5 +33,13 @@ describe('taskSources', () => {
       source: 'linear', key: 'TRA-1', title: 'Fix', url: 'u', description: '', name: 'tra-1-fix', branch: '', prompt: '# Fix',
     };
     expect(issueToCreate(details).branch).toBeNull();
+  });
+
+  it('sends an empty title while the title is still the issue name', () => {
+    const d = { name: 'tra-1-fix' } as IssueDetails;
+    expect(createTitle(' tra-1-fix ', d)).toBe('');
+    expect(createTitle('My title', d)).toBe('My title');
+    expect(createTitle('', { name: '' } as IssueDetails)).toBe('');
+    expect(createTitle(' Plain ', null)).toBe('Plain');
   });
 });

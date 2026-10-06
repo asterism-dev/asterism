@@ -70,7 +70,7 @@ async fn broken_files_do_not_stop_the_daemon() {
     let (_paths, daemon) = daemon_with_stores(root.path());
     assert!(daemon.store_list().error.is_some());
     let names: Vec<_> = daemon.plugin_list().unwrap().into_iter().map(|p| p.name).collect();
-    assert_eq!(names, ["claude", "github"]);
+    assert_eq!(names, ["claude", "github", "linear"]);
 }
 
 use std::path::{Path, PathBuf};

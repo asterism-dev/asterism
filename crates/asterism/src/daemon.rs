@@ -935,7 +935,8 @@ impl Daemon {
         let origin = git::remote_url(&repo, "origin");
         let (owner, repo_name) = node_settings::layout_owner_repo(origin.as_deref(), &project.name);
         let worktree_root = node_settings::worktrees_dir(&self.paths)?.join(owner).join(repo_name);
-        if let Some(branch) = params.issue.as_ref().and_then(|i| i.branch.as_deref()) {
+        let issue_branch = params.issue.as_ref().and_then(|i| i.branch.as_deref()).filter(|b| !b.is_empty());
+        if let Some(branch) = issue_branch {
             git::check_branch_name(&repo, branch)?;
         }
         let issue_name = params.issue.as_ref().map(|i| issue_name(&i.key, &i.title));
@@ -943,9 +944,9 @@ impl Daemon {
         let title = if derived_title { issue_name.clone().unwrap_or_default() } else { params.title.clone() };
         let id = self.store().insert_task(project.id, &title, params.prompt.as_deref(), &base)?;
         let (slug, branch) = match (&params.issue, issue_name) {
-            (Some(issue), Some(name)) => {
+            (Some(_), Some(name)) => {
                 let name = if name.is_empty() { id.to_string() } else { name };
-                let branch = issue.branch.clone().unwrap_or_else(|| format!("asterism/{name}"));
+                let branch = issue_branch.map_or_else(|| format!("asterism/{name}"), String::from);
                 if git::branch_exists(&repo, &branch) || worktree_root.join(&name).exists() {
                     (format!("{name}-{id}"), format!("{branch}-{id}"))
                 } else {

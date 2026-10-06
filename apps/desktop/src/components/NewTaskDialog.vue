@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, errorMessage, RpcError } from '../api';
 import { leaveSettings } from '../settingsGuard';
 import { addSession, addTask, state } from '../store';
-import { issueToCreate, searchParams, sourceOptions } from '../taskSources';
+import { createTitle, issueToCreate, searchParams, sourceOptions } from '../taskSources';
 import type { IssueDetails, IssueHit, TaskSourceInfo } from '../types';
 
 const props = defineProps<{ projectId: number }>();
@@ -118,7 +118,7 @@ async function submit() {
     error.value = 'Pick an issue.';
     return;
   }
-  if (!title.value.trim()) {
+  if (!details.value && !title.value.trim()) {
     error.value = 'Give the task a title.';
     return;
   }
@@ -127,7 +127,7 @@ async function submit() {
     if (!(await leaveSettings())) return;
     const created = await api.createTask({
       project_id: projectId.value,
-      title: title.value.trim(),
+      title: createTitle(title.value, details.value),
       prompt: (agent.value && prompt.value.trim()) || null,
       agent: agent.value || null,
       issue: details.value && source.value ? issueToCreate(details.value) : null,
@@ -166,9 +166,11 @@ async function submit() {
           <button v-if="searchError.setup && searchError.plugin" type="button" @click="openSettings(searchError.plugin)">Open settings</button>
         </p>
         <ul v-else class="issue-list">
-          <li v-for="h in hits" :key="h.key" :class="{ selected: details?.key === h.key }" @click="pick(h)">
-            <span class="mono">{{ h.key }}</span> <span class="name">{{ h.title }}</span>
-            <span class="muted">{{ h.state }}<template v-if="h.assignee"> · {{ h.assignee }}</template></span>
+          <li v-for="h in hits" :key="h.key" :class="{ selected: details?.key === h.key }">
+            <button type="button" class="issue-row" @click="pick(h)">
+              <span class="mono">{{ h.key }}</span> <span class="name">{{ h.title }}</span>
+              <span class="muted">{{ h.state }}<template v-if="h.assignee"> · {{ h.assignee }}</template></span>
+            </button>
           </li>
           <li v-if="!hits.length && !searching" class="muted">No issues.</li>
         </ul>
@@ -198,7 +200,9 @@ async function submit() {
 
 <style scoped>
 .issue-list { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
-.issue-list li { display: flex; gap: 8px; align-items: baseline; padding: 4px 8px; cursor: pointer; }
+.issue-list li { display: flex; }
+.issue-row { all: unset; box-sizing: border-box; flex: 1; display: flex; gap: 8px; align-items: baseline; padding: 4px 8px; cursor: pointer; min-width: 0; }
+.issue-row:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: -2px; }
 .issue-list li .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .issue-list li:hover, .issue-list li.selected { background: var(--select); }
 </style>
