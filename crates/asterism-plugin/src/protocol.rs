@@ -100,6 +100,8 @@ pub struct PrepareParams {
     pub prompt: Option<String>,
     pub agent_ref: Option<String>,
     pub settings: LaunchSettings,
+    /// Absolute path of the worktree the agent runs in.
+    pub cwd: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

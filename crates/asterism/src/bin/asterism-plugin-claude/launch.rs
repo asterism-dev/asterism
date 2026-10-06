@@ -7,6 +7,7 @@ use serde_json::{json, Map, Value};
 
 const STATUS_HOOKS: &[(&str, &str)] =
     &[("UserPromptSubmit", "prompt-submit"), ("PreToolUse", "tool"), ("Stop", "stop"), ("Notification", "notification")];
+const TRUST_FLAGS: [&str; 2] = ["hasTrustDialogAccepted", "hasCompletedProjectOnboarding"];
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Claude settings passed via `--settings`, so the user's own config is never modified.
@@ -50,6 +51,27 @@ fn write_atomic(path: &Path, contents: &str) -> Result<(), RpcError> {
     result.map_err(io_error)
 }
 
+/// Marks `cwd` trusted in Claude's global config, the same entry its folder trust prompt writes.
+pub fn trust_workspace(config: &Path, cwd: &str) -> Result<(), RpcError> {
+    let not_object = || RpcError::new(ErrorKind::Internal, format!("refusing to modify {}: unexpected structure", config.display()));
+    let mut root: Value = match std::fs::read_to_string(config) {
+        Ok(text) => serde_json::from_str(&text)
+            .map_err(|e| RpcError::new(ErrorKind::Internal, format!("refusing to modify {}: {e}", config.display())))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(e) => return Err(io_error(e)),
+    };
+    let projects = root.as_object_mut().ok_or_else(not_object)?.entry("projects").or_insert_with(|| json!({}));
+    let project = projects.as_object_mut().ok_or_else(not_object)?.entry(cwd).or_insert_with(|| json!({}));
+    let project = project.as_object_mut().ok_or_else(not_object)?;
+    if TRUST_FLAGS.iter().all(|flag| project.get(*flag) == Some(&Value::Bool(true))) {
+        return Ok(());
+    }
+    for flag in TRUST_FLAGS {
+        project.insert(flag.to_string(), Value::Bool(true));
+    }
+    write_atomic(config, &serde_json::to_string_pretty(&root).map_err(|e| RpcError::new(ErrorKind::Internal, e.to_string()))?)
+}
+
 pub fn prepare(data_dir: &Path, exe: &Path, p: &PrepareParams) -> Result<PrepareResult, RpcError> {
     let settings = data_dir.join("claude-settings.json");
     write_atomic(&settings, &merged_settings(exe, p.settings.hooks.as_ref()).to_string())?;
@@ -82,7 +104,7 @@ mod tests {
     const EXE: &str = "/opt/asterism/asterism-plugin-claude";
 
     fn params(mode: LaunchMode, prompt: Option<&str>, agent_ref: Option<&str>, settings: LaunchSettings) -> PrepareParams {
-        PrepareParams { agent: "claude".into(), mode, prompt: prompt.map(String::from), agent_ref: agent_ref.map(String::from), settings }
+        PrepareParams { agent: "claude".into(), mode, prompt: prompt.map(String::from), agent_ref: agent_ref.map(String::from), settings, cwd: "/w".into() }
     }
 
     #[test]
@@ -118,5 +140,23 @@ mod tests {
         let written: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(written, status_settings(Path::new(EXE)));
         assert!(prepare(dir.path(), Path::new(EXE), &params(LaunchMode::Resume, None, None, LaunchSettings::default())).is_err());
+    }
+
+    #[test]
+    fn trust_workspace_adds_flags_and_keeps_the_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join(".claude.json");
+        trust_workspace(&config, "/w/a").unwrap();
+        let read = || serde_json::from_str::<Value>(&std::fs::read_to_string(&config).unwrap()).unwrap();
+        assert_eq!(read()["projects"]["/w/a"], json!({"hasTrustDialogAccepted": true, "hasCompletedProjectOnboarding": true}));
+
+        std::fs::write(&config, r#"{"userID": "u", "projects": {"/w/b": {"allowedTools": ["x"], "hasTrustDialogAccepted": false}}}"#).unwrap();
+        trust_workspace(&config, "/w/b").unwrap();
+        assert_eq!(read()["userID"], "u");
+        assert_eq!(read()["projects"]["/w/b"], json!({"allowedTools": ["x"], "hasTrustDialogAccepted": true, "hasCompletedProjectOnboarding": true}));
+
+        std::fs::write(&config, "{ not json").unwrap();
+        assert!(trust_workspace(&config, "/w/c").is_err());
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), "{ not json");
     }
 }

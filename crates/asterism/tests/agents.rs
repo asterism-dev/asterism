@@ -18,13 +18,13 @@ fn daemon(home: &std::path::Path) -> std::sync::Arc<Daemon> {
 async fn claude_argv_comes_from_the_claude_plugin() {
     let home = tempfile::tempdir().unwrap();
     let daemon = daemon(home.path());
-    let (argv, _env) = daemon.agent_argv("claude", LaunchMode::Start, Some("fix it"), None).await.unwrap().unwrap();
+    let (argv, _env) = daemon.agent_argv("claude", LaunchMode::Start, Some("fix it"), None, home.path()).await.unwrap().unwrap();
     let settings = home.path().join("h/plugins/data/claude/claude-settings.json");
     assert_eq!(argv[..3], ["claude".to_string(), "--settings".into(), settings.display().to_string()]);
     assert_eq!(argv[argv.len() - 2..], ["--".to_string(), "fix it".into()]);
     let written = std::fs::read_to_string(&settings).unwrap();
     assert!(written.contains("asterism-plugin-claude") && written.contains("hook stop"), "{written}");
-    assert_eq!(daemon.agent_argv("claude", LaunchMode::Resume, None, None).await.unwrap(), None);
+    assert_eq!(daemon.agent_argv("claude", LaunchMode::Resume, None, None, home.path()).await.unwrap(), None);
 }
 
 #[tokio::test]
@@ -70,7 +70,7 @@ async fn static_agents_start_from_their_template_with_configured_args() {
 async fn claude_resume_argv_ends_with_the_agent_ref() {
     let home = tempfile::tempdir().unwrap();
     let daemon = daemon(home.path());
-    let (argv, _env) = daemon.agent_argv("claude", LaunchMode::Resume, None, Some("abc")).await.unwrap().unwrap();
+    let (argv, _env) = daemon.agent_argv("claude", LaunchMode::Resume, None, Some("abc"), home.path()).await.unwrap().unwrap();
     assert_eq!(argv[argv.len() - 2..], ["--resume".to_string(), "abc".into()]);
 }
 

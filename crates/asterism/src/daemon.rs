@@ -1179,6 +1179,7 @@ impl Daemon {
         mode: LaunchMode,
         prompt: Option<&str>,
         agent_ref: Option<&str>,
+        cwd: &Path,
     ) -> Result<Option<(Vec<String>, Vec<(String, String)>)>> {
         let (plugin, decl) = self.agent_decl(name)?;
         let settings = agent_settings::launch_settings(&self.paths, name, mode == LaunchMode::Resume)?;
@@ -1194,6 +1195,7 @@ impl Daemon {
                     prompt: prompt.map(String::from),
                     agent_ref: agent_ref.map(String::from),
                     settings,
+                    cwd: cwd.display().to_string(),
                 };
                 let params = serde_json::to_value(params).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
                 let reply = self.plugin_call(&plugin, protocol::method::AGENT_PREPARE, params, Some(self.call_timeout())).await?;
@@ -1215,7 +1217,7 @@ impl Daemon {
         let (argv, extra_env) = match &params.kind {
             SessionKind::Agent { name } => {
                 self.ensure_agent_available(name)?;
-                let launched = self.agent_argv(name, LaunchMode::Start, params.prompt.as_deref(), None).await?;
+                let launched = self.agent_argv(name, LaunchMode::Start, params.prompt.as_deref(), None, Path::new(&task.worktree_path)).await?;
                 launched.ok_or_else(|| Error::new(ErrorKind::PluginError, format!("agent {name} has no start command")))?
             }
             SessionKind::Shell => (vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())], Vec::new()),
@@ -1455,7 +1457,7 @@ impl Daemon {
             let resumed = match self.task(session.task_id) {
                 Ok(task) if !task.archived => {
                     let resume = match &session.kind {
-                        SessionKind::Agent { name } => self.agent_argv(name, LaunchMode::Resume, None, agent_ref.as_deref()).await,
+                        SessionKind::Agent { name } => self.agent_argv(name, LaunchMode::Resume, None, agent_ref.as_deref(), Path::new(&task.worktree_path)).await,
                         _ => Ok(None),
                     };
                     match resume {
