@@ -13,6 +13,7 @@ use crate::git::{clone_env, truncate, GitEnv};
 
 pub const NETWORK_TIMEOUT: Duration = Duration::from_secs(120);
 pub const README_LIMIT: usize = 64 * 1024;
+const INDEX_LIMIT: u64 = 4 * 1024 * 1024;
 
 fn invalid(message: String) -> Error {
     Error::new(ErrorKind::InvalidParams, message)
@@ -44,8 +45,14 @@ fn git_timed(dir: Option<&Path>, args: &[&str], env: &GitEnv, timeout: Duration)
     let (stdout, stderr) = (read_pipe(child.stdout.take()), read_pipe(child.stderr.take()));
     let deadline = Instant::now() + timeout;
     let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(e.into());
+            }
         }
         if Instant::now() >= deadline {
             let _ = child.kill();
@@ -76,9 +83,26 @@ pub fn refresh_store(dir: &Path, env: &GitEnv) -> Result<()> {
     git_local(dir, &["reset", "-q", "--hard", "FETCH_HEAD"], env).map(|_| ())
 }
 
+/// Reads at most `limit` bytes of a regular file; symlinks and special files are refused.
+fn read_regular(path: &Path, limit: u64) -> Option<Vec<u8>> {
+    if !std::fs::symlink_metadata(path).ok()?.is_file() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path).ok()?.take(limit).read_to_end(&mut bytes).ok()?;
+    Some(bytes)
+}
+
 pub fn read_index(dir: &Path) -> Result<StoreIndex> {
     let path = dir.join("store.json");
-    let text = std::fs::read_to_string(&path).map_err(|e| invalid(format!("cannot read {}: {e}", path.display())))?;
+    if !std::fs::symlink_metadata(&path).map(|m| m.is_file()).unwrap_or(false) {
+        return Err(invalid("store.json must be a regular file".to_string()));
+    }
+    let bytes = read_regular(&path, INDEX_LIMIT + 1).ok_or_else(|| invalid(format!("cannot read {}", path.display())))?;
+    if bytes.len() as u64 > INDEX_LIMIT {
+        return Err(invalid("store.json is too large".to_string()));
+    }
+    let text = String::from_utf8(bytes).map_err(|_| invalid("store.json is not valid UTF-8".to_string()))?;
     parse_index(&text).map_err(|e| invalid(format!("{}: {e}", path.display())))
 }
 
@@ -95,26 +119,41 @@ pub fn checkout_git(cache: &Path, url: &str, git_ref: &str, env: &GitEnv) -> Res
         return Err(invalid(format!("invalid ref {git_ref:?}")));
     }
     let dir = cache.join(cache_key(url));
-    if dir.join(".git").exists() {
+    let reusable = dir.join(".git").exists()
+        && git_local(&dir, &["config", "--get", "remote.origin.url"], env).map(|u| u.trim() == url).unwrap_or(false);
+    if reusable {
         git_local(&dir, &["fetch", "-q", "--tags", "--force", "--prune", "origin"], env)?;
     } else {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(cache)?;
         git_timed(None, &["clone", "-q", "--no-checkout", "--", url, &dir.to_string_lossy()], env, NETWORK_TIMEOUT)?;
     }
-    if git_local(&dir, &["show-ref", "--verify", "--quiet", &format!("refs/remotes/origin/{git_ref}")], env).is_ok() {
+    let target = if git_local(&dir, &["show-ref", "--verify", "--quiet", &format!("refs/tags/{git_ref}")], env).is_ok() {
+        format!("refs/tags/{git_ref}^{{commit}}")
+    } else if is_full_sha(git_ref) {
+        format!("{git_ref}^{{commit}}")
+    } else if git_local(&dir, &["show-ref", "--verify", "--quiet", &format!("refs/remotes/origin/{git_ref}")], env).is_ok() {
         return Err(invalid(format!("ref {git_ref} is a branch; store entries must pin a tag or commit")));
-    }
-    let commit = format!("{git_ref}^{{commit}}");
-    git_local(&dir, &["rev-parse", "--verify", "--quiet", &commit], env).map_err(|_| invalid(format!("unknown ref {git_ref} in {url}")))?;
-    git_local(&dir, &["checkout", "-q", "--force", "--detach", &commit], env)?;
+    } else {
+        return Err(invalid(format!("ref {git_ref} must be a tag or a full commit SHA")));
+    };
+    let commit = git_local(&dir, &["rev-parse", "--verify", "--quiet", &target], env)
+        .map_err(|_| invalid(format!("unknown ref {git_ref} in {url}")))?;
+    git_local(&dir, &["checkout", "-q", "--force", "--detach", commit.trim()], env)?;
     Ok(dir)
+}
+
+fn is_full_sha(s: &str) -> bool {
+    s.len() == 40 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// `rel` inside `root`, with symlinks resolved, so an entry can never point outside its checkout.
 pub fn plugin_dir(root: &Path, rel: &str) -> Result<PathBuf> {
     if !safe_relative(rel) {
         return Err(invalid(format!("plugin path {rel:?} must be relative and stay inside the store")));
+    }
+    if rel.split('/').any(|c| c == ".git") {
+        return Err(invalid(format!("plugin path {rel:?} must not point into .git")));
     }
     let root = root.canonicalize()?;
     let dir = root.join(rel).canonicalize().map_err(|e| invalid(format!("plugin path {rel:?}: {e}")))?;
@@ -146,7 +185,8 @@ pub fn copy_tree(from: &Path, to: &Path) -> Result<()> {
 }
 
 pub fn readme(dir: &Path) -> Option<String> {
-    let mut text = std::fs::read_to_string(dir.join("README.md")).ok()?;
+    let bytes = read_regular(&dir.join("README.md"), README_LIMIT as u64 + 4)?;
+    let mut text = String::from_utf8_lossy(&bytes).into_owned();
     if text.len() > README_LIMIT {
         let mut cut = README_LIMIT;
         while !text.is_char_boundary(cut) {

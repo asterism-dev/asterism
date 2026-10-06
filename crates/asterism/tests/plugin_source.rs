@@ -57,6 +57,28 @@ fn git_refs_must_be_tags_or_commits() {
     let err = checkout_git(&cache, &url(&repo), "main", &env).unwrap_err();
     assert!(err.message.contains("branch"), "{}", err.message);
     assert_eq!(checkout_git(&cache, &url(&repo), "v9", &env).unwrap_err().kind, ErrorKind::InvalidParams);
+    for bad in ["origin/main", "refs/heads/main", "main~0", "main@{0}", "-x", &sha[..12]] {
+        assert_eq!(checkout_git(&cache, &url(&repo), bad, &env).unwrap_err().kind, ErrorKind::InvalidParams, "{bad}");
+    }
+}
+
+#[test]
+fn cache_dir_for_another_remote_is_recloned() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    run_git(&repo, &["init", "-q", "-b", "main"]);
+    write_plugin(&repo, "one", "1.0.0", &[]);
+    commit_all(&repo, "v1");
+    run_git(&repo, &["tag", "v1"]);
+    let cache = root.path().join("cache");
+    let env = isolated_git_env();
+    let dir = checkout_git(&cache, &url(&repo), "v1", &env).unwrap();
+    run_git(&dir, &["remote", "set-url", "origin", "file:///nonexistent"]);
+    std::fs::write(dir.join("stale"), "x").unwrap();
+    let dir = checkout_git(&cache, &url(&repo), "v1", &env).unwrap();
+    assert!(!dir.join("stale").exists());
+    assert!(dir.join("plugin.toml").exists());
 }
 
 #[test]
@@ -68,7 +90,7 @@ fn plugin_dir_rejects_escapes() {
     std::fs::create_dir_all(&outside).unwrap();
     symlink(&outside, store.join("plugins/sneaky")).unwrap();
     assert!(plugin_dir(&store, "plugins/ok").unwrap().ends_with("plugins/ok"));
-    for bad in ["../outside", "/etc", "plugins/sneaky", "plugins/missing"] {
+    for bad in ["../outside", "/etc", "plugins/sneaky", "plugins/missing", "plugins/ok/.git", ".git"] {
         assert_eq!(plugin_dir(&store, bad).unwrap_err().kind, ErrorKind::InvalidParams, "{bad}");
     }
 }
@@ -90,4 +112,26 @@ fn copy_skips_git_and_refuses_symlinks() {
     assert_eq!(readme(&from).as_deref(), Some("# one\n"));
     std::fs::write(from.join("README.md"), "x".repeat(README_LIMIT + 10)).unwrap();
     assert_eq!(readme(&from).unwrap().len(), README_LIMIT);
+}
+
+#[test]
+fn symlinked_files_are_not_read() {
+    let root = tempfile::tempdir().unwrap();
+    let secret = root.path().join("secret");
+    std::fs::write(&secret, "{}").unwrap();
+    let dir = root.path().join("d");
+    std::fs::create_dir_all(&dir).unwrap();
+    symlink(&secret, dir.join("README.md")).unwrap();
+    symlink(&secret, dir.join("store.json")).unwrap();
+    assert!(readme(&dir).is_none());
+    assert!(read_index(&dir).unwrap_err().message.contains("regular file"));
+}
+
+#[test]
+fn readme_truncates_on_char_boundary() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("README.md"), "é".repeat(README_LIMIT)).unwrap();
+    let text = readme(root.path()).unwrap();
+    assert_eq!(text.len(), README_LIMIT);
+    assert!(text.chars().all(|c| c == 'é'));
 }
