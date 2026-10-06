@@ -15,8 +15,8 @@ const SNIFF_BYTES: usize = 8 * 1024;
 pub fn read(worktree: &Path, home: Option<&Path>, path: &str, known_mtime: Option<i64>) -> Result<TaskFileResult> {
     let full = fs::canonicalize(resolve(worktree, home, path)?).map_err(|e| io_error(path, e))?;
     let meta = fs::metadata(&full).map_err(|e| io_error(path, e))?;
-    if meta.is_dir() {
-        return Err(invalid(format!("{path} is a directory")));
+    if !meta.is_file() {
+        return Err(invalid(format!("{path} is not a regular file")));
     }
     if meta.len() > MAX_BYTES {
         return Err(invalid(format!("{path} is larger than 2 MB")));
@@ -133,6 +133,13 @@ mod tests {
             let err = read(worktree.path(), None, path, None).unwrap_err();
             assert_eq!(err.kind, ErrorKind::InvalidParams, "{path}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_device_files() {
+        let worktree = tempfile::tempdir().unwrap();
+        assert_eq!(read(worktree.path(), None, "/dev/null", None).unwrap_err().kind, ErrorKind::InvalidParams);
     }
 
     #[test]
