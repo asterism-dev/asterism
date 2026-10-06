@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { Channel } from '@tauri-apps/api/core';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
@@ -91,6 +93,10 @@ onMounted(() => {
   fit = new FitAddon();
   term.loadAddon(fit);
   term.open(el.value);
+  // Modifier-click keeps plain clicks free for focus, selection and TUI mouse input.
+  term.loadAddon(new WebLinksAddon((e, uri) => {
+    if (e.metaKey || e.ctrlKey) openUrl(uri).catch((err) => toast(errorMessage(err)));
+  }));
   // Linux app shortcuts are Ctrl+Shift chords xterm would otherwise consume.
   term.attachCustomKeyEventHandler((e) => appShortcut(e) === null);
   try {
