@@ -200,3 +200,142 @@ async fn existing_target_directory_is_left_untouched() {
     assert_eq!(err.kind, ErrorKind::InvalidParams);
     assert_eq!(std::fs::read_to_string(dir.join("marker")).unwrap(), "mine");
 }
+
+fn push_commit(origin: &str, dir: &Path, file: &str) {
+    let work = dir.join(format!("pusher-{file}"));
+    run_git(dir, &["clone", "-q", origin, &work.display().to_string()]);
+    std::fs::write(work.join(file), "new\n").unwrap();
+    run_git(&work, &["add", "."]);
+    run_git(&work, &["commit", "-q", "-m", file]);
+    run_git(&work, &["push", "-q", "origin", "HEAD:main"]);
+}
+
+fn create(env: &Env, project_id: i64, title: &str, base: Option<&str>) -> asterism_core::error::Result<TaskCreateResult> {
+    env.daemon.create_task(TaskCreateParams {
+        project_id,
+        title: title.into(),
+        prompt: None,
+        agent: None,
+        base: base.map(Into::into),
+    })
+}
+
+fn has_upstream(repo: &Path, branch: &str) -> bool {
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--abbrev-ref", &format!("{branch}@{{upstream}}")])
+        .output()
+        .unwrap()
+        .status
+        .success()
+}
+
+#[tokio::test]
+async fn task_starts_from_fetched_origin_without_touching_local_main() {
+    let env = setup(false);
+    let url = bare_origin(env.home.path());
+    let project = env.daemon.clone_project(&url).unwrap();
+    let repo = Path::new(&project.path);
+    push_commit(&url, env.home.path(), "remote.txt");
+    let local_main = run_git(repo, &["rev-parse", "main"]);
+
+    let branches = env.daemon.project_branches(project.id).unwrap();
+    assert_eq!(branches.fetch_error, None);
+    assert_eq!(branches.default.as_deref(), Some("origin/main"));
+    assert_eq!(branches.automatic.as_deref(), Some("origin/main"));
+    assert!(branches.branches.contains(&"main".to_string()), "{:?}", branches.branches);
+    assert!(branches.branches.contains(&"origin/main".to_string()), "{:?}", branches.branches);
+    assert!(!branches.branches.iter().any(|b| b.ends_with("HEAD")), "{:?}", branches.branches);
+
+    let task = create(&env, project.id, "t", None).unwrap().task;
+    assert_eq!(task.base_branch, "origin/main");
+    assert!(Path::new(&task.worktree_path).join("remote.txt").exists());
+    assert_eq!(run_git(repo, &["rev-parse", "main"]), local_main);
+    assert!(!has_upstream(repo, &task.branch));
+}
+
+#[tokio::test]
+async fn explicit_base_is_used_and_bad_bases_leave_no_task() {
+    let env = setup(false);
+    let url = bare_origin(env.home.path());
+    let project = env.daemon.clone_project(&url).unwrap();
+    let repo = Path::new(&project.path);
+    run_git(repo, &["checkout", "-q", "-b", "feature"]);
+    std::fs::write(repo.join("feature.txt"), "f\n").unwrap();
+    run_git(repo, &["add", "."]);
+    run_git(repo, &["commit", "-q", "-m", "feature"]);
+    run_git(repo, &["checkout", "-q", "main"]);
+
+    let task = create(&env, project.id, "on feature", Some("feature")).unwrap().task;
+    assert_eq!(task.base_branch, "feature");
+    assert!(Path::new(&task.worktree_path).join("feature.txt").exists());
+
+    let blank = create(&env, project.id, "blank base", Some("  ")).unwrap().task;
+    assert_eq!(blank.base_branch, "origin/main");
+
+    for bad in ["nope", "--orphan"] {
+        let err = create(&env, project.id, "bad", Some(bad)).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Git, "{bad}");
+        assert!(err.message.contains(bad), "{}", err.message);
+    }
+    let tasks = env.daemon.tasks(TaskListParams { project_id: Some(project.id), include_archived: true }).unwrap();
+    assert_eq!(tasks.len(), 2);
+}
+
+#[tokio::test]
+async fn empty_repository_gives_clear_error_and_no_task() {
+    let env = setup(false);
+    let repo = env.home.path().join("empty");
+    std::fs::create_dir_all(&repo).unwrap();
+    run_git(&repo, &["init", "-q", "-b", "main"]);
+    let project = env.daemon.add_project(&repo.display().to_string()).unwrap();
+
+    let branches = env.daemon.project_branches(project.id).unwrap();
+    assert_eq!((branches.default, branches.fetch_error), (None, None));
+    assert!(branches.branches.is_empty());
+
+    let err = create(&env, project.id, "t", None).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::Git);
+    assert!(err.message.contains("no commits yet"), "{}", err.message);
+    assert!(env.daemon.tasks(TaskListParams { project_id: Some(project.id), include_archived: true }).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn configured_default_base_is_used_until_it_disappears() {
+    let env = setup(false);
+    let url = bare_origin(env.home.path());
+    let project = env.daemon.clone_project(&url).unwrap();
+    let repo = Path::new(&project.path);
+    run_git(repo, &["branch", "develop"]);
+
+    let updated = env.daemon.update_project(ProjectUpdateParams { project_id: project.id, default_base: Some("develop".into()) }).unwrap();
+    assert_eq!(updated.default_base.as_deref(), Some("develop"));
+    let branches = env.daemon.project_branches(project.id).unwrap();
+    assert_eq!((branches.default.as_deref(), branches.configured.as_deref()), (Some("develop"), Some("develop")));
+    assert_eq!(branches.automatic.as_deref(), Some("origin/main"));
+    assert_eq!(create(&env, project.id, "t", None).unwrap().task.base_branch, "develop");
+
+    run_git(repo, &["branch", "-D", "develop"]);
+    let branches = env.daemon.project_branches(project.id).unwrap();
+    assert_eq!((branches.default.as_deref(), branches.configured.as_deref()), (Some("origin/main"), Some("develop")));
+    assert_eq!(create(&env, project.id, "t2", None).unwrap().task.base_branch, "origin/main");
+
+    let cleared = env.daemon.update_project(ProjectUpdateParams { project_id: project.id, default_base: None }).unwrap();
+    assert_eq!(cleared.default_base, None);
+}
+
+#[tokio::test]
+async fn fetch_failure_is_reported_and_missing_origin_head_falls_back() {
+    let env = setup(false);
+    let url = bare_origin(env.home.path());
+    let project = env.daemon.clone_project(&url).unwrap();
+    let repo = Path::new(&project.path);
+    run_git(repo, &["remote", "set-head", "origin", "-d"]);
+    run_git(repo, &["remote", "set-url", "origin", "file:///definitely/missing/repo.git"]);
+
+    let branches = env.daemon.project_branches(project.id).unwrap();
+    assert!(branches.fetch_error.is_some());
+    assert_eq!(branches.default.as_deref(), Some("origin/main"));
+    assert!(!branches.branches.is_empty());
+}

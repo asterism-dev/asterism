@@ -145,6 +145,32 @@ impl Daemon {
         Ok(())
     }
 
+    pub fn project_branches(&self, project_id: i64) -> Result<ProjectBranches> {
+        let project = self.store().project(project_id)?.ok_or_else(|| not_found("project", project_id))?;
+        let repo = PathBuf::from(&project.path);
+        let fetch_error = git::remote_url(&repo, "origin")
+            .and_then(|_| git::fetch(&repo, "origin", &self.options.git_env).err())
+            .map(|e| e.message);
+        Ok(ProjectBranches {
+            branches: git::branches(&repo)?,
+            default: default_base(&repo, &project),
+            automatic: automatic_base(&repo),
+            configured: project.default_base,
+            fetch_error,
+        })
+    }
+
+    pub fn update_project(&self, params: ProjectUpdateParams) -> Result<Project> {
+        let base = params.default_base.as_deref().map(str::trim).filter(|b| !b.is_empty());
+        let project = {
+            let store = self.store();
+            store.set_project_default_base(params.project_id, base)?;
+            store.project(params.project_id)?.ok_or_else(|| not_found("project", params.project_id))?
+        };
+        self.emit(Event::ProjectChanged(project.clone()));
+        Ok(project)
+    }
+
     pub fn node_config(&self) -> Result<NodeConfigInfo> {
         node_settings::load(&self.paths)
     }
@@ -236,7 +262,17 @@ impl Daemon {
         }
         let project = self.store().project(params.project_id)?.ok_or_else(|| not_found("project", params.project_id))?;
         let repo = PathBuf::from(&project.path);
-        let base = git::base_ref(&repo)?;
+        let base = match params.base.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+            Some(base) if git::resolves(&repo, base) => base.to_string(),
+            Some(base) => {
+                return Err(Error::new(
+                    ErrorKind::Git,
+                    format!("base `{base}` does not point to a commit — the repository may have no commits yet"),
+                ))
+            }
+            None => default_base(&repo, &project)
+                .ok_or_else(|| Error::new(ErrorKind::Git, "repository has no commits yet — create an initial commit first"))?,
+        };
         let origin = git::remote_url(&repo, "origin");
         let (owner, repo_name) = node_settings::layout_owner_repo(origin.as_deref(), &project.name);
         let worktree_root = node_settings::worktrees_dir(&self.paths)?.join(owner).join(repo_name);
@@ -715,6 +751,19 @@ async fn write_blocking(pty: &Arc<Pty>, data: Vec<u8>) -> Result<()> {
 
 fn not_found(what: &str, id: i64) -> Error {
     Error::new(ErrorKind::NotFound, format!("{what} {id} not found"))
+}
+
+/// origin's default branch, else the checked-out branch; `None` when nothing points to a commit.
+fn automatic_base(repo: &Path) -> Option<String> {
+    git::remote_head(repo, "origin")
+        .into_iter()
+        .chain(["origin/main".to_string(), "origin/master".to_string()])
+        .chain(git::base_ref(repo).ok())
+        .find(|b| git::resolves(repo, b))
+}
+
+fn default_base(repo: &Path, project: &Project) -> Option<String> {
+    project.default_base.clone().filter(|b| git::resolves(repo, b)).or_else(|| automatic_base(repo))
 }
 
 pub fn slugify(id: i64, title: &str) -> String {

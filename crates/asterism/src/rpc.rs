@@ -208,6 +208,12 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
             })
             .await
         }
+        method::PROJECT_BRANCHES => {
+            let daemon = daemon.clone();
+            let id = params::<ProjectIdParams>(raw)?.project_id;
+            blocking(move || to_value(daemon.project_branches(id)?)).await
+        }
+        method::PROJECT_UPDATE => to_value(daemon.update_project(params(raw)?)?),
         method::GITHUB_STATUS => {
             let daemon = daemon.clone();
             blocking(move || to_value(daemon.github_status())).await

@@ -37,7 +37,7 @@ pub fn base_ref(repo: &Path) -> Result<String> {
 
 pub fn add_worktree(repo: &Path, branch: &str, path: &Path, base: &str) -> Result<()> {
     let path = path.to_string_lossy();
-    git(repo, &["worktree", "add", "-q", "-b", branch, &path, base]).map(|_| ()).map_err(|e| {
+    git(repo, &["worktree", "add", "-q", "--no-track", "-b", branch, &path, base]).map(|_| ()).map_err(|e| {
         if e.message.contains("already exists") {
             Error::new(ErrorKind::BranchExists, e.message)
         } else {
@@ -62,6 +62,29 @@ pub fn remove_worktree(repo: &Path, worktree: &Path, force: bool) -> Result<()> 
 
 pub fn branch_exists(repo: &Path, branch: &str) -> bool {
     git(repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).is_ok()
+}
+
+pub fn resolves(repo: &Path, rev: &str) -> bool {
+    // A leading dash would be parsed as an option by git.
+    !rev.starts_with('-') && git(repo, &["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")]).is_ok()
+}
+
+/// `refs/heads` and `refs/remotes` as short names, without the symbolic `<remote>/HEAD`.
+pub fn branches(repo: &Path) -> Result<Vec<String>> {
+    let out = git(repo, &["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"])?;
+    Ok(out
+        .lines()
+        .filter(|r| !r.ends_with("/HEAD"))
+        .filter_map(|r| r.strip_prefix("refs/heads/").or_else(|| r.strip_prefix("refs/remotes/")))
+        .map(String::from)
+        .collect())
+}
+
+pub fn remote_head(repo: &Path, remote: &str) -> Option<String> {
+    git(repo, &["symbolic-ref", "--quiet", "--short", &format!("refs/remotes/{remote}/HEAD")])
+        .ok()
+        .map(|r| r.trim().to_string())
+        .filter(|r| !r.is_empty())
 }
 
 /// Commits on `branch` that are not on `base`; 0 when either is missing.
@@ -157,6 +180,10 @@ pub fn remote_url(repo: &Path, remote: &str) -> Option<String> {
 pub fn clone_url(url: &str, target: &Path, extra: &GitEnv) -> Result<()> {
     let target = target.to_string_lossy();
     run_with_env(None, &["clone", "-q", "--", url, &target], &clone_env(extra)).map(|_| ())
+}
+
+pub fn fetch(repo: &Path, remote: &str, extra: &GitEnv) -> Result<()> {
+    run_with_env(Some(repo), &["fetch", "-q", "--prune", remote], &clone_env(extra)).map(|_| ())
 }
 
 pub fn init_with_readme(dir: &Path, name: &str, extra: &GitEnv) -> Result<()> {

@@ -338,3 +338,21 @@ async fn project_and_path_methods_are_routed() {
     let err = client.call::<_, ProjectCreateResult>(method::PROJECT_CREATE, ProjectCreateParams { name: "../x".into(), github: None }).await.unwrap_err();
     assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
 }
+
+#[tokio::test]
+async fn project_branches_and_update_over_rpc() {
+    let (_home, socket) = start_daemon().await;
+    let repo = tempfile::tempdir().unwrap();
+    init_repo(repo.path());
+    let client = client(&socket).await;
+    let project: Project =
+        client.call(method::PROJECT_ADD, ProjectAddParams { path: repo.path().display().to_string() }).await.unwrap();
+    let branches: ProjectBranches =
+        client.call(method::PROJECT_BRANCHES, ProjectIdParams { project_id: project.id }).await.unwrap();
+    assert_eq!(branches.default.as_deref(), Some("main"));
+    let updated: Project = client
+        .call(method::PROJECT_UPDATE, ProjectUpdateParams { project_id: project.id, default_base: Some("main".into()) })
+        .await
+        .unwrap();
+    assert_eq!(updated.default_base.as_deref(), Some("main"));
+}
