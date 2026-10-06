@@ -1040,6 +1040,9 @@ impl Daemon {
             return Ok(self.pr_list(Some(project_id)));
         };
         let result = self.poll_project(&project).await;
+        if self.store().project(project_id)?.is_none() {
+            return Ok(PrList::default());
+        }
         let mut status = lock(&self.pr_status);
         status.polled.insert(project_id, unix_now());
         match result {
@@ -1074,9 +1077,11 @@ impl Daemon {
                 (asked, reply)
             }
         };
-        // Re-read after the await so a task archived or deleted meanwhile is not re-inserted.
+        // Re-read under the pr_status lock so a concurrent archive/delete cannot be undone by the merge.
+        let mut status = lock(&self.pr_status);
         let tasks: Vec<(i64, String)> = self.store().tasks(Some(project.id), false)?.into_iter().map(|t| (t.id, t.branch)).collect();
-        let changes = pr_status::merge(project.id, &tasks, &asked, reply, &mut lock(&self.pr_status).entries);
+        let changes = pr_status::merge(project.id, &tasks, &asked, reply, &mut status.entries);
+        drop(status);
         for (task_id, pr) in changes {
             self.emit(Event::PrChanged { task_id, pr });
         }

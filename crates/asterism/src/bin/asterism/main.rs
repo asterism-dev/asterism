@@ -425,7 +425,7 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
             };
             let tasks: Vec<Task> =
                 client.call(method::TASK_LIST, TaskListParams { project_id, include_archived: all }).await?;
-            let prs: PrList = client.call(method::PR_LIST, PrListParams { project_id }).await?;
+            let prs: PrList = client.call(method::PR_LIST, PrListParams { project_id }).await.unwrap_or_default();
             let pr_of = |id: i64| prs.prs.iter().find(|p| p.task_id == id).map(|p| &p.pr);
             if json {
                 let rows: Vec<serde_json::Value> = tasks

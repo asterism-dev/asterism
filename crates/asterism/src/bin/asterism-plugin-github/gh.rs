@@ -228,7 +228,7 @@ pub fn get_issue(gh: &Path, project: &Path, key: &str) -> Result<Issue, RpcError
 
 // ponytail: only the 200 most recent PRs are searched; query per branch if old task branches go missing.
 const PR_LIMIT: &str = "200";
-const PR_FIELDS: &str = "headRefName,number,url,title,state,isDraft,reviewDecision,statusCheckRollup,updatedAt";
+const PR_FIELDS: &str = "headRefName,number,url,title,state,isDraft,reviewDecision,statusCheckRollup,updatedAt,isCrossRepository";
 const FAILED_RUNS: &[&str] = &["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"];
 
 pub fn checks_of(rollup: &Value) -> PrChecks {
@@ -289,7 +289,7 @@ pub fn pick_prs(items: &[Value], branches: &[String]) -> Vec<BranchPr> {
         .filter_map(|branch| {
             let best = items
                 .iter()
-                .filter(|i| i["headRefName"].as_str() == Some(branch.as_str()))
+                .filter(|i| i["headRefName"].as_str() == Some(branch.as_str()) && i["isCrossRepository"] != true)
                 .max_by_key(|i| (i["state"] == "OPEN", i["updatedAt"].as_str().unwrap_or_default().to_string()))?;
             Some(BranchPr { branch: branch.clone(), pr: pr_of(best)? })
         })
@@ -493,6 +493,11 @@ exit 0
             item("b", 3, "MERGED", false, "2026-09-01T00:00:00Z", Value::Null, json!("APPROVED")),
             item("b", 4, "CLOSED", false, "2026-10-02T00:00:00Z", Value::Null, json!("CHANGES_REQUESTED")),
             item("c", 5, "OPEN", false, "2026-10-02T00:00:00Z", Value::Null, Value::Null),
+            {
+                let mut fork = item("a", 6, "OPEN", false, "2026-10-06T00:00:00Z", Value::Null, Value::Null);
+                fork["isCrossRepository"] = json!(true);
+                fork
+            },
         ];
         let picked = pick_prs(&items, &["a".into(), "b".into(), "d".into()]);
         let summary: Vec<_> = picked.iter().map(|b| (b.branch.as_str(), b.pr.number, b.pr.state, b.pr.review)).collect();
@@ -514,6 +519,6 @@ exit 0
         let prs = pull_requests(&gh, &repo, &["a".into()]).unwrap();
         assert_eq!((prs[0].pr.number, prs[0].pr.review, prs[0].pr.checks.state), (9, ReviewState::None, ChecksState::None));
         let logged = std::fs::read_to_string(log).unwrap();
-        assert!(logged.contains("pr list -R acme/api --state all --limit 200 --json headRefName,number,url,title,state,isDraft,reviewDecision,statusCheckRollup,updatedAt"), "{logged}");
+        assert!(logged.contains("pr list -R acme/api --state all --limit 200 --json headRefName,number,url,title,state,isDraft,reviewDecision,statusCheckRollup,updatedAt,isCrossRepository"), "{logged}");
     }
 }
