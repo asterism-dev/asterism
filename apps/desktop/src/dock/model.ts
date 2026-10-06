@@ -18,12 +18,22 @@ export function sessionIdOf(panelId: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
-/** Panels to drop and sessions to add so a saved layout shows exactly the task's sessions; tool panes stay. */
-export function reconcile(panelIds: string[], sessionIds: number[]): { remove: string[]; add: number[] } {
+export const filePanelId = (taskId: number, path: string) => `file:${taskId}:${path}`;
+
+export function fileTaskOf(panelId: string): number | null {
+  const match = /^file:(\d+):/.exec(panelId);
+  return match ? Number(match[1]) : null;
+}
+
+/** Panels to drop and sessions to add so a saved layout shows exactly the task's sessions; tool panes and the task's own file panes stay. */
+export function reconcile(panelIds: string[], sessionIds: number[], taskId: number): { remove: string[]; add: number[] } {
   const wanted = new Set(sessionIds);
   const shown = new Set<number>();
   const remove = panelIds.filter((id) => {
     if (isToolPane(id)) return false;
+    // File panes inherited from another task through the layout template are dropped.
+    const fileTask = fileTaskOf(id);
+    if (fileTask !== null) return fileTask !== taskId;
     const session = sessionIdOf(id);
     if (session === null || !wanted.has(session)) return true;
     shown.add(session);

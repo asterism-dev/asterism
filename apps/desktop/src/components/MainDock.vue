@@ -36,7 +36,7 @@ function addPanel(api: DockviewApi, sessionId: number) {
 function sync() {
   const api = dock;
   if (!api) return;
-  const { remove, add } = reconcile(api.panels.map((p) => p.id), sessionIds.value);
+  const { remove, add } = reconcile(api.panels.map((p) => p.id), sessionIds.value, props.task.id);
   for (const id of remove) {
     const panel = api.getPanel(id);
     if (panel) api.removePanel(panel);
