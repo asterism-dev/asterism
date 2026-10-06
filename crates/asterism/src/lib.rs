@@ -12,6 +12,7 @@ pub mod git;
 pub mod node_settings;
 pub mod paths;
 pub mod plugins;
+pub mod pr_status;
 pub mod proc_stats;
 pub mod repo_source;
 pub mod rpc;
