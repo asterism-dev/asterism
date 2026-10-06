@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ask } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
-import { ArrowDownUp, ChevronDown, ChevronRight, Plus, Settings, SquarePlus } from 'lucide-vue-next';
+import { ArrowDownUp, ChevronDown, ChevronRight, Plus, Settings, SquarePlus } from '@lucide/vue';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
 import {

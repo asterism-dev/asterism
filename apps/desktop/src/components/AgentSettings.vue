@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { X } from 'lucide-vue-next';
+import { X } from '@lucide/vue';
 import { computed, ref, watch } from 'vue';
 import { api, errorMessage, RpcError } from '../api';
 import {

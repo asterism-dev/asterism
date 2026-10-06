@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { DockviewVue, themeLight, type DockviewApi, type DockviewReadyEvent, type VueComponent } from 'dockview-vue';
-import { Plus } from 'lucide-vue-next';
+import { Plus } from '@lucide/vue';
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { addTool, attachMain, detachMain, floatUnlocked, keepSizesOnRemove, saveLayout, takePlacement } from '../dock/main';
 import { TEMPLATE_KEY, parseWorkspace, placementPosition, reconcile, sessionIdOf, sessionPanelId, workspaceKey } from '../dock/model';
