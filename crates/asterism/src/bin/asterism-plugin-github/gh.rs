@@ -3,8 +3,9 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use asterism_plugin::protocol::BranchPr;
 use asterism_plugin::{ErrorKind, RpcError};
-use asterism_proto::types::{ForgeRepo, ForgeStatus, Issue, IssueHit, Visibility};
+use asterism_proto::types::{ChecksState, ForgeRepo, ForgeStatus, Issue, IssueHit, PrChecks, PrState, PullRequest, ReviewState, Visibility};
 use serde_json::Value;
 
 const REPO_LIMIT: &str = "200";
@@ -225,6 +226,83 @@ pub fn get_issue(gh: &Path, project: &Path, key: &str) -> Result<Issue, RpcError
     Ok(Issue { key: format!("#{number}"), title: field("title")?, url: field("url")?, description: item["body"].as_str().unwrap_or_default().to_string(), branch: None })
 }
 
+// ponytail: only the 200 most recent PRs are searched; query per branch if old task branches go missing.
+const PR_LIMIT: &str = "200";
+const PR_FIELDS: &str = "headRefName,number,url,title,state,isDraft,reviewDecision,statusCheckRollup,updatedAt";
+const FAILED_RUNS: &[&str] = &["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"];
+
+pub fn checks_of(rollup: &Value) -> PrChecks {
+    let mut failing = Vec::new();
+    let mut pending = false;
+    let items = rollup.as_array().map(Vec::as_slice).unwrap_or_default();
+    for item in items {
+        if item["__typename"] == "StatusContext" {
+            match item["state"].as_str().unwrap_or_default() {
+                "FAILURE" | "ERROR" => failing.push(item["context"].as_str().unwrap_or_default().to_string()),
+                "PENDING" | "EXPECTED" => pending = true,
+                _ => {}
+            }
+        } else if item["status"].as_str() != Some("COMPLETED") {
+            pending = true;
+        } else if FAILED_RUNS.contains(&item["conclusion"].as_str().unwrap_or_default()) {
+            failing.push(item["name"].as_str().unwrap_or_default().to_string());
+        }
+    }
+    let state = if !failing.is_empty() {
+        ChecksState::Failure
+    } else if pending {
+        ChecksState::Pending
+    } else if items.is_empty() {
+        ChecksState::None
+    } else {
+        ChecksState::Success
+    };
+    PrChecks { state, failing }
+}
+
+fn pr_of(item: &Value) -> Option<PullRequest> {
+    let state = match (item["state"].as_str()?, item["isDraft"].as_bool().unwrap_or(false)) {
+        ("OPEN", true) => PrState::Draft,
+        ("OPEN", false) => PrState::Open,
+        ("MERGED", _) => PrState::Merged,
+        _ => PrState::Closed,
+    };
+    let review = match item["reviewDecision"].as_str().unwrap_or_default() {
+        "APPROVED" => ReviewState::Approved,
+        "CHANGES_REQUESTED" => ReviewState::ChangesRequested,
+        "REVIEW_REQUIRED" => ReviewState::ReviewRequired,
+        _ => ReviewState::None,
+    };
+    Some(PullRequest {
+        number: item["number"].as_u64()?,
+        url: item["url"].as_str()?.to_string(),
+        title: item["title"].as_str().unwrap_or_default().to_string(),
+        state,
+        review,
+        checks: checks_of(&item["statusCheckRollup"]),
+    })
+}
+
+pub fn pick_prs(items: &[Value], branches: &[String]) -> Vec<BranchPr> {
+    branches
+        .iter()
+        .filter_map(|branch| {
+            let best = items
+                .iter()
+                .filter(|i| i["headRefName"].as_str() == Some(branch.as_str()))
+                .max_by_key(|i| (i["state"] == "OPEN", i["updatedAt"].as_str().unwrap_or_default().to_string()))?;
+            Some(BranchPr { branch: branch.clone(), pr: pr_of(best)? })
+        })
+        .collect()
+}
+
+pub fn pull_requests(gh: &Path, project: &Path, branches: &[String]) -> Result<Vec<BranchPr>, RpcError> {
+    let repo = origin_repo(project)?;
+    let args = ["pr", "list", "-R", &repo, "--state", "all", "--limit", PR_LIMIT, "--json", PR_FIELDS];
+    let items: Vec<Value> = parse(&run_with_timeout(gh, &args, ISSUE_TIMEOUT, Some(project))?)?;
+    Ok(pick_prs(&items, branches))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,5 +458,62 @@ exit 0
         assert!(log.contains("--assignee @me") && log.contains("login sort:updated-desc"), "{log}");
         assert!(log.contains("issue view 42 -R acme/api"), "{log}");
         assert_eq!(get_issue(&gh, &repo, "#x").unwrap_err().kind(), ErrorKind::InvalidParams);
+    }
+
+    fn item(branch: &str, number: u64, state: &str, draft: bool, updated: &str, rollup: Value, review: Value) -> Value {
+        serde_json::json!({"headRefName": branch, "number": number, "url": format!("https://github.com/acme/api/pull/{number}"),
+            "title": format!("PR {number}"), "state": state, "isDraft": draft, "reviewDecision": review,
+            "statusCheckRollup": rollup, "updatedAt": updated})
+    }
+
+    #[test]
+    fn checks_combine_check_runs_and_status_contexts() {
+        use serde_json::json;
+        assert_eq!(checks_of(&Value::Null).state, ChecksState::None);
+        assert_eq!(checks_of(&json!([])).state, ChecksState::None);
+        let ok = json!([{"__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                        {"__typename": "CheckRun", "name": "docs", "status": "COMPLETED", "conclusion": "SKIPPED"},
+                        {"__typename": "StatusContext", "context": "ci/legacy", "state": "SUCCESS"}]);
+        assert_eq!(checks_of(&ok), PrChecks { state: ChecksState::Success, failing: vec![] });
+        let pending = json!([{"__typename": "CheckRun", "name": "test", "status": "IN_PROGRESS", "conclusion": null},
+                             {"__typename": "StatusContext", "context": "ci/legacy", "state": "PENDING"}]);
+        assert_eq!(checks_of(&pending).state, ChecksState::Pending);
+        let failed = json!([{"__typename": "CheckRun", "name": "lint", "status": "COMPLETED", "conclusion": "FAILURE"},
+                            {"__typename": "CheckRun", "name": "test", "status": "QUEUED", "conclusion": null},
+                            {"__typename": "StatusContext", "context": "deploy", "state": "ERROR"}]);
+        assert_eq!(checks_of(&failed), PrChecks { state: ChecksState::Failure, failing: vec!["lint".into(), "deploy".into()] });
+    }
+
+    #[test]
+    fn the_open_pr_wins_else_the_newest() {
+        use serde_json::json;
+        let items = vec![
+            item("a", 1, "CLOSED", false, "2026-10-05T00:00:00Z", Value::Null, Value::Null),
+            item("a", 2, "OPEN", true, "2026-10-01T00:00:00Z", Value::Null, json!("REVIEW_REQUIRED")),
+            item("b", 3, "MERGED", false, "2026-09-01T00:00:00Z", Value::Null, json!("APPROVED")),
+            item("b", 4, "CLOSED", false, "2026-10-02T00:00:00Z", Value::Null, json!("CHANGES_REQUESTED")),
+            item("c", 5, "OPEN", false, "2026-10-02T00:00:00Z", Value::Null, Value::Null),
+        ];
+        let picked = pick_prs(&items, &["a".into(), "b".into(), "d".into()]);
+        let summary: Vec<_> = picked.iter().map(|b| (b.branch.as_str(), b.pr.number, b.pr.state, b.pr.review)).collect();
+        assert_eq!(summary, vec![("a", 2, PrState::Draft, ReviewState::ReviewRequired), ("b", 4, PrState::Closed, ReviewState::ChangesRequested)]);
+    }
+
+    #[test]
+    fn pull_requests_are_listed_once_per_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("gh.log");
+        let script = format!(
+            "#!/bin/sh\necho \"$@\" >> \"{}\"\necho '[{{\"headRefName\":\"a\",\"number\":9,\"url\":\"u\",\"title\":\"t\",\"state\":\"OPEN\",\"isDraft\":false,\"reviewDecision\":\"\",\"statusCheckRollup\":[],\"updatedAt\":\"2026-10-01T00:00:00Z\"}}]'\n",
+            log.display()
+        );
+        let gh = dir.path().join("gh");
+        std::fs::write(&gh, script).unwrap();
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let repo = repo_with_origin(dir.path(), Some("https://github.com/acme/api.git"));
+        let prs = pull_requests(&gh, &repo, &["a".into()]).unwrap();
+        assert_eq!((prs[0].pr.number, prs[0].pr.review, prs[0].pr.checks.state), (9, ReviewState::None, ChecksState::None));
+        let logged = std::fs::read_to_string(log).unwrap();
+        assert!(logged.contains("pr list -R acme/api --state all --limit 200 --json headRefName,number,url,title,state,isDraft,reviewDecision,statusCheckRollup,updatedAt"), "{logged}");
     }
 }
