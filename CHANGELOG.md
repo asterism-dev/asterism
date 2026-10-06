@@ -1,3 +1,9 @@
+## v0.5.0 (2026-10-06)
+
+### Feat
+
+- auto-trust task worktrees for Claude and per-plugin settings tabs (#8)
+
 ## v0.4.0 (2026-10-06)
 
 ### Feat
