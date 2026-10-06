@@ -45,16 +45,7 @@ impl Plugin {
     }
 
     pub fn capabilities(&self) -> Vec<Capability> {
-        let Some(m) = &self.manifest else { return Vec::new() };
-        let cap = |kind, id: &str, description: &str| Capability { kind, id: id.to_string(), description: description.to_string() };
-        let p = &m.provides;
-        p.forge
-            .iter()
-            .map(|f| cap(CapabilityKind::Forge, &f.id, &f.display_name))
-            .chain(p.agent.iter().map(|a| cap(CapabilityKind::Agent, &a.id, a.display_name())))
-            .chain(p.command.iter().map(|c| cap(CapabilityKind::Command, &c.name, &c.description)))
-            .chain(p.task_source.iter().map(|t| cap(CapabilityKind::TaskSource, &t.id, &t.display_name)))
-            .collect()
+        self.manifest.as_ref().map(Manifest::capabilities).unwrap_or_default()
     }
 }
 
