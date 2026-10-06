@@ -158,7 +158,7 @@ function taskMenu(e: MouseEvent, t: Task) {
       </div>
       <p v-if="connected && !state.projects.length" class="hint">Click + to add, clone or create a project.</p>
     </div>
-    <button class="settings-button" :class="{ active: state.settingsOpen }" @click="state.settingsOpen = true"><Settings />Settings</button>
+    <button class="settings-button" :class="{ active: state.settingsOpen }" @click="state.settingsOpen = true"><Settings />Settings<span v-if="state.pluginUpdates" class="badge update-badge" :title="`${state.pluginUpdates} plugin update(s)`">{{ state.pluginUpdates }}</span></button>
   </aside>
 </template>
 
@@ -178,6 +178,7 @@ function taskMenu(e: MouseEvent, t: Task) {
 .hover-action { visibility: hidden; padding: 0 6px; font-size: 12px; }
 .row:hover .hover-action { visibility: visible; }
 .badge { background: var(--waiting); color: #1d1f27; border: 0; padding: 0 8px; border-radius: 10px; font-size: 12px; }
+.update-badge { margin-left: 6px; }
 .add { padding: 0 7px; }
 .age { flex: none; font-size: 12px; font-variant-numeric: tabular-nums; }
 .offline-label { flex-shrink: 1; min-width: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }

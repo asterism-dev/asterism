@@ -15,7 +15,7 @@ import AddProjectDialog from './components/AddProjectDialog.vue';
 import ContextMenu from './components/ContextMenu.vue';
 import NewTaskDialog from './components/NewTaskDialog.vue';
 import SettingsView from './components/SettingsView.vue';
-import { activeTab, applyEvent, isConnected, nextWaiting, refresh, selectSession, state, toast } from './store';
+import { activeTab, applyEvent, isConnected, nextWaiting, refresh, refreshPluginUpdates, selectSession, state, toast } from './store';
 import { appShortcut } from './shortcuts';
 import { leaveSettings } from './settingsGuard';
 import type { NodeEvent, NodeStatus, Session } from './types';
@@ -69,6 +69,7 @@ onMounted(async () => {
       const event = e.payload;
       const restored = event.method === 'task.changed' && !event.params.archived && !state.tasks.some((t) => t.id === event.params.id);
       const waiting = applyEvent(state, event);
+      if (event.method === 'plugins.changed' || event.method === 'stores.changed') refreshPluginUpdates().catch(() => {});
       if (event.method === 'plugins.changed') void api.agents().then((agents) => (state.agents = agents));
       // Archiving dropped the task's sessions from the store; a restore needs them back.
       if (restored) refresh().catch(() => {});

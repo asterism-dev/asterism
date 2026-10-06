@@ -51,6 +51,7 @@ pub async fn run(paths: Paths) -> io::Result<()> {
             eprintln!("asterismd: session recovery failed: {e}");
         }
     });
+    tokio::spawn(daemon.clone().store_refresh_loop());
     tokio::select! {
         _ = rpc::serve(daemon.clone(), listener) => {}
         _ = daemon.shutdown_requested() => {}

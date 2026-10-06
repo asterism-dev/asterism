@@ -1,11 +1,11 @@
 use std::collections::BTreeSet;
 
 use asterism_plugin::protocol::PROTOCOL;
-use asterism_proto::types::{AgentSettingKind, SettingSpec, SettingType};
+use asterism_proto::types::{AgentSettingKind, Capability, CapabilityKind, SettingSpec, SettingType};
 use serde::Deserialize;
 
 /// CLI subcommands a plugin command may not shadow.
-pub const BUILTIN_COMMANDS: &[&str] = &["project", "task", "session", "send", "read", "wait", "attach", "hook", "daemon", "plugin", "help"];
+pub const BUILTIN_COMMANDS: &[&str] = &["project", "task", "session", "send", "read", "wait", "attach", "hook", "daemon", "plugin", "store", "help"];
 /// Built-in session kinds that share the agent namespace for settings.
 const SESSION_KINDS: &[&str] = &["shell", "command"];
 
@@ -119,6 +119,18 @@ impl Manifest {
         .map(|(kind, _)| kind.to_string())
         .collect()
     }
+
+    pub fn capabilities(&self) -> Vec<Capability> {
+        let cap = |kind, id: &str, description: &str| Capability { kind, id: id.to_string(), description: description.to_string() };
+        let p = &self.provides;
+        p.forge
+            .iter()
+            .map(|f| cap(CapabilityKind::Forge, &f.id, &f.display_name))
+            .chain(p.agent.iter().map(|a| cap(CapabilityKind::Agent, &a.id, a.display_name())))
+            .chain(p.command.iter().map(|c| cap(CapabilityKind::Command, &c.name, &c.description)))
+            .chain(p.task_source.iter().map(|t| cap(CapabilityKind::TaskSource, &t.id, &t.display_name)))
+            .collect()
+    }
 }
 
 pub fn parse(text: &str) -> Result<Manifest, String> {
@@ -127,12 +139,16 @@ pub fn parse(text: &str) -> Result<Manifest, String> {
     Ok(manifest)
 }
 
-fn is_slug(s: &str) -> bool {
+pub(crate) fn is_slug(s: &str) -> bool {
     !s.is_empty() && !s.starts_with('-') && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 fn is_key(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+pub(crate) fn is_version(s: &str) -> bool {
+    !s.is_empty() && !s.starts_with('.') && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'))
 }
 
 fn unique<'a>(what: &str, ids: impl Iterator<Item = &'a String>) -> Result<(), String> {
@@ -148,6 +164,9 @@ fn unique<'a>(what: &str, ids: impl Iterator<Item = &'a String>) -> Result<(), S
 fn validate(m: &Manifest) -> Result<(), String> {
     if !is_slug(&m.name) {
         return Err(format!("invalid plugin name {:?}: use a-z, 0-9 and '-'", m.name));
+    }
+    if !is_version(&m.version) {
+        return Err(format!("invalid version {:?}: use letters, digits, '.', '_', '+' or '-'", m.version));
     }
     if m.protocol != PROTOCOL {
         return Err(format!("unsupported protocol {} (this asterism speaks {PROTOCOL})", m.protocol));
@@ -291,5 +310,13 @@ required = true
         let m = parse(&with(extra)).unwrap();
         assert_eq!(m.backend_capabilities(), ["agent", "command", "forge"].map(String::from).into());
         assert_eq!(m.provides.agent[0].display_name(), "claude");
+    }
+
+    #[test]
+    fn versions_must_be_safe_directory_names() {
+        for bad in ["../1", ".hidden", "1/2", "", "1 2"] {
+            assert!(parse(&GITHUB.replace("version = \"0.2.0\"", &format!("version = {bad:?}"))).unwrap_err().contains("version"), "{bad}");
+        }
+        assert!(parse(&GITHUB.replace("0.2.0", "1.0.0-rc.1+build_7")).is_ok());
     }
 }

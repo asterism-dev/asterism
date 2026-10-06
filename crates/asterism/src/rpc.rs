@@ -175,6 +175,44 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             daemon.remove_project(params::<ProjectIdParams>(raw)?.project_id)?;
             Ok(Value::Null)
         }
+        method::STORE_LIST => to_value(daemon.store_list()),
+        method::STORE_ADD => to_value(daemon.store_add(&params::<StoreAddParams>(raw)?.source).await?),
+        method::STORE_REMOVE => {
+            let p: StoreRemoveParams = params(raw)?;
+            daemon.store_remove(&p.name, p.uninstall_plugins).await?;
+            Ok(Value::Null)
+        }
+        method::STORE_REFRESH => {
+            daemon.refresh_stores(params::<StoreRefreshParams>(raw)?.name.as_deref()).await?;
+            Ok(Value::Null)
+        }
+        method::STORE_SET_AUTO_UPDATE => {
+            daemon.set_auto_update(params::<AutoUpdateParams>(raw)?.enabled).await?;
+            Ok(Value::Null)
+        }
+        method::PLUGIN_SEARCH => to_value(daemon.plugin_search(&params::<PluginSearchParams>(raw)?)?),
+        method::PLUGIN_DETAILS => {
+            let p: PluginRefParams = params(raw)?;
+            to_value(daemon.plugin_details(&p.store, &p.name).await?)
+        }
+        method::PLUGIN_INSTALL => {
+            let p: PluginInstallParams = params(raw)?;
+            to_value(daemon.plugin_install(&p.store, &p.name, p.accept_permissions).await?)
+        }
+        method::PLUGIN_UPDATE => {
+            let p: PluginUpdateParams = params(raw)?;
+            to_value(daemon.plugin_update(&p.name, p.accept_permissions).await?)
+        }
+        method::PLUGIN_ROLLBACK => to_value(daemon.plugin_rollback(&params::<PluginNameParams>(raw)?.name).await?),
+        method::PLUGIN_UNINSTALL => {
+            daemon.plugin_uninstall(&params::<PluginNameParams>(raw)?.name).await?;
+            Ok(Value::Null)
+        }
+        method::PLUGIN_SET_ENABLED => {
+            let p: PluginEnableParams = params(raw)?;
+            daemon.plugin_set_enabled(&p.name, p.enabled).await?;
+            Ok(Value::Null)
+        }
         method::PLUGIN_LIST => to_value(daemon.plugin_list()?),
         method::PLUGIN_LINK => to_value(daemon.plugin_link(&params::<PluginPathParams>(raw)?.path).await?),
         method::PLUGIN_UNLINK => {
@@ -318,7 +356,7 @@ pub fn host_fn(daemon: Weak<Daemon>) -> HostFn {
     Arc::new(move |_plugin: String, method_name: String, params: Value| {
         let daemon = daemon.clone();
         Box::pin(async move {
-            if method_name.starts_with("plugin.") || HOST_DENIED.contains(&method_name.as_str()) {
+            if method_name.starts_with("plugin.") || method_name.starts_with("store.") || HOST_DENIED.contains(&method_name.as_str()) {
                 return Err(RpcError::new(ErrorKind::MethodNotFound, format!("{method_name} is not available to plugins")));
             }
             let Some(daemon) = daemon.upgrade() else {

@@ -145,6 +145,9 @@ fn plugin_types_roundtrip() {
         permissions: vec!["network".into()],
         state: PluginState::NeedsSetup { missing: vec!["Token".into()] },
         backend: Some(vec!["/bin/asterism-plugin-github".into()]),
+        store: None,
+        update_available: false,
+        previous_version: None,
     };
     let value = serde_json::to_value(&info).unwrap();
     assert_eq!(value["state"], json!({"state": "needs_setup", "missing": ["Token"]}));
@@ -163,4 +166,44 @@ fn plugin_types_roundtrip() {
     let bare: RpcError = serde_json::from_value(json!({"code": -32000, "message": "boom"})).unwrap();
     assert_eq!(bare.kind(), ErrorKind::Unknown);
     assert_eq!(ErrorKind::PluginError.code(), -32009);
+}
+
+#[test]
+fn store_types_roundtrip() {
+    use asterism_proto::rpc::ErrorKind;
+    use asterism_proto::types::*;
+    use serde_json::json;
+
+    let list = StoreList {
+        auto_update: true,
+        stores: vec![StoreInfo {
+            name: "asterism-dev".into(),
+            source: "https://example.com/s.git".into(),
+            official: true,
+            last_refreshed: Some(1_700_000_000),
+            last_error: None,
+            plugin_count: 2,
+        }],
+        error: None,
+    };
+    assert_eq!(serde_json::from_value::<StoreList>(serde_json::to_value(&list).unwrap()).unwrap(), list);
+
+    let search: PluginSearchParams = serde_json::from_value(json!({"capability": "task_source"})).unwrap();
+    assert_eq!((search.query, search.capability, search.store), (None, Some(CapabilityKind::TaskSource), None));
+    let update: PluginUpdateParams = serde_json::from_value(json!({"name": "gitlab"})).unwrap();
+    assert_eq!(update.accept_permissions, None);
+    let remove: StoreRemoveParams = serde_json::from_value(json!({"name": "acme"})).unwrap();
+    assert!(!remove.uninstall_plugins);
+
+    // Older daemons' PluginInfo has no store fields.
+    let info: PluginInfo = serde_json::from_value(json!({
+        "name": "github", "version": "0.2.0", "description": "", "origin": "installed", "path": "/p",
+        "capabilities": [], "permissions": [], "state": {"state": "disabled"}, "backend": null
+    }))
+    .unwrap();
+    assert_eq!((info.origin, info.state, info.store, info.update_available), (PluginOrigin::Installed, PluginState::Disabled, None, false));
+
+    let event = Event::StoresChanged {};
+    assert_eq!(event.to_notification().method, "stores.changed");
+    assert_eq!(ErrorKind::PermissionsChanged.code(), -32010);
 }

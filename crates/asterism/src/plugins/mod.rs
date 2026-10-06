@@ -1,7 +1,14 @@
+pub mod catalog;
+pub mod install;
 pub mod manifest;
 pub mod process;
 pub mod registry;
 pub mod settings;
+pub mod source;
+pub mod store_ops;
+
+/// Serialises every store and install operation; the files they touch are read-modify-write.
+pub static STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -11,6 +18,7 @@ use std::time::Duration;
 use crate::paths::Paths;
 use process::{Backend, BackendConfig, HostFn};
 use registry::{Registry, Sources};
+use catalog::InstalledFile;
 
 /// How plugin backends are started: their base environment and timing.
 pub struct Runtime {
@@ -22,6 +30,8 @@ pub struct Runtime {
 /// One discovery result and a backend per runnable plugin; replaced wholesale on reload.
 pub struct PluginSet {
     pub registry: Registry,
+    /// What `installed.toml` said when this set was loaded.
+    pub installed: InstalledFile,
     backends: HashMap<String, Arc<Backend>>,
 }
 
@@ -31,7 +41,28 @@ impl PluginSet {
             eprintln!("asterismd: ignoring {}: {e}", paths.plugin_links().display());
             BTreeMap::new()
         });
-        let registry = Registry::discover(&Sources { builtin_dir: builtin_dir.to_path_buf(), links });
+        let installed = catalog::load_installed(&paths.plugin_installed_file()).unwrap_or_else(|e| {
+            eprintln!("asterismd: ignoring {e}");
+            InstalledFile::default()
+        });
+        let installed_dirs = installed
+            .plugins
+            .iter()
+            .filter(|(name, entry)| {
+                let ok = manifest::is_version(&entry.version);
+                if !ok {
+                    eprintln!("asterismd: ignoring installed plugin {name}: invalid version {:?}", entry.version);
+                }
+                ok
+            })
+            .map(|(name, entry)| (name.clone(), paths.plugins_installed().join(name).join(&entry.version)))
+            .collect();
+        let registry = Registry::discover(&Sources {
+            builtin_dir: builtin_dir.to_path_buf(),
+            links,
+            installed: installed_dirs,
+            disabled: installed.disabled.clone(),
+        });
         let mut backends = HashMap::new();
         for plugin in registry.plugins().iter().filter(|p| p.is_ok()) {
             let (Some(manifest), Some(argv)) = (plugin.manifest.as_ref(), plugin.backend_command()) else { continue };
@@ -53,7 +84,7 @@ impl PluginSet {
             };
             backends.insert(plugin.name.clone(), Backend::new(config, host.clone(), settings));
         }
-        Self { registry, backends }
+        Self { registry, installed, backends }
     }
 
     pub fn backend(&self, plugin: &str) -> Option<&Arc<Backend>> {

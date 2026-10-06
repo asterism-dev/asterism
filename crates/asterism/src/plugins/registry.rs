@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -19,6 +19,7 @@ pub const BUILTIN: &[(&str, &str)] = &[
 pub enum Status {
     Ok,
     Broken(String),
+    Disabled,
 }
 
 #[derive(Debug)]
@@ -45,16 +46,7 @@ impl Plugin {
     }
 
     pub fn capabilities(&self) -> Vec<Capability> {
-        let Some(m) = &self.manifest else { return Vec::new() };
-        let cap = |kind, id: &str, description: &str| Capability { kind, id: id.to_string(), description: description.to_string() };
-        let p = &m.provides;
-        p.forge
-            .iter()
-            .map(|f| cap(CapabilityKind::Forge, &f.id, &f.display_name))
-            .chain(p.agent.iter().map(|a| cap(CapabilityKind::Agent, &a.id, a.display_name())))
-            .chain(p.command.iter().map(|c| cap(CapabilityKind::Command, &c.name, &c.description)))
-            .chain(p.task_source.iter().map(|t| cap(CapabilityKind::TaskSource, &t.id, &t.display_name)))
-            .collect()
+        self.manifest.as_ref().map(Manifest::capabilities).unwrap_or_default()
     }
 }
 
@@ -62,6 +54,9 @@ impl Plugin {
 pub struct Sources {
     pub builtin_dir: PathBuf,
     pub links: BTreeMap<String, PathBuf>,
+    /// Plugin name → directory of its current installed version.
+    pub installed: BTreeMap<String, PathBuf>,
+    pub disabled: BTreeSet<String>,
 }
 
 #[derive(Debug, Default)]
@@ -85,20 +80,24 @@ fn candidate(expected: &str, origin: PluginOrigin, dir: PathBuf, text: io::Resul
 }
 
 impl Registry {
-    /// Linked plugins come first; the first plugin with a name wins, and the first to claim a capability keeps it.
+    /// Linked plugins come first, then installed, then built-in; the first plugin with a name wins, and the first to claim a capability keeps it.
     pub fn discover(sources: &Sources) -> Self {
-        let linked = sources
-            .links
-            .iter()
-            .map(|(name, dir)| candidate(name, PluginOrigin::Linked, dir.clone(), std::fs::read_to_string(dir.join("plugin.toml"))));
+        let read = |origin: PluginOrigin| {
+            move |(name, dir): (&String, &PathBuf)| candidate(name, origin, dir.clone(), std::fs::read_to_string(dir.join("plugin.toml")))
+        };
+        let linked = sources.links.iter().map(read(PluginOrigin::Linked));
+        let installed = sources.installed.iter().map(read(PluginOrigin::Installed));
         let builtin = BUILTIN
             .iter()
             .map(|(name, text)| candidate(name, PluginOrigin::Builtin, sources.builtin_dir.clone(), Ok(text.to_string())));
         let mut plugins: Vec<Arc<Plugin>> = Vec::new();
         let mut claimed: Vec<(CapabilityKind, String, String)> = Vec::new();
-        for mut plugin in linked.chain(builtin) {
+        for mut plugin in linked.chain(installed).chain(builtin) {
             if plugins.iter().any(|p| p.name == plugin.name) {
                 continue;
+            }
+            if plugin.is_ok() && sources.disabled.contains(&plugin.name) {
+                plugin.status = Status::Disabled;
             }
             if plugin.is_ok() {
                 let capabilities = plugin.capabilities();
@@ -185,7 +184,42 @@ mod tests {
     }
 
     fn sources(links: &[(&str, PathBuf)]) -> Sources {
-        Sources { builtin_dir: PathBuf::from("/opt/asterism/bin"), links: links.iter().map(|(n, p)| (n.to_string(), p.clone())).collect() }
+        Sources {
+            builtin_dir: PathBuf::from("/opt/asterism/bin"),
+            links: links.iter().map(|(n, p)| (n.to_string(), p.clone())).collect(),
+            installed: BTreeMap::new(),
+            disabled: std::collections::BTreeSet::new(),
+        }
+    }
+
+    #[test]
+    fn installed_plugins_sit_between_linked_and_builtin() {
+        let root = tempfile::tempdir().unwrap();
+        let installed = plugin_dir(root.path(), "installed", &forge_manifest("github", "github"));
+        let linked = plugin_dir(root.path(), "linked", &forge_manifest("github", "github"));
+        let mut s = sources(&[]);
+        s.installed.insert("github".into(), installed.clone());
+        let registry = Registry::discover(&s);
+        assert_eq!((registry.get("github").unwrap().origin, registry.get("github").unwrap().dir.clone()), (PluginOrigin::Installed, installed));
+        s.links.insert("github".into(), linked);
+        assert_eq!(Registry::discover(&s).get("github").unwrap().origin, PluginOrigin::Linked);
+    }
+
+    #[test]
+    fn disabled_plugins_stay_listed_but_claim_nothing() {
+        let mut s = sources(&[]);
+        s.disabled.insert("github".into());
+        let registry = Registry::discover(&s);
+        assert_eq!(registry.get("github").unwrap().status, Status::Disabled);
+        assert!(registry.forge("github").is_none());
+        assert!(registry.agent("claude").is_some());
+    }
+
+    #[test]
+    fn missing_installed_dir_is_broken() {
+        let mut s = sources(&[]);
+        s.installed.insert("linear".into(), PathBuf::from("/definitely/missing/linear/1.0.0"));
+        assert!(matches!(&Registry::discover(&s).get("linear").unwrap().status, Status::Broken(r) if r.contains("cannot read")));
     }
 
     #[test]
