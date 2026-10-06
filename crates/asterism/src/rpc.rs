@@ -190,6 +190,29 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             daemon.set_auto_update(params::<AutoUpdateParams>(raw)?.enabled).await?;
             Ok(Value::Null)
         }
+        method::PLUGIN_SEARCH => to_value(daemon.plugin_search(&params::<PluginSearchParams>(raw)?)?),
+        method::PLUGIN_DETAILS => {
+            let p: PluginRefParams = params(raw)?;
+            to_value(daemon.plugin_details(&p.store, &p.name).await?)
+        }
+        method::PLUGIN_INSTALL => {
+            let p: PluginInstallParams = params(raw)?;
+            to_value(daemon.plugin_install(&p.store, &p.name, p.accept_permissions).await?)
+        }
+        method::PLUGIN_UPDATE => {
+            let p: PluginUpdateParams = params(raw)?;
+            to_value(daemon.plugin_update(&p.name, p.accept_permissions).await?)
+        }
+        method::PLUGIN_ROLLBACK => to_value(daemon.plugin_rollback(&params::<PluginNameParams>(raw)?.name).await?),
+        method::PLUGIN_UNINSTALL => {
+            daemon.plugin_uninstall(&params::<PluginNameParams>(raw)?.name).await?;
+            Ok(Value::Null)
+        }
+        method::PLUGIN_SET_ENABLED => {
+            let p: PluginEnableParams = params(raw)?;
+            daemon.plugin_set_enabled(&p.name, p.enabled).await?;
+            Ok(Value::Null)
+        }
         method::PLUGIN_LIST => to_value(daemon.plugin_list()?),
         method::PLUGIN_LINK => to_value(daemon.plugin_link(&params::<PluginPathParams>(raw)?.path).await?),
         method::PLUGIN_UNLINK => {

@@ -18,10 +18,10 @@ use crate::config::{self, Config};
 use crate::error::{Error, Result};
 use crate::git::GitEnv;
 use crate::paths::Paths;
-use crate::plugins::manifest::{self, AgentDecl, LaunchKind};
+use crate::plugins::manifest::{self, AgentDecl, LaunchKind, Manifest};
 use crate::plugins::process::{self, HostFn};
 use crate::plugins::registry::{self, Plugin, Status};
-use crate::plugins::catalog::{self, StoreConfig};
+use crate::plugins::catalog::{self, EntrySource, StoreConfig};
 use crate::plugins::{install, settings, source, store_ops, PluginSet, Runtime, STORE_LOCK};
 use crate::proc_stats::{self, CpuTracker};
 use crate::session::{Pty, Snapshot, SpawnSpec, SCROLLBACK_LINES};
@@ -174,6 +174,9 @@ impl Daemon {
         if let Status::Broken(reason) = &entry.status {
             return Err(unavailable(format!("is broken: {reason}")));
         }
+        if matches!(entry.status, Status::Disabled) {
+            return Err(unavailable("is disabled".into()));
+        }
         if let Some(manifest) = &entry.manifest {
             let missing = settings::missing(&self.paths, plugin, &manifest.settings)?;
             if !missing.is_empty() {
@@ -237,7 +240,7 @@ impl Daemon {
             state,
             backend: plugin.backend_command(),
             store: entry.map(|e| e.store.clone()),
-            update_available: false,
+            update_available: self.update_available(set, plugin),
             previous_version: entry.and_then(|e| e.previous.clone()),
         }
     }
@@ -245,6 +248,185 @@ impl Daemon {
     pub fn plugin_list(&self) -> Result<Vec<PluginInfo>> {
         let set = self.plugin_set();
         Ok(set.registry.plugins().iter().map(|p| self.plugin_info(&set, p)).collect())
+    }
+
+    /// Whether the plugin's store offers something newer than what is installed.
+    fn update_available(&self, set: &PluginSet, plugin: &Plugin) -> bool {
+        let check = || -> Option<bool> {
+            let installed = set.installed.plugins.get(&plugin.name)?;
+            let file = store_ops::load(&self.paths).ok()?;
+            let store = store_ops::find_store(&file, &installed.store).ok()?;
+            let dir = store_ops::store_dir(&self.paths, store);
+            let index = source::read_index(&dir).ok()?;
+            let entry = index.plugins.iter().find(|e| e.name == plugin.name)?;
+            Some(match entry.source() {
+                EntrySource::Git { git_ref, .. } => installed.git_ref.as_deref() != Some(git_ref),
+                EntrySource::Local { path } => {
+                    let text = std::fs::read_to_string(source::plugin_dir(&dir, path).ok()?.join("plugin.toml")).ok()?;
+                    manifest::parse(&text).ok()?.version != installed.version
+                }
+            })
+        };
+        plugin.origin == PluginOrigin::Installed && check().unwrap_or(false)
+    }
+
+    fn plugin_info_of(&self, name: &str) -> Result<PluginInfo> {
+        let set = self.plugin_set();
+        let plugin = set.registry.get(name).ok_or_else(|| Error::new(ErrorKind::NotFound, format!("plugin {name} is not installed")))?;
+        Ok(self.plugin_info(&set, plugin))
+    }
+
+    pub fn plugin_search(&self, params: &PluginSearchParams) -> Result<Vec<SearchHit>> {
+        let file = store_ops::load(&self.paths)?;
+        let indexes = store_ops::indexes(&self.paths, &file);
+        let set = self.plugin_set();
+        Ok(catalog::search(&indexes, params.query.as_deref(), params.capability, params.store.as_deref())
+            .into_iter()
+            .map(|(store, entry)| {
+                let plugin = set.registry.get(&entry.name);
+                let installed = set.installed.plugins.get(&entry.name).filter(|e| e.store == store);
+                SearchHit {
+                    store: store.to_string(),
+                    name: entry.name.clone(),
+                    description: entry.description.clone(),
+                    tags: entry.tags.clone(),
+                    installed_version: installed.map(|e| e.version.clone()),
+                    update_available: installed.is_some() && plugin.is_some_and(|p| self.update_available(&set, p)),
+                    linked: plugin.is_some_and(|p| p.origin == PluginOrigin::Linked),
+                }
+            })
+            .collect())
+    }
+
+    async fn resolve_entry(&self, store: &str, name: &str) -> Result<install::Resolved> {
+        let (store, name) = (store.to_string(), name.to_string());
+        self.plugin_op(move |paths, env| {
+            let (config, entry) = install::find_entry(paths, &store, &name)?;
+            install::resolve(paths, &config, &entry, env)
+        })
+        .await
+    }
+
+    pub async fn plugin_details(&self, store: &str, name: &str) -> Result<PluginDetails> {
+        let resolved = self.resolve_entry(store, name).await?;
+        let m = &resolved.manifest;
+        Ok(PluginDetails {
+            store: store.to_string(),
+            name: m.name.clone(),
+            version: m.version.clone(),
+            description: m.description.clone(),
+            permissions: m.permissions.clone(),
+            capabilities: m.capabilities(),
+            readme: source::readme(&resolved.dir),
+        })
+    }
+
+    /// Another active plugin already providing one of these capabilities blocks the install.
+    fn check_collisions(&self, manifest: &Manifest) -> Result<()> {
+        let set = self.plugin_set();
+        for cap in manifest.capabilities() {
+            let owner = set.registry.plugins().iter().find(|p| {
+                p.is_ok() && p.name != manifest.name && p.capabilities().iter().any(|c| c.kind == cap.kind && c.id == cap.id)
+            });
+            if let Some(owner) = owner {
+                return Err(Error::new(
+                    ErrorKind::InvalidParams,
+                    format!("{} {:?} is already provided by plugin {}", catalog::capability_tag(cap.kind), cap.id, owner.name),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn permissions_error(name: &str, wanted: &[String]) -> Error {
+        let list = if wanted.is_empty() { "none".to_string() } else { wanted.join(", ") };
+        Error::new(ErrorKind::PermissionsChanged, format!("{name} asks for permissions: {list}"))
+    }
+
+    async fn write_install(&self, store: &str, resolved: install::Resolved) -> Result<PluginInfo> {
+        let store = store.to_string();
+        let name = resolved.manifest.name.clone();
+        self.plugin_op(move |paths, _| {
+            install::install_files(paths, &resolved)?;
+            install::record(paths, &store, &resolved)
+        })
+        .await?;
+        self.reload_plugins(None).await?;
+        self.plugin_info_of(&name)
+    }
+
+    pub async fn plugin_install(&self, store: &str, name: &str, accept: Vec<String>) -> Result<PluginInfo> {
+        if let Some(entry) = self.plugin_set().installed.plugins.get(name).filter(|e| e.store != store) {
+            return Err(Error::new(ErrorKind::InvalidParams, format!("{name} is installed from store {}; uninstall it first", entry.store)));
+        }
+        let resolved = self.resolve_entry(store, name).await?;
+        self.check_collisions(&resolved.manifest)?;
+        if !install::same_permissions(&accept, &resolved.manifest.permissions) {
+            return Err(Self::permissions_error(name, &resolved.manifest.permissions));
+        }
+        self.write_install(store, resolved).await
+    }
+
+    pub async fn plugin_update(&self, name: &str, accept: Option<Vec<String>>) -> Result<PluginInfo> {
+        let entry = self
+            .plugin_set()
+            .installed
+            .plugins
+            .get(name)
+            .cloned()
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, format!("plugin {name} is not installed from a store")))?;
+        let current = self.paths.plugins_installed().join(name).join(&entry.version).join("plugin.toml");
+        let old_permissions =
+            std::fs::read_to_string(current).ok().and_then(|t| manifest::parse(&t).ok()).map(|m| m.permissions).unwrap_or_default();
+        let resolved = self.resolve_entry(&entry.store, name).await?;
+        if resolved.manifest.version == entry.version && resolved.git_ref == entry.git_ref {
+            return self.plugin_info_of(name);
+        }
+        self.check_collisions(&resolved.manifest)?;
+        let wanted = &resolved.manifest.permissions;
+        let accepted = match &accept {
+            Some(accept) => install::same_permissions(accept, wanted),
+            None => !install::adds_permissions(&old_permissions, wanted),
+        };
+        if !accepted {
+            return Err(Self::permissions_error(name, wanted));
+        }
+        self.write_install(&entry.store, resolved).await
+    }
+
+    pub async fn plugin_rollback(&self, name: &str) -> Result<PluginInfo> {
+        let plugin = name.to_string();
+        self.plugin_op(move |paths, _| install::rollback(paths, &plugin)).await?;
+        self.reload_plugins(None).await?;
+        self.plugin_info_of(name)
+    }
+
+    pub async fn plugin_uninstall(&self, name: &str) -> Result<()> {
+        let plugin = name.to_string();
+        self.plugin_op(move |paths, _| install::uninstall(paths, &plugin)).await?;
+        self.reload_plugins(None).await
+    }
+
+    pub async fn plugin_set_enabled(&self, name: &str, enabled: bool) -> Result<()> {
+        if self.plugin_set().registry.get(name).is_none() {
+            return Err(Error::new(ErrorKind::NotFound, format!("plugin {name} is not installed")));
+        }
+        let plugin = name.to_string();
+        self.plugin_op(move |paths, _| install::set_enabled(paths, &plugin, enabled)).await?;
+        self.reload_plugins(None).await
+    }
+
+    /// Applies every available update that asks for no new permissions; the rest wait for the user.
+    pub async fn auto_update(&self) {
+        let names: Vec<String> = {
+            let set = self.plugin_set();
+            set.registry.plugins().iter().filter(|p| self.update_available(&set, p)).map(|p| p.name.clone()).collect()
+        };
+        for name in names {
+            if let Err(e) = self.plugin_update(&name, None).await {
+                eprintln!("asterismd: auto-update of {name} skipped: {}", e.message);
+            }
+        }
     }
 
     /// Runs a store/install operation off the async runtime under the global store lock.
@@ -367,6 +549,9 @@ impl Daemon {
             }
         }
         self.emit(Event::StoresChanged {});
+        if file.auto_update {
+            self.auto_update().await;
+        }
         match (name, failed) {
             (Some(_), Some(e)) => Err(e),
             _ => Ok(()),
