@@ -1,0 +1,117 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build without bumping, tagging or publishing
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CZ: pipx run --spec commitizen>=4,<5 cz
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.bump.outputs.released }}
+      dry_run: ${{ steps.bump.outputs.dry_run }}
+      version: ${{ steps.bump.outputs.version }}
+      ref: ${{ steps.bump.outputs.ref }}
+      release_id: ${{ steps.release.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The branch tip, not the triggering SHA: a queued run must build on top of the previous bump commit.
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+      - id: bump
+        env:
+          # Real releases only from main, never from a dispatched branch run.
+          DRY_RUN: ${{ inputs.dry_run == true || github.ref != 'refs/heads/main' }}
+        run: |
+          echo "dry_run=$DRY_RUN" >> "$GITHUB_OUTPUT"
+          set +e
+          next=$($CZ bump --get-next --yes)
+          code=$?
+          set -e
+          if [ "$code" = 21 ]; then echo "released=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          [ "$code" = 0 ] || exit "$code"
+          echo "released=true" >> "$GITHUB_OUTPUT"
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          if [ "$DRY_RUN" = true ]; then echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          $CZ bump --yes
+          git push origin "HEAD:${GITHUB_REF_NAME}" "v$next"
+          echo "ref=v$next" >> "$GITHUB_OUTPUT"
+      - id: release
+        if: steps.bump.outputs.released == 'true' && steps.bump.outputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          $CZ changelog "$VERSION" --dry-run > notes.md
+          id=$(gh api "repos/${GITHUB_REPOSITORY}/releases" -f tag_name="v$VERSION" -f name="v$VERSION" -F draft=true -F body=@notes.md --jq .id)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: bump
+    if: needs.bump.outputs.released == 'true'
+    runs-on: macos-14
+    strategy:
+      # tauri-action merges each platform into latest.json; parallel uploads could drop one.
+      max-parallel: 1
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump.outputs.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - run: npm ci
+        working-directory: apps/desktop
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          releaseId: ${{ needs.bump.outputs.release_id }}
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.updater.conf.json
+
+  publish:
+    needs: [bump, build]
+    if: needs.bump.outputs.released == 'true' && needs.bump.outputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_ID: ${{ needs.bump.outputs.release_id }}
+    steps:
+      - name: Require both platforms in latest.json
+        run: |
+          asset=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" --jq '.[] | select(.name == "latest.json") | .id')
+          gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/${asset}" > latest.json
+          jq -e '.platforms["darwin-aarch64"] and .platforms["darwin-x86_64"]' latest.json
+      - run: gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" -F draft=false -f make_latest=true
