@@ -1,5 +1,5 @@
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -26,7 +26,11 @@ pub fn read(worktree: &Path, home: Option<&Path>, path: &str, known_mtime: Optio
     if known_mtime == Some(mtime) {
         return Ok(TaskFileResult { path: shown, mtime, content: None });
     }
-    let bytes = fs::read(&full).map_err(|e| io_error(path, e))?;
+    let mut bytes = Vec::new();
+    fs::File::open(&full).and_then(|f| f.take(MAX_BYTES + 1).read_to_end(&mut bytes)).map_err(|e| io_error(path, e))?;
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(invalid(format!("{path} is larger than 2 MB")));
+    }
     if bytes[..bytes.len().min(SNIFF_BYTES)].contains(&0) {
         return Err(invalid(format!("{path} is a binary file")));
     }
