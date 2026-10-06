@@ -53,7 +53,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           $CZ bump --yes
-          git push origin "HEAD:${GITHUB_REF_NAME}" "v$next"
+          # Atomic: a rejected main push must not leave the tag behind.
+          git push --atomic origin "HEAD:${GITHUB_REF_NAME}" "v$next"
           echo "ref=v$next" >> "$GITHUB_OUTPUT"
       - id: release
         if: steps.bump.outputs.released == 'true' && steps.bump.outputs.dry_run != 'true'
