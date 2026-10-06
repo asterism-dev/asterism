@@ -787,7 +787,11 @@ impl Daemon {
         let params = GetIssueParams { source: p.source.clone(), key: p.key.clone(), project_path: project_path.display().to_string() };
         let issue: Issue = self.task_source_call(&p.source, protocol::method::TASK_SOURCE_GET, params).await?;
         let name = issue_name(&issue.key, &issue.title);
-        let branch = issue.branch.clone().unwrap_or_else(|| format!("asterism/{name}"));
+        let branch = match &issue.branch {
+            Some(branch) => branch.clone(),
+            None if name.is_empty() => String::new(),
+            None => format!("asterism/{name}"),
+        };
         let prompt = issue_prompt(&issue);
         Ok(IssueDetails {
             source: p.source.clone(),
@@ -931,15 +935,41 @@ impl Daemon {
         let origin = git::remote_url(&repo, "origin");
         let (owner, repo_name) = node_settings::layout_owner_repo(origin.as_deref(), &project.name);
         let worktree_root = node_settings::worktrees_dir(&self.paths)?.join(owner).join(repo_name);
-        let id = self.store().insert_task(project.id, &params.title, params.prompt.as_deref(), &base)?;
-        let slug = slugify(id, &params.title);
-        let branch = format!("asterism/{slug}");
+        if let Some(branch) = params.issue.as_ref().and_then(|i| i.branch.as_deref()) {
+            git::check_branch_name(&repo, branch)?;
+        }
+        let issue_name = params.issue.as_ref().map(|i| issue_name(&i.key, &i.title));
+        let derived_title = params.issue.is_some() && params.title.trim().is_empty();
+        let title = if derived_title { issue_name.clone().unwrap_or_default() } else { params.title.clone() };
+        let id = self.store().insert_task(project.id, &title, params.prompt.as_deref(), &base)?;
+        let (slug, branch) = match (&params.issue, issue_name) {
+            (Some(issue), Some(name)) => {
+                let name = if name.is_empty() { id.to_string() } else { name };
+                let branch = issue.branch.clone().unwrap_or_else(|| format!("asterism/{name}"));
+                if git::branch_exists(&repo, &branch) || worktree_root.join(&name).exists() {
+                    (format!("{name}-{id}"), format!("{branch}-{id}"))
+                } else {
+                    (name, branch)
+                }
+            }
+            _ => {
+                let slug = slugify(id, &params.title);
+                let branch = format!("asterism/{slug}");
+                (slug, branch)
+            }
+        };
         let worktree = worktree_root.join(&slug);
         if let Err(e) = git::add_worktree(&repo, &branch, &worktree, &base) {
             self.store().delete_task(id)?;
             return Err(e);
         }
         self.store().set_task_location(id, &slug, &branch, &worktree.to_string_lossy())?;
+        if derived_title && slug != title {
+            self.store().set_task_title(id, &slug)?;
+        }
+        if let Some(issue) = &params.issue {
+            self.store().set_task_issue(id, &IssueRef { source: issue.source.clone(), key: issue.key.clone(), url: issue.url.clone() })?;
+        }
         let task = self.task(id)?;
         self.emit(Event::TaskChanged(task.clone()));
 
