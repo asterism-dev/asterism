@@ -23,11 +23,13 @@ async function load() {
   }
 }
 
+const OFFICIAL_SOURCE = 'https://github.com/asterism-dev/asterism-plugins.git';
+
 async function add() {
   const value = source.value.trim();
   if (!value) return;
   try {
-    if (!(await ask(`${TRUST_WARNING}\n\nAdd ${value}?`, { title: 'Add store', kind: 'warning' }))) return;
+    if (value !== OFFICIAL_SOURCE && !(await ask(`${TRUST_WARNING}\n\nAdd ${value}?`, { title: 'Add store', kind: 'warning' }))) return;
   } catch (e) {
     toast(errorMessage(e));
     return;

@@ -83,6 +83,11 @@ pub fn refresh_store(dir: &Path, env: &GitEnv) -> Result<()> {
     git_local(dir, &["reset", "-q", "--hard", "FETCH_HEAD"], env).map(|_| ())
 }
 
+/// Undoes the last `refresh_store` reset.
+pub fn restore_store(dir: &Path, env: &GitEnv) -> Result<()> {
+    git_local(dir, &["reset", "-q", "--hard", "ORIG_HEAD"], env).map(|_| ())
+}
+
 /// Reads at most `limit` bytes of a regular file; symlinks and special files are refused.
 fn read_regular(path: &Path, limit: u64) -> Option<Vec<u8>> {
     if !std::fs::symlink_metadata(path).ok()?.is_file() {

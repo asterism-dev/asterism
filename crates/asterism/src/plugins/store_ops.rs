@@ -86,13 +86,21 @@ pub fn sync_store(paths: &Paths, store: &StoreConfig, env: &GitEnv) -> Result<St
     if !is_local(&store.source) {
         if dir.join(".git").exists() {
             source::refresh_store(&dir, env)?;
+            if let Err(e) = validate_checkout(&dir, store) {
+                let _ = source::restore_store(&dir, env);
+                return Err(e);
+            }
         } else {
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(paths.plugin_stores_dir())?;
             source::clone_store(&store.source, &dir, env)?;
         }
     }
-    let index = source::read_index(&dir)?;
+    validate_checkout(&dir, store)
+}
+
+fn validate_checkout(dir: &std::path::Path, store: &StoreConfig) -> Result<StoreIndex> {
+    let index = source::read_index(dir)?;
     if index.name != store.name {
         return Err(invalid(format!("store.json of {} now names {:?}; remove and add the store again", store.name, index.name)));
     }

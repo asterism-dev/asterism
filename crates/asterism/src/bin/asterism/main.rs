@@ -458,6 +458,7 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
             if asterism_core::plugins::catalog::official_source().as_deref() != Some(source.as_str()) {
                 confirm(&format!("{TRUST_WARNING} Add {source}?"), yes)?;
             }
+            let source = std::fs::canonicalize(&source).map(|p| p.display().to_string()).unwrap_or(source);
             let store: StoreInfo = client.call(method::STORE_ADD, StoreAddParams { source }).await?;
             print(json, &store, || store_line(&store));
         }
@@ -644,6 +645,7 @@ const TRUST_WARNING: &str = "Plugins from this store run code on your machine.";
 /// Asks on the terminal; without one, only `--yes` confirms.
 fn confirm(question: &str, yes: bool) -> Result<(), ClientError> {
     if yes {
+        eprintln!("{question} (accepted via --yes)");
         return Ok(());
     }
     if !std::io::stdin().is_terminal() {

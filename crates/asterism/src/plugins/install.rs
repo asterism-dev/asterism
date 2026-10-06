@@ -110,6 +110,9 @@ fn record_entry(paths: &Paths, store: &str, resolved: &Resolved) -> Result<Insta
     let old = file.plugins.get(name).cloned();
     if let Some(old) = &old {
         check_version(&old.version)?;
+        if old.store != store {
+            return Err(invalid(format!("{name} is installed from store {}; uninstall it first", old.store)));
+        }
         old.previous.as_deref().map(check_version).transpose()?;
     }
     let previous = match &old {

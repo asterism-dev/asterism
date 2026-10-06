@@ -48,6 +48,13 @@ impl PluginSet {
         let installed_dirs = installed
             .plugins
             .iter()
+            .filter(|(name, entry)| {
+                let ok = manifest::is_version(&entry.version);
+                if !ok {
+                    eprintln!("asterismd: ignoring installed plugin {name}: invalid version {:?}", entry.version);
+                }
+                ok
+            })
             .map(|(name, entry)| (name.clone(), paths.plugins_installed().join(name).join(&entry.version)))
             .collect();
         let registry = Registry::discover(&Sources {

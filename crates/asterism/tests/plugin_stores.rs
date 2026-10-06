@@ -230,3 +230,37 @@ async fn auto_update_skips_new_permissions() {
     let info = plugin(&daemon, "one").unwrap();
     assert_eq!((info.version.as_deref(), info.update_available), (Some("1.1.0"), true));
 }
+
+#[tokio::test]
+async fn auto_update_does_not_undo_a_rollback() {
+    let root = tempfile::tempdir().unwrap();
+    let (_paths, daemon) = daemon_with_stores(root.path());
+    let store = with_local_store(root.path(), &daemon, "acme", "1.0.0", &[]).await;
+    daemon.plugin_install("acme", "one", vec![]).await.unwrap();
+    write_plugin(&store.join("plugins/one"), "one", "1.1.0", &[]);
+    daemon.refresh_stores(None).await.unwrap();
+    daemon.plugin_update("one", None).await.unwrap();
+    daemon.plugin_rollback("one").await.unwrap();
+
+    daemon.set_auto_update(true).await.unwrap();
+    daemon.refresh_stores(None).await.unwrap();
+    assert_eq!(plugin(&daemon, "one").unwrap().version.as_deref(), Some("1.0.0"));
+}
+
+#[tokio::test]
+async fn invalid_store_json_keeps_the_previous_index() {
+    let root = tempfile::tempdir().unwrap();
+    let (_paths, daemon) = daemon_with_stores(root.path());
+    let remote = root.path().join("remote");
+    store_repo(&remote, "remote", json!([{ "name": "one", "path": "plugins/one" }]));
+    write_plugin(&remote.join("plugins/one"), "one", "1.0.0", &[]);
+    commit_all(&remote, "init");
+    daemon.store_add(&format!("file://{}", remote.display())).await.unwrap();
+
+    std::fs::write(remote.join("store.json"), "not json").unwrap();
+    commit_all(&remote, "break");
+    daemon.refresh_stores(None).await.unwrap();
+    let store = daemon.store_list().stores.remove(0);
+    assert!(store.last_error.is_some());
+    assert_eq!(store.plugin_count, 1);
+}

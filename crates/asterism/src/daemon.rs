@@ -368,6 +368,10 @@ impl Daemon {
     }
 
     pub async fn plugin_update(&self, name: &str, accept: Option<Vec<String>>) -> Result<PluginInfo> {
+        self.update_plugin(name, accept, false).await
+    }
+
+    async fn update_plugin(&self, name: &str, accept: Option<Vec<String>>, auto: bool) -> Result<PluginInfo> {
         let entry = self
             .plugin_set()
             .installed
@@ -381,6 +385,10 @@ impl Daemon {
             std::fs::read_to_string(current).ok().and_then(|t| manifest::parse(&t).ok()).map(|m| m.permissions).unwrap_or_default();
         let resolved = self.resolve_entry(&entry.store, name).await?;
         if resolved.manifest.version == entry.version && resolved.git_ref == entry.git_ref {
+            return self.plugin_info_of(name);
+        }
+        // A rollback must not be undone by the next automatic refresh.
+        if auto && entry.previous.as_deref() == Some(resolved.manifest.version.as_str()) {
             return self.plugin_info_of(name);
         }
         self.check_collisions(&resolved.manifest)?;
@@ -424,7 +432,7 @@ impl Daemon {
             set.registry.plugins().iter().filter(|p| self.update_available(&set, p)).map(|p| p.name.clone()).collect()
         };
         for name in names {
-            if let Err(e) = self.plugin_update(&name, None).await {
+            if let Err(e) = self.update_plugin(&name, None, true).await {
                 eprintln!("asterismd: auto-update of {name} skipped: {}", e.message);
             }
         }
