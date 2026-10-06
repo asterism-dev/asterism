@@ -56,11 +56,10 @@ pub fn branches_to_ask(tasks: &[(i64, String)], known: &HashMap<i64, Entry>) -> 
 
 /// Applies one project's poll to `known`; returns the task ids whose PR changed, in id order.
 pub fn merge(project_id: i64, tasks: &[(i64, String)], asked: &[String], reply: Vec<BranchPr>, known: &mut HashMap<i64, Entry>) -> Vec<(i64, Option<PullRequest>)> {
-    let mut reply: HashMap<String, PullRequest> = reply.into_iter().map(|b| (b.branch, b.pr)).collect();
+    let reply: HashMap<String, PullRequest> = reply.into_iter().map(|b| (b.branch, b.pr)).collect();
     let mut changes = Vec::new();
     let current: HashSet<i64> = tasks.iter().map(|(id, _)| *id).collect();
-    let mut gone: Vec<i64> = known.iter().filter(|(id, e)| e.project_id == project_id && !current.contains(id)).map(|(id, _)| *id).collect();
-    gone.sort_unstable();
+    let gone: Vec<i64> = known.iter().filter(|(id, e)| e.project_id == project_id && !current.contains(id)).map(|(id, _)| *id).collect();
     for id in gone {
         known.remove(&id);
         changes.push((id, None));
@@ -69,9 +68,9 @@ pub fn merge(project_id: i64, tasks: &[(i64, String)], asked: &[String], reply: 
         if !asked.contains(branch) {
             continue;
         }
-        let new = reply.remove(branch);
-        let old = known.get(id).filter(|e| e.branch == *branch).map(|e| e.pr.clone());
-        if new == old {
+        let new = reply.get(branch).cloned();
+        let old = known.get(id).map(|e| (e.branch.as_str(), &e.pr));
+        if new.as_ref().map(|p| (branch.as_str(), p)) == old {
             continue;
         }
         match &new {
@@ -180,6 +179,20 @@ mod tests {
         let changes = merge(9, &tasks[..1], &["a".into()], vec![], &mut known);
         assert_eq!(changes, vec![(1, None), (2, None)]);
         assert!(known.contains_key(&3), "other projects are untouched");
+    }
+
+    #[test]
+    fn a_branch_change_replaces_or_drops_the_old_pr() {
+        let mut known = HashMap::new();
+        known.insert(1, Entry { project_id: 9, branch: "x".into(), pr: pr(5, PrState::Open) });
+        let tasks = vec![(1, "y".to_string())];
+        assert_eq!(merge(9, &tasks, &["y".into()], vec![], &mut known), vec![(1, None)]);
+        assert!(!known.contains_key(&1));
+
+        known.insert(1, Entry { project_id: 9, branch: "x".into(), pr: pr(5, PrState::Open) });
+        let reply = vec![BranchPr { branch: "y".into(), pr: pr(7, PrState::Open) }];
+        assert_eq!(merge(9, &tasks, &["y".into()], reply, &mut known), vec![(1, Some(pr(7, PrState::Open)))]);
+        assert_eq!(known[&1].branch, "y");
     }
 
     #[test]
