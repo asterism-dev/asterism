@@ -19,6 +19,7 @@ import SettingsView from './components/SettingsView.vue';
 import { activeTab, applyEvent, isConnected, nextWaiting, refresh, refreshPluginUpdates, selectSession, state, toast } from './store';
 import { appShortcut } from './shortcuts';
 import { leaveSettings } from './settingsGuard';
+import { startUpdater } from './updater';
 import type { NodeEvent, NodeStatus, Session } from './types';
 
 const unlisteners: UnlistenFn[] = [];
@@ -75,6 +76,7 @@ function restart() {
 }
 
 onMounted(async () => {
+  startUpdater().catch((e) => console.warn('updater', e));
   unlisteners.push(await listen<NodeStatus>('node-status', (e) => onStatus(e.payload)));
   unlisteners.push(
     await listen<NodeEvent>('node-event', (e) => {

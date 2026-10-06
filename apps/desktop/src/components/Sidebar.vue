@@ -15,6 +15,7 @@ import { leaveSettings } from '../settingsGuard';
 import { startSession } from '../sessionActions';
 import { archiveTask, deleteTask } from '../taskActions';
 import StatusIndicator from './StatusIndicator.vue';
+import { installUpdate, updateLabel, updater } from '../updater';
 import type { Project, Task } from '../types';
 
 const connected = computed(() => isConnected(state.node));
@@ -181,6 +182,10 @@ function taskMenu(e: MouseEvent, t: Task) {
       <p v-if="connected && !state.projects.length" class="hint">Click + to add, clone or create a project.</p>
     </div>
     <button class="settings-button" :class="{ active: state.settingsOpen }" @click="state.settingsOpen = true"><Settings />Settings<span v-if="state.pluginUpdates" class="badge update-badge" :title="`${state.pluginUpdates} plugin update(s)`">{{ state.pluginUpdates }}</span></button>
+    <div v-if="updater.current" class="version-row">
+      <span class="muted">v{{ updater.current }}</span>
+      <button v-if="updater.available" class="update-button" :disabled="updater.installing" @click="installUpdate()">{{ updateLabel() }}</button>
+    </div>
   </aside>
 </template>
 
@@ -210,4 +215,6 @@ function taskMenu(e: MouseEvent, t: Task) {
 .search { width: 100%; margin: 6px 0 2px; box-sizing: border-box; }
 .settings-button { flex: none; margin: 0; padding: 8px 12px; width: 100%; text-align: left; border: 0; border-top: 1px solid var(--border); border-radius: 0; }
 .settings-button.active { background: var(--select); }
+.version-row { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 12px 8px; font-size: 12px; }
+.update-button { padding: 1px 8px; font-size: 12px; }
 </style>
