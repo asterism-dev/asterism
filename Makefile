@@ -1,12 +1,16 @@
 DESKTOP := apps/desktop
 # Separate home so the dev app runs its own daemon next to the installed app.
 DEV_HOME ?= $(HOME)/.asterism-dev
+# Give a second dev instance its own port and home, e.g. make dev DEV_PORT=1430 DEV_HOME=~/.asterism-dev2
+DEV_PORT ?= 1420
 APP := target/release/bundle/macos/asterism.app
 
 .PHONY: dev dev-stop build open test lint
 
 dev:
-	cd $(DESKTOP) && ASTERISM_HOME=$(DEV_HOME) npm run tauri dev
+	@# tauri dev compiles the app while beforeDevCommand still builds the sidecars, so build them first.
+	cd $(DESKTOP) && npm run sidecars && ASTERISM_HOME=$(DEV_HOME) ASTERISM_DEV_PORT=$(DEV_PORT) npm run tauri dev -- \
+		--config '{"build":{"devUrl":"http://localhost:$(DEV_PORT)"}}'
 
 dev-stop:
 	@# The daemon drops a request whose client hangs up before the reply, so keep nc connected briefly.
