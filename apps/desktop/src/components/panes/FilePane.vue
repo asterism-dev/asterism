@@ -18,10 +18,15 @@ const lineCount = computed(() => (content.value === null ? 0 : content.value.rep
 let mtime: number | null = null;
 let loading = false;
 let timer: number | undefined;
+let savedScroll = 0;
+let jumpPending = false;
 
 function scrollToLine() {
   const line = file.value.line;
   if (!line || !scroller.value) return;
+  // Detached by dockview while hidden; retry once shown.
+  jumpPending = scroller.value.clientHeight === 0;
+  if (jumpPending) return;
   scroller.value.scrollTop = (line - 1) * LINE_HEIGHT - scroller.value.clientHeight / 2;
 }
 
@@ -51,15 +56,22 @@ async function load() {
 function setPolling(visible: boolean) {
   clearInterval(timer);
   timer = undefined;
-  if (!visible) return;
+  if (!visible) {
+    savedScroll = scroller.value?.scrollTop ?? savedScroll;
+    return;
+  }
   void load();
+  void nextTick(() => {
+    if (jumpPending) scrollToLine();
+    else if (scroller.value) scroller.value.scrollTop = savedScroll;
+  });
   // ponytail: one stat per visible file every 1.5 s; switch to a daemon `notify` watcher with a `file.changed` event if many files are open at once.
   timer = window.setInterval(load, POLL_MS);
 }
 
 const subscription = props.params.api.onDidVisibilityChange((e) => setPolling(e.isVisible));
 setPolling(props.params.api.isVisible);
-watch(() => file.value.line, scrollToLine);
+watch(file, () => void nextTick(scrollToLine));
 onUnmounted(() => {
   subscription.dispose();
   clearInterval(timer);
@@ -91,8 +103,7 @@ onUnmounted(() => {
 .gutter { position: sticky; left: 0; display: flex; flex-direction: column; padding: 0 8px; text-align: right; color: var(--muted); background: var(--bg); user-select: none; }
 .code-wrap { position: relative; flex: 1; }
 .mark { position: absolute; left: 0; right: 0; height: 18px; background: color-mix(in srgb, var(--accent) 18%, transparent); pointer-events: none; }
-.code { margin: 0; padding: 0 12px; white-space: pre; }
-.code code { font: inherit; }
+.code { margin: 0; padding: 0 12px; font: inherit; white-space: pre; }
 .code :deep(.hljs-keyword), .code :deep(.hljs-literal), .code :deep(.hljs-selector-tag) { color: var(--hl-keyword); }
 .code :deep(.hljs-string), .code :deep(.hljs-regexp) { color: var(--hl-string); }
 .code :deep(.hljs-comment), .code :deep(.hljs-quote), .code :deep(.hljs-meta) { color: var(--hl-comment); font-style: italic; }

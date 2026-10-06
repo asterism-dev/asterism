@@ -62,8 +62,8 @@ export async function openFile(taskId: number, path: string, line?: number) {
   const params = { taskId, path: shown, line };
   const existing = dock.getPanel(filePanelId(taskId, shown));
   if (existing) {
-    existing.api.updateParameters(params);
     existing.api.setActive();
+    existing.api.updateParameters(params);
     return;
   }
   const base = { id: filePanelId(taskId, shown), component: 'file', tabComponent: 'pane', title: shown.slice(shown.lastIndexOf('/') + 1), params };
