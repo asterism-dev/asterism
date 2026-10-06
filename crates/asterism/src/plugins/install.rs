@@ -32,7 +32,7 @@ fn check_name(name: &str) -> Result<()> {
     if is_slug(name) { Ok(()) } else { Err(invalid(format!("invalid plugin name {name:?}"))) }
 }
 
-fn check_version(version: &str) -> Result<()> {
+pub(crate) fn check_version(version: &str) -> Result<()> {
     if is_version(version) { Ok(()) } else { Err(invalid(format!("invalid version {version:?} in installed.toml"))) }
 }
 
@@ -77,6 +77,14 @@ pub fn install_files(paths: &Paths, resolved: &Resolved) -> Result<()> {
     if let Err(e) = source::copy_tree(&resolved.dir, &temp) {
         let _ = std::fs::remove_dir_all(&temp);
         return Err(e);
+    }
+    let unchanged = std::fs::read_to_string(temp.join("plugin.toml")).ok().and_then(|t| manifest::parse(&t).ok()).is_some_and(|m| {
+        let wanted = &resolved.manifest;
+        m.name == wanted.name && m.version == wanted.version && same_permissions(&m.permissions, &wanted.permissions) && m.capabilities() == wanted.capabilities()
+    });
+    if !unchanged {
+        let _ = std::fs::remove_dir_all(&temp);
+        return Err(invalid("the plugin changed while installing; try again".into()));
     }
     let target = base.join(&resolved.manifest.version);
     let _ = std::fs::remove_dir_all(&target);

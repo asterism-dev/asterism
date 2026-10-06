@@ -176,3 +176,17 @@ fn store_names_must_be_slugs() {
     std::fs::write(env.paths.plugin_stores_file(), "[[store]]\nname = \"../installed\"\nsource = \"/tmp/x\"\n").unwrap();
     assert_eq!(store_ops::load(&env.paths).unwrap_err().kind, ErrorKind::InvalidParams);
 }
+
+#[test]
+fn install_rejects_a_plugin_that_changed_after_resolving() {
+    let env = env();
+    let store = local_store(&env, "1.0.0", &[]);
+    store_ops::add_store(&env.paths, &store.display().to_string(), &isolated_git_env()).unwrap();
+    let (config, entry) = install::find_entry(&env.paths, "local", "one").unwrap();
+    let resolved = install::resolve(&env.paths, &config, &entry, &isolated_git_env()).unwrap();
+    write_plugin(&store.join("plugins/one"), "one", "1.0.0", &["network"]);
+    let err = install::install_files(&env.paths, &resolved).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
+    assert!(err.message.contains("changed while installing"), "{}", err.message);
+    assert!(installed_versions(&env.paths, "one").is_empty());
+}

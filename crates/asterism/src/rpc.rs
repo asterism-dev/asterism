@@ -356,7 +356,7 @@ pub fn host_fn(daemon: Weak<Daemon>) -> HostFn {
     Arc::new(move |_plugin: String, method_name: String, params: Value| {
         let daemon = daemon.clone();
         Box::pin(async move {
-            if method_name.starts_with("plugin.") || HOST_DENIED.contains(&method_name.as_str()) {
+            if method_name.starts_with("plugin.") || method_name.starts_with("store.") || HOST_DENIED.contains(&method_name.as_str()) {
                 return Err(RpcError::new(ErrorKind::MethodNotFound, format!("{method_name} is not available to plugins")));
             }
             let Some(daemon) = daemon.upgrade() else {

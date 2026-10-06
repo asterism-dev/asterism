@@ -375,6 +375,7 @@ impl Daemon {
             .get(name)
             .cloned()
             .ok_or_else(|| Error::new(ErrorKind::NotFound, format!("plugin {name} is not installed from a store")))?;
+        install::check_version(&entry.version)?;
         let current = self.paths.plugins_installed().join(name).join(&entry.version).join("plugin.toml");
         let old_permissions =
             std::fs::read_to_string(current).ok().and_then(|t| manifest::parse(&t).ok()).map(|m| m.permissions).unwrap_or_default();
