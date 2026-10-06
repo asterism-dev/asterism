@@ -1,4 +1,4 @@
-import type { AgentConfig } from './types';
+import type { AgentConfig, AgentInfo } from './types';
 
 export interface EnvRow { key: string; value: string }
 export interface AgentForm { args: string[]; set: EnvRow[]; remove: string[]; mcpText: string; hooksText: string }
@@ -10,8 +10,11 @@ export const HOOKS_EXAMPLE = '{\n  "hooks": {\n    "Stop": [{ "hooks": [{ "type"
 
 type Parsed = { value: Record<string, unknown> | null } | { error: string };
 
-export function supportsAgentOptions(agent: string): boolean {
-  return !BASE_AGENTS.includes(agent);
+export interface AgentSections { args: boolean; mcp: boolean; hooks: boolean }
+
+export function agentSections(info: AgentInfo | undefined): AgentSections {
+  const supported = info?.settings ?? [];
+  return { args: supported.includes('args'), mcp: supported.includes('mcp'), hooks: supported.includes('hooks') };
 }
 
 export function emptyForm(): AgentForm {
@@ -46,7 +49,7 @@ function parseObject(text: string, label: string): Parsed {
 }
 
 /** Browser-side checks only; the daemon validates the shapes and is authoritative. */
-export function fromForm(form: AgentForm, withOptions: boolean): { config: AgentConfig } | { errors: FormErrors } {
+export function fromForm(form: AgentForm, sections: AgentSections): { config: AgentConfig } | { errors: FormErrors } {
   const errors: FormErrors = {};
   // No prototype, so names like "constructor" or "__proto__" are plain keys.
   const set: Record<string, string> = Object.create(null);
@@ -56,14 +59,14 @@ export function fromForm(form: AgentForm, withOptions: boolean): { config: Agent
     if (key in set) errors.env = `${key} is set twice`;
     set[key] = row.value;
   }
-  const mcp: Parsed = withOptions ? parseObject(form.mcpText, 'MCP servers') : { value: null };
-  const hooks: Parsed = withOptions ? parseObject(form.hooksText, 'Hooks') : { value: null };
+  const mcp: Parsed = sections.mcp ? parseObject(form.mcpText, 'MCP servers') : { value: null };
+  const hooks: Parsed = sections.hooks ? parseObject(form.hooksText, 'Hooks') : { value: null };
   if ('error' in mcp) errors.mcp = mcp.error;
   if ('error' in hooks) errors.hooks = hooks.error;
   if ('error' in mcp || 'error' in hooks || Object.keys(errors).length) return { errors };
   return {
     config: {
-      args: withOptions ? form.args.filter((arg) => arg.trim() !== '') : [],
+      args: sections.args ? form.args.filter((arg) => arg.trim() !== '') : [],
       env: { remove: form.remove.map((r) => r.trim()).filter(Boolean), set },
       mcp: mcp.value,
       hooks: hooks.value,
@@ -76,8 +79,5 @@ function quote(arg: string): string {
 }
 
 export function commandPreview(agent: string, form: AgentForm): string {
-  const parts = [agent, '--settings …'];
-  if (form.mcpText.trim()) parts.push('--mcp-config …');
-  parts.push(...form.args.filter((arg) => arg !== '').map(quote));
-  return parts.join(' ');
+  return [agent, '…', ...form.args.filter((arg) => arg !== '').map(quote)].join(' ');
 }

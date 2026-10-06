@@ -2,6 +2,7 @@
 name = "asterism"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [lib]
 name = "asterism_core"
@@ -15,7 +16,20 @@ path = "src/bin/asterismd.rs"
 name = "asterism"
 path = "src/bin/asterism/main.rs"
 
+[[bin]]
+name = "asterism-plugin-github"
+path = "src/bin/asterism-plugin-github/main.rs"
+
+[[bin]]
+name = "asterism-plugin-claude"
+path = "src/bin/asterism-plugin-claude/main.rs"
+
+[[bin]]
+name = "asterism-plugin-linear"
+path = "src/bin/asterism-plugin-linear/main.rs"
+
 [dependencies]
+asterism-plugin = { path = "../asterism-plugin" }
 asterism-proto = { path = "../asterism-proto" }
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
@@ -23,6 +37,7 @@ gethostname = "0.5"
 humantime = "2"
 libc = "0.2"
 toml = "0.8"
+ureq = { version = "2", features = ["json"] }
 portable-pty = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

@@ -15,6 +15,7 @@ fn sample_task() -> Task {
         archived: false,
         created_at: 1_700_000_000,
         last_activity_at: 1_700_000_060,
+        issue: None,
     }
 }
 
@@ -108,12 +109,12 @@ fn session_removed_event_roundtrips() {
 #[test]
 fn project_and_path_types_roundtrip() {
     let create: ProjectCreateParams = serde_json::from_value(json!({"name": "demo"})).unwrap();
-    assert!(create.github.is_none());
+    assert!(create.remote.is_none());
     let create: ProjectCreateParams = serde_json::from_value(json!({
-        "name": "demo", "github": {"owner": "acme", "visibility": "internal"}
+        "name": "demo", "remote": {"forge": "github", "owner": "acme", "visibility": "internal"}
     }))
     .unwrap();
-    assert_eq!(create.github.unwrap().visibility, Visibility::Internal);
+    assert_eq!(create.remote.unwrap().visibility, Visibility::Internal);
 
     let info = NodeConfigInfo {
         config: NodeConfig { paths: PathSettings { repos: "~/r".into(), worktrees: "~/w".into() } },
@@ -122,11 +123,131 @@ fn project_and_path_types_roundtrip() {
     let back: NodeConfigInfo = serde_json::from_value(serde_json::to_value(&info).unwrap()).unwrap();
     assert_eq!(back, info);
 
-    let status: GithubStatus = serde_json::from_value(json!({
-        "available": true, "logged_in": false, "login": null, "orgs": [], "error": "not logged in"
+    let status: ForgeStatus = serde_json::from_value(json!({
+        "available": true, "authenticated": false, "account": null, "owners": [], "error": "not logged in"
     }))
     .unwrap();
-    assert!(status.available && !status.logged_in);
+    assert!(status.available && !status.authenticated);
+}
+
+#[test]
+fn plugin_types_roundtrip() {
+    use asterism_proto::rpc::{ErrorKind, RpcError};
+    use asterism_proto::types::*;
+    use serde_json::json;
+
+    let info = PluginInfo {
+        name: "github".into(),
+        version: Some("0.2.0".into()),
+        description: "GitHub".into(),
+        origin: PluginOrigin::Builtin,
+        path: "/bin".into(),
+        capabilities: vec![Capability { kind: CapabilityKind::Forge, id: "github".into(), description: String::new() }],
+        permissions: vec!["network".into()],
+        state: PluginState::NeedsSetup { missing: vec!["Token".into()] },
+        backend: Some(vec!["/bin/asterism-plugin-github".into()]),
+        store: None,
+        update_available: false,
+        previous_version: None,
+    };
+    let value = serde_json::to_value(&info).unwrap();
+    assert_eq!(value["state"], json!({"state": "needs_setup", "missing": ["Token"]}));
+    assert_eq!(value["capabilities"][0]["kind"], "forge");
+    assert_eq!(serde_json::from_value::<PluginInfo>(value).unwrap(), info);
+
+    let spec: SettingSpec = serde_json::from_value(json!({"key": "api_key", "title": "API key", "type": "secret", "required": true})).unwrap();
+    assert_eq!(spec.kind, SettingType::Secret);
+    assert!(spec.options.is_empty() && spec.default.is_none());
+
+    let event = Event::PluginsChanged {};
+    assert_eq!(event.to_notification().method, "plugins.changed");
+    assert_eq!(Event::from_notification(&event.to_notification()), Some(event));
+
+    // Plain JSON-RPC errors from third-party plugins carry no `data`.
+    let bare: RpcError = serde_json::from_value(json!({"code": -32000, "message": "boom"})).unwrap();
+    assert_eq!(bare.kind(), ErrorKind::Unknown);
+    assert_eq!(ErrorKind::PluginError.code(), -32009);
+}
+
+#[test]
+fn store_types_roundtrip() {
+    use asterism_proto::rpc::ErrorKind;
+    use asterism_proto::types::*;
+    use serde_json::json;
+
+    let list = StoreList {
+        auto_update: true,
+        stores: vec![StoreInfo {
+            name: "asterism-dev".into(),
+            source: "https://example.com/s.git".into(),
+            official: true,
+            last_refreshed: Some(1_700_000_000),
+            last_error: None,
+            plugin_count: 2,
+        }],
+        error: None,
+    };
+    assert_eq!(serde_json::from_value::<StoreList>(serde_json::to_value(&list).unwrap()).unwrap(), list);
+
+    let search: PluginSearchParams = serde_json::from_value(json!({"capability": "task_source"})).unwrap();
+    assert_eq!((search.query, search.capability, search.store), (None, Some(CapabilityKind::TaskSource), None));
+    let update: PluginUpdateParams = serde_json::from_value(json!({"name": "gitlab"})).unwrap();
+    assert_eq!(update.accept_permissions, None);
+    let remove: StoreRemoveParams = serde_json::from_value(json!({"name": "acme"})).unwrap();
+    assert!(!remove.uninstall_plugins);
+
+    // Older daemons' PluginInfo has no store fields.
+    let info: PluginInfo = serde_json::from_value(json!({
+        "name": "github", "version": "0.2.0", "description": "", "origin": "installed", "path": "/p",
+        "capabilities": [], "permissions": [], "state": {"state": "disabled"}, "backend": null
+    }))
+    .unwrap();
+    assert_eq!((info.origin, info.state, info.store, info.update_available), (PluginOrigin::Installed, PluginState::Disabled, None, false));
+
+    let event = Event::StoresChanged {};
+    assert_eq!(event.to_notification().method, "stores.changed");
+    assert_eq!(ErrorKind::PermissionsChanged.code(), -32010);
+}
+
+#[test]
+fn needs_setup_has_its_own_code() {
+    let e = RpcError::new(ErrorKind::NeedsSetup, "linear: API key is not set");
+    let v = serde_json::to_value(&e).unwrap();
+    assert_eq!(v["code"], -32011);
+    assert_eq!(v["data"]["kind"], "needs_setup");
+}
+
+#[test]
+fn tasks_carry_an_optional_issue() {
+    let mut task = sample_task();
+    assert_eq!(serde_json::to_value(&task).unwrap()["issue"], serde_json::Value::Null);
+    task.issue = Some(IssueRef { source: "linear".into(), key: "TRA-1".into(), url: "https://linear.app/x/issue/TRA-1".into() });
+    let back: Task = serde_json::from_value(serde_json::to_value(&task).unwrap()).unwrap();
+    assert_eq!(back, task);
+    let mut old = serde_json::to_value(sample_task()).unwrap();
+    old.as_object_mut().unwrap().remove("issue");
+    assert_eq!(serde_json::from_value::<Task>(old).unwrap().issue, None);
+}
+
+#[test]
+fn task_create_accepts_an_issue_and_defaults_it() {
+    let p: TaskCreateParams = serde_json::from_value(json!({"project_id": 1, "title": "x"})).unwrap();
+    assert_eq!(p.issue, None);
+    let p: TaskCreateParams = serde_json::from_value(json!({
+        "project_id": 1, "title": "", "issue": {"source": "github-issues", "key": "#4", "title": "T", "url": "u"}
+    }))
+    .unwrap();
+    assert_eq!(p.issue.unwrap().branch, None);
+}
+
+#[test]
+fn task_source_params_default_query_and_assignment() {
+    let p: TaskSourceSearchParams = serde_json::from_value(json!({"project_id": 1, "source": "linear"})).unwrap();
+    assert_eq!((p.query.as_str(), p.assigned_to_me), ("", false));
+    let l: TaskSourceListParams = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(l.project_id, None);
+    let hit: IssueHit = serde_json::from_value(json!({"key": "#1", "title": "t", "url": "u", "state": "open"})).unwrap();
+    assert_eq!((hit.assignee, hit.updated_at), (None, None));
 }
 
 #[test]

@@ -1,0 +1,17 @@
+name = "github"
+version = "0.2.0"
+protocol = 1
+description = "GitHub repositories through the GitHub CLI (gh)"
+permissions = ["exec:gh", "exec:git", "network"]
+
+[backend]
+command = ["./asterism-plugin-github"]
+
+[[provides.forge]]
+id = "github"
+display_name = "GitHub"
+hosts = ["github.com"]
+
+[[provides.task_source]]
+id = "github-issues"
+display_name = "GitHub Issues"

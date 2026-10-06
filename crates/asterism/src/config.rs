@@ -11,13 +11,19 @@ use crate::error::{Error, Result};
 /// Inherited variables no session receives unless an agent's `set` adds them back.
 pub const DEFAULT_REMOVE: &[&str] = &["CLAUDE*", "ANTHROPIC_*"];
 
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default, skip_serializing_if = "PathsConfig::is_empty")]
     pub paths: PathsConfig,
     #[serde(default)]
     pub agents: BTreeMap<String, AgentConfig>,
+    /// Non-secret plugin setting values, by plugin name; secrets live in `secrets.toml`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub plugins: BTreeMap<String, BTreeMap<String, toml::Value>>,
+    /// Forge for `owner/repo` shorthand; the first installed forge when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_forge: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]

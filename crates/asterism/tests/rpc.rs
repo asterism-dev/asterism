@@ -42,7 +42,7 @@ async fn shell_session(client: &Client, repo: &Path) -> Session {
     let project: Project =
         client.call(method::PROJECT_ADD, ProjectAddParams { path: repo.display().to_string() }).await.unwrap();
     let created: TaskCreateResult = client
-        .call(method::TASK_CREATE, TaskCreateParams { project_id: project.id, title: "rpc".into(), prompt: None, agent: None, base: None })
+        .call(method::TASK_CREATE, TaskCreateParams { project_id: project.id, title: "rpc".into(), prompt: None, agent: None, base: None, issue: None })
         .await
         .unwrap();
     let kind = SessionKind::Command { argv: vec!["sh".into(), "-c".into(), "echo ready; cat".into()] };
@@ -196,7 +196,7 @@ async fn stalled_attached_client_does_not_block_others() {
     let project: Project =
         good.call(method::PROJECT_ADD, ProjectAddParams { path: repo.path().display().to_string() }).await.unwrap();
     let created: TaskCreateResult = good
-        .call(method::TASK_CREATE, TaskCreateParams { project_id: project.id, title: "yes".into(), prompt: None, agent: None, base: None })
+        .call(method::TASK_CREATE, TaskCreateParams { project_id: project.id, title: "yes".into(), prompt: None, agent: None, base: None, issue: None })
         .await
         .unwrap();
     let kind = SessionKind::Command { argv: vec!["yes".into()] };
@@ -331,11 +331,11 @@ async fn project_and_path_methods_are_routed() {
         .await
         .unwrap_err();
     assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
-    let err = client.call::<_, Project>(method::PROJECT_CLONE, ProjectCloneParams { source: "nope".into() }).await.unwrap_err();
+    let err = client.call::<_, Project>(method::PROJECT_CLONE, ProjectCloneParams { source: "nope".into(), forge: None }).await.unwrap_err();
     assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
-    let err = client.call::<_, Vec<GithubRepo>>(method::GITHUB_REPOS, GithubOwnerParams { owner: "-x".into() }).await.unwrap_err();
+    let err = client.call::<_, Vec<ForgeRepo>>(method::FORGE_REPOS, ForgeOwnerParams { forge: "github".into(), owner: "-x".into() }).await.unwrap_err();
     assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
-    let err = client.call::<_, ProjectCreateResult>(method::PROJECT_CREATE, ProjectCreateParams { name: "../x".into(), github: None }).await.unwrap_err();
+    let err = client.call::<_, ProjectCreateResult>(method::PROJECT_CREATE, ProjectCreateParams { name: "../x".into(), remote: None }).await.unwrap_err();
     assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
 }
 

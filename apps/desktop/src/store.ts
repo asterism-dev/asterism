@@ -1,6 +1,7 @@
 import { reactive } from 'vue';
 import { api } from './api';
-import type { NodeEvent, NodeStatus, Project, Session, SessionStatus, Task } from './types';
+import { updateCount } from './pluginsView';
+import type { AgentInfo, NodeEvent, NodeStatus, Project, Session, SessionStatus, Task } from './types';
 
 export type Tab = number | null;
 export type ProjectDialogTab = 'folder' | 'clone' | 'create';
@@ -12,6 +13,10 @@ export interface State {
   projects: Project[];
   tasks: Task[];
   sessions: Session[];
+  agents: AgentInfo[];
+  pluginsVersion: number;
+  storesVersion: number;
+  pluginUpdates: number;
   selectedTaskId: number | null;
   selectedTab: Record<number, number>;
   tabOrder: Record<number, number[]>;
@@ -19,6 +24,7 @@ export interface State {
   menu: { x: number; y: number; items: MenuItem[] } | null;
   newTaskFor: number | null;
   settingsOpen: boolean;
+  pluginSettingsRequest: string | null;
   settingsDirty: boolean;
   projectPage: number | null;
   tasksVersion: number;
@@ -32,6 +38,10 @@ export function initialState(): State {
     projects: [],
     tasks: [],
     sessions: [],
+    agents: [],
+    pluginsVersion: 0,
+    storesVersion: 0,
+    pluginUpdates: 0,
     selectedTaskId: null,
     selectedTab: {},
     tabOrder: {},
@@ -39,6 +49,7 @@ export function initialState(): State {
     menu: null,
     newTaskFor: null,
     settingsOpen: false,
+    pluginSettingsRequest: null,
     settingsDirty: false,
     projectPage: null,
     tasksVersion: 0,
@@ -140,6 +151,12 @@ function dropTask(s: State, taskId: number) {
 /** Applies a daemon event; returns the session that just started waiting for the user, if any. */
 export function applyEvent(s: State, event: NodeEvent): Session | null {
   switch (event.method) {
+    case 'plugins.changed':
+      s.pluginsVersion++;
+      return null;
+    case 'stores.changed':
+      s.storesVersion++;
+      return null;
     case 'session.status_changed': {
       const session = s.sessions.find((x) => x.id === event.params.session_id);
       if (!session) return null;
@@ -195,10 +212,17 @@ export function toast(message: string) {
   }, TOAST_MS);
 }
 
+/** Daemons without plugin stores leave the badge at zero. */
+export async function refreshPluginUpdates() {
+  state.pluginUpdates = updateCount(await api.plugins());
+}
+
 export async function refresh() {
-  const [projects, tasks, sessions] = await Promise.all([api.projects(), api.tasks(), api.sessions()]);
+  const [projects, tasks, sessions, agents] = await Promise.all([api.projects(), api.tasks(), api.sessions(), api.agents()]);
+  state.agents = agents;
   state.projects = projects;
   state.tasks = tasks;
   state.sessions = sessions;
+  refreshPluginUpdates().catch(() => {});
   if (state.selectedTaskId !== null && !tasks.some((t) => t.id === state.selectedTaskId)) state.selectedTaskId = null;
 }

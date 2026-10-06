@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { revealItemInDir } from '@tauri-apps/plugin-opener';
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { computed, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
@@ -12,6 +12,8 @@ import type { ProjectBranches, Task, Worktree } from '../types';
 
 const props = defineProps<{ projectId: number }>();
 const report = (e: unknown) => toast(errorMessage(e));
+
+function openIssue(url: string) { openUrl(url).catch(report); }
 const project = computed(() => state.projects.find((p) => p.id === props.projectId) ?? null);
 const tab = ref<'tasks' | 'worktrees' | 'settings'>('tasks');
 const branches = ref<ProjectBranches | null>(null);
@@ -84,7 +86,7 @@ watch(() => props.projectId, () => {
         <thead><tr><th>Task</th><th>Branch</th><th>Created</th><th>Activity</th><th>State</th><th></th></tr></thead>
         <tbody>
           <tr v-for="t in shown" :key="t.id">
-            <td>{{ t.title }}</td>
+            <td>{{ t.title }} <a v-if="t.issue" class="muted" :href="t.issue.url" @click.prevent="openIssue(t.issue.url)">{{ t.issue.key }}</a></td>
             <td class="mono">{{ t.branch }}</td>
             <td class="muted">{{ relativeTime(t.created_at, now) }}</td>
             <td class="muted">{{ relativeTime(t.last_activity_at, now) }}</td>

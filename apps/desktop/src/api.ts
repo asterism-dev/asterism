@@ -1,7 +1,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type {
-  AgentConfig, AgentConfigRaw, GithubRepo, GithubStatus, GithubTarget, NodeConfig, NodeConfigInfo, NodeStats, NodeStatus, Project, ProjectBranches, ProjectCreateResult, Session, SessionAttachResult, SessionKind,
-  SessionReadResult, Task, TaskCreateResult, TaskDeleteCheck, TaskDeleteResult, TaskDiffResult, Worktree, WorktreeSize,
+  AgentConfig, AgentConfigRaw, AgentInfo, CapabilityKind, PluginDetails, PluginInfo, SearchHit, StoreInfo, StoreList, PluginSettings, SettingValue, ForgeInfo, ForgeRepo, ForgeStatus, NodeConfig, NodeConfigInfo, NodeStats, NodeStatus, Project, ProjectBranches, ProjectCreateResult, RemoteTarget, Session, SessionAttachResult, SessionKind,
+  SessionReadResult, IssueDetails, IssueHit, Task, TaskCreateResult, TaskIssue, TaskSourceInfo, TaskDeleteCheck, TaskDeleteResult, TaskDiffResult, Worktree, WorktreeSize,
 } from './types';
 
 export class RpcError extends Error {
@@ -66,13 +66,19 @@ export const api = {
   nodeStatus: () => command<NodeStatus>('node_status'),
   restartDaemon: () => command<void>('restart_daemon'),
   appPid: () => command<number>('app_pid'),
+  quit: (stopDaemon: boolean) => command<void>('quit', { stopDaemon }),
   projects: () => call<Project[]>('project.list'),
   addProject: (path: string) => call<Project>('project.add', { path }),
   removeProject: (projectId: number) => call<null>('project.remove', { project_id: projectId }),
   tasks: () => call<Task[]>('task.list', { include_archived: false }),
   allTasks: () => call<Task[]>('task.list', { include_archived: true }),
-  createTask: (p: { project_id: number; title: string; prompt: string | null; agent: string | null; base: string | null }) =>
+  createTask: (p: { project_id: number; title: string; prompt: string | null; agent: string | null; base: string | null; issue?: TaskIssue | null }) =>
     call<TaskCreateResult>('task.create', p),
+  taskSources: (projectId: number) => call<TaskSourceInfo[]>('task_source.list', { project_id: projectId }),
+  searchIssues: (projectId: number, source: string, query: string, assignedToMe: boolean) =>
+    call<IssueHit[]>('task_source.search', { project_id: projectId, source, query, assigned_to_me: assignedToMe }),
+  getIssue: (projectId: number, source: string, key: string) =>
+    call<IssueDetails>('task_source.get', { project_id: projectId, source, key }),
   projectBranches: (projectId: number) => call<ProjectBranches>('project.branches', { project_id: projectId }),
   updateProject: (projectId: number, defaultBase: string | null) =>
     call<Project>('project.update', { project_id: projectId, default_base: defaultBase }),
@@ -96,6 +102,28 @@ export const api = {
   attach: (sessionId: number, onOutput: Channel<string>) =>
     serialized(sessionId, () => command<SessionAttachResult>('session_attach', { sessionId, onOutput })),
   detach: (sessionId: number) => serialized(sessionId, () => command<void>('session_detach', { sessionId })),
+  agents: () => call<AgentInfo[]>('agent.list'),
+  plugins: () => call<PluginInfo[]>('plugin.list'),
+  pluginSettings: (name: string) => call<PluginSettings>('plugin.settings', { name }),
+  setPluginSettings: (name: string, values: Record<string, SettingValue | null>) =>
+    call<null>('plugin.set_settings', { name, values }),
+  reloadPlugins: () => call<null>('plugin.reload', {}),
+  storeList: () => call<StoreList>('store.list'),
+  addStore: (source: string) => call<StoreInfo>('store.add', { source }),
+  removeStore: (name: string, uninstallPlugins: boolean) => call<null>('store.remove', { name, uninstall_plugins: uninstallPlugins }),
+  refreshStores: (name?: string) => call<null>('store.refresh', name ? { name } : {}),
+  setAutoUpdate: (enabled: boolean) => call<null>('store.set_auto_update', { enabled }),
+  searchPlugins: (p: { query?: string; capability?: CapabilityKind; store?: string }) => call<SearchHit[]>('plugin.search', p),
+  pluginDetails: (store: string, name: string) => call<PluginDetails>('plugin.details', { store, name }),
+  installPlugin: (store: string, name: string, acceptPermissions: string[]) =>
+    call<PluginInfo>('plugin.install', { store, name, accept_permissions: acceptPermissions }),
+  updatePlugin: (name: string, acceptPermissions?: string[]) =>
+    call<PluginInfo>('plugin.update', { name, accept_permissions: acceptPermissions ?? null }),
+  rollbackPlugin: (name: string) => call<PluginInfo>('plugin.rollback', { name }),
+  uninstallPlugin: (name: string) => call<null>('plugin.uninstall', { name }),
+  setPluginEnabled: (name: string, enabled: boolean) => call<null>('plugin.set_enabled', { name, enabled }),
+  linkPlugin: (path: string) => call<PluginInfo>('plugin.link', { path }),
+  unlinkPlugin: (name: string) => call<null>('plugin.unlink', { name }),
   agentConfig: (agent: string) => call<AgentConfig>('agent_config.get', { agent }),
   agentConfigRaw: (agent: string) => call<AgentConfigRaw>('agent_config.get_raw', { agent }),
   setAgentConfig: (agent: string, config: AgentConfig) => call<null>('agent_config.set', { agent, config }),
@@ -103,9 +131,10 @@ export const api = {
   nodeConfig: () => call<NodeConfigInfo>('node_config.get'),
   nodeStats: (pids: number[]) => call<NodeStats>('node.stats', { pids }),
   setNodeConfig: (config: NodeConfig) => call<null>('node_config.set', { config }),
-  githubStatus: () => call<GithubStatus>('github.status'),
-  githubRepos: (owner: string) => call<GithubRepo[]>('github.repos', { owner }),
-  cloneProject: (source: string) => call<Project>('project.clone', { source }),
-  createProject: (name: string, github: GithubTarget | null) =>
-    call<ProjectCreateResult>('project.create', { name, github }),
+  forges: () => call<ForgeInfo[]>('forge.list'),
+  forgeStatus: (forge: string) => call<ForgeStatus>('forge.status', { forge }),
+  forgeRepos: (forge: string, owner: string) => call<ForgeRepo[]>('forge.repos', { forge, owner }),
+  cloneProject: (source: string, forge?: string) => call<Project>('project.clone', { source, forge }),
+  createProject: (name: string, remote: RemoteTarget | null) =>
+    call<ProjectCreateResult>('project.create', { name, remote }),
 };

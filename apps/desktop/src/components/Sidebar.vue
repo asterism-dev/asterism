@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ask } from '@tauri-apps/plugin-dialog';
-import { revealItemInDir } from '@tauri-apps/plugin-opener';
-import { ArrowDownUp, ChevronDown, ChevronRight, Plus, Settings, SquarePlus } from 'lucide-vue-next';
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
+import { ArrowDownUp, ChevronDown, ChevronRight, Plus, Settings, SquarePlus } from '@lucide/vue';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
 import {
@@ -9,12 +9,13 @@ import {
   waitingSessions,
 } from '../store';
 import {
-  loadCollapsed, loadSortMode, relativeTime, saveCollapsed, saveSortMode, sortProjects, sortTasks, type SortMode,
+  filterTasks, loadCollapsed, loadSortMode, relativeTime, saveCollapsed, saveSortMode, sortProjects, sortTasks, type SortMode,
 } from '../projects';
 import { leaveSettings } from '../settingsGuard';
 import { startSession } from '../sessionActions';
 import { archiveTask, deleteTask } from '../taskActions';
 import StatusIndicator from './StatusIndicator.vue';
+import { installUpdate, updateLabel, updater } from '../updater';
 import type { Project, Task } from '../types';
 
 const connected = computed(() => isConnected(state.node));
@@ -29,12 +30,22 @@ const offlineLabel = computed(() => {
   }
 });
 const sortMode = ref<SortMode>(loadSortMode());
-const projects = computed(() => sortProjects(state.projects, state.tasks, sortMode.value));
-const tasksOf = (p: Project) => sortTasks(state.tasks.filter((t) => t.project_id === p.id), sortMode.value);
+const query = ref('');
+const searching = computed(() => query.value.trim() !== '');
+const visible = computed(() =>
+  sortProjects(state.projects, state.tasks, sortMode.value).flatMap((project) => {
+    const tasks = filterTasks(project, state.tasks, query.value);
+    return tasks ? [{ project, tasks: sortTasks(tasks, sortMode.value) }] : [];
+  }),
+);
 const now = ref(Date.now() / 1000);
 let clock: ReturnType<typeof setInterval> | undefined;
 const formatDate = (seconds: number) => new Date(seconds * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const report = (e: unknown) => toast(errorMessage(e));
+
+function openIssue(url: string) {
+  openUrl(url).catch(report);
+}
 
 onMounted(() => {
   Object.assign(state.collapsed, loadCollapsed());
@@ -105,11 +116,12 @@ function projectMenu(e: MouseEvent, p: Project) {
 }
 
 function taskMenu(e: MouseEvent, t: Task) {
-  const agents = 'hello' in state.node ? state.node.hello.agents.filter((a) => a.available) : [];
+  const agents = state.agents.filter((a) => a.available);
   showMenu(e, [
-    ...agents.map((a) => ({ label: `New ${a.name} session`, action: () => startSession(t.id, { type: 'agent', name: a.name }) })),
+    ...agents.map((a) => ({ label: `New ${a.display_name || a.name} session`, action: () => startSession(t.id, { type: 'agent', name: a.name }) })),
     { label: 'New shell', action: () => startSession(t.id, { type: 'shell' }) },
     { label: 'Reveal worktree', action: () => revealItemInDir(t.worktree_path).catch(report) },
+    { label: 'Copy branch name', action: () => navigator.clipboard.writeText(t.branch).then(() => toast(`Copied ${t.branch}`), report) },
     { label: 'Archive task', action: () => archiveTask(t) },
     { label: 'Delete task', danger: true, action: () => deleteTask(t) },
   ]);
@@ -126,7 +138,16 @@ function taskMenu(e: MouseEvent, t: Task) {
         <button class="add" :title="`Sort: ${SORT_LABELS[sortMode]}`" aria-label="Sort projects and tasks" @click.stop="sortMenu"><ArrowDownUp /></button>
         <button class="add" title="Add project" aria-label="Add project" @click="state.projectDialog = 'folder'"><SquarePlus /></button>
       </div>
-      <div v-for="p in projects" :key="p.id" class="project" :class="{ offline: !connected }">
+      <input
+        id="sidebar-search"
+        v-model="query"
+        class="search"
+        type="search"
+        placeholder="Search projects and tasks"
+        aria-label="Search projects and tasks"
+        @keydown.esc="query = ''"
+      />
+      <div v-for="{ project: p, tasks } in visible" :key="p.id" class="project" :class="{ offline: !connected }">
         <div class="row project-row" @contextmenu="projectMenu($event, p)">
           <button
             type="button"
@@ -134,13 +155,13 @@ function taskMenu(e: MouseEvent, t: Task) {
             :aria-expanded="!state.collapsed[p.id]"
             :aria-label="state.collapsed[p.id] ? `Expand ${p.name}` : `Collapse ${p.name}`"
             @click="toggle(p)"
-          ><ChevronRight v-if="state.collapsed[p.id]" /><ChevronDown v-else /></button>
+          ><ChevronRight v-if="state.collapsed[p.id] && !searching" /><ChevronDown v-else /></button>
           <span class="name" :class="{ current: state.projectPage === p.id }" @click="openProject(p)">{{ p.name }}</span>
           <button class="hover-action" title="New task" @click="state.newTaskFor = p.id"><Plus />Task</button>
         </div>
-        <template v-if="!state.collapsed[p.id]">
+        <template v-if="searching || !state.collapsed[p.id]">
           <div
-            v-for="t in tasksOf(p)"
+            v-for="t in tasks"
             :key="t.id"
             class="row task-row"
             :class="{ selected: state.selectedTaskId === t.id }"
@@ -148,17 +169,23 @@ function taskMenu(e: MouseEvent, t: Task) {
             @contextmenu="taskMenu($event, t)"
           >
             <span class="name">{{ t.title }}</span>
+            <a v-if="t.issue" class="issue-key muted" :href="t.issue.url" :title="t.issue.url"
+              @click.prevent.stop="openIssue(t.issue.url)">{{ t.issue.key }}</a>
             <span class="age muted" :title="`Created ${formatDate(t.created_at)} · Last activity ${formatDate(t.last_activity_at)}`">
               {{ relativeTime(t.last_activity_at, now) }}
             </span>
-            <button class="hover-action" title="Archive task" @click.stop="archiveTask(t)">Archive</button>
             <StatusIndicator :status="taskStatus(state, t.id)" />
           </div>
         </template>
       </div>
+      <p v-if="searching && !visible.length" class="hint muted">No matches</p>
       <p v-if="connected && !state.projects.length" class="hint">Click + to add, clone or create a project.</p>
     </div>
-    <button class="settings-button" :class="{ active: state.settingsOpen }" @click="state.settingsOpen = true"><Settings />Settings</button>
+    <button class="settings-button" :class="{ active: state.settingsOpen }" @click="state.settingsOpen = true"><Settings />Settings<span v-if="state.pluginUpdates" class="badge update-badge" :title="`${state.pluginUpdates} plugin update(s)`">{{ state.pluginUpdates }}</span></button>
+    <div v-if="updater.current" class="version-row">
+      <span class="muted">v{{ updater.current }}</span>
+      <button v-if="updater.available" class="update-button" :disabled="updater.installing" @click="installUpdate()">{{ updateLabel() }}</button>
+    </div>
   </aside>
 </template>
 
@@ -166,6 +193,7 @@ function taskMenu(e: MouseEvent, t: Task) {
 .sidebar { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
 .sidebar-scroll { flex: 1; overflow-y: auto; padding: 8px 6px; }
 .row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; min-height: 28px; }
+.issue-key { flex: none; font-size: 12px; text-decoration: none; }
 .row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .node-row { font-weight: 600; }
 .project-row { margin-top: 8px; font-weight: 500; }
@@ -178,11 +206,15 @@ function taskMenu(e: MouseEvent, t: Task) {
 .hover-action { visibility: hidden; padding: 0 6px; font-size: 12px; }
 .row:hover .hover-action { visibility: visible; }
 .badge { background: var(--waiting); color: #1d1f27; border: 0; padding: 0 8px; border-radius: 10px; font-size: 12px; }
+.update-badge { margin-left: 6px; }
 .add { padding: 0 7px; }
 .age { flex: none; font-size: 12px; font-variant-numeric: tabular-nums; }
 .offline-label { flex-shrink: 1; min-width: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
 .offline { opacity: 0.55; }
 .hint { padding: 0 8px; }
+.search { width: 100%; margin: 6px 0 2px; box-sizing: border-box; }
 .settings-button { flex: none; margin: 0; padding: 8px 12px; width: 100%; text-align: left; border: 0; border-top: 1px solid var(--border); border-radius: 0; }
 .settings-button.active { background: var(--select); }
+.version-row { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 12px 8px; font-size: 12px; }
+.update-button { padding: 1px 8px; font-size: 12px; }
 </style>

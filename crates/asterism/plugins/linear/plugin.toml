@@ -1,0 +1,19 @@
+name = "linear"
+version = "0.1.0"
+protocol = 1
+description = "Linear issues as a task source"
+permissions = ["network"]
+
+[backend]
+command = ["./asterism-plugin-linear"]
+
+[[provides.task_source]]
+id = "linear"
+display_name = "Linear"
+
+[[settings]]
+key = "api_key"
+title = "API key"
+type = "secret"
+required = true
+description = "Personal API key from Linear → Settings → Security & access"

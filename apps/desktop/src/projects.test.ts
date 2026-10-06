@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { relativeTime, repoNameError, sortProjects, sortTasks, sourceOwnerRepo, targetPath, visibilityChoices } from './projects';
-import type { GithubStatus, Project, Task } from './types';
+import { filterTasks, relativeTime, repoNameError, sortProjects, sortTasks, sourceOwnerRepo, targetPath, visibilityChoices } from './projects';
+import type { ForgeStatus, Project, Task } from './types';
 
-const status: GithubStatus = { available: true, logged_in: true, login: 'me', orgs: ['acme'], error: null };
+const status: ForgeStatus = { available: true, authenticated: true, account: 'me', owners: ['acme'], error: null };
 
 describe('project helpers', () => {
   it('validates repository names like the daemon', () => {
@@ -43,7 +43,7 @@ describe('project helpers', () => {
   });
 
   it('handles null login in visibility choices', () => {
-    const noLogin: GithubStatus = { available: true, logged_in: false, login: null, orgs: ['acme'], error: null };
+    const noLogin: ForgeStatus = { available: true, authenticated: false, account: null, owners: ['acme'], error: null };
     expect(visibilityChoices('acme', noLogin)).toEqual(['private', 'public', 'internal']);
     expect(visibilityChoices('other', noLogin)).toEqual(['private', 'public']);
   });
@@ -52,7 +52,7 @@ describe('project helpers', () => {
 const proj = (id: number, name: string, created_at: number): Project => ({ id, name, path: `/p/${id}`, created_at, default_base: null });
 const tsk = (id: number, project_id: number, title: string, created_at: number, last_activity_at: number): Task => ({
   id, project_id, title, slug: `${id}`, branch: `b${id}`, base_branch: 'main', worktree_path: `/wt/${id}`, prompt: null,
-  archived: false, created_at, last_activity_at,
+  issue: null, archived: false, created_at, last_activity_at,
 });
 
 describe('sorting', () => {
@@ -70,6 +70,22 @@ describe('sorting', () => {
     expect(ids(sortProjects(projects, tasks, 'alphabetical'))).toEqual([2, 3, 1]);
     expect(ids(sortProjects(projects, tasks, 'activity'))).toEqual([1, 2, 3]);
     expect(ids(sortProjects(projects, tasks, 'added'))).toEqual([3, 2, 1]);
+  });
+});
+
+describe('filterTasks', () => {
+  const tasks = [tsk(1, 1, 'Fix login', 0, 0), { ...tsk(2, 1, 'Docs', 0, 0), branch: 'asterism/LOGIN-copy' }, tsk(3, 2, 'Other', 0, 0)];
+  const ids = (items: Task[] | null) => items?.map((t) => t.id) ?? null;
+
+  it('keeps all tasks without a query or when the project name matches', () => {
+    expect(ids(filterTasks(proj(1, 'web', 0), tasks, ' '))).toEqual([1, 2]);
+    expect(ids(filterTasks(proj(1, 'Website', 0), tasks, 'site'))).toEqual([1, 2]);
+  });
+
+  it('matches task titles and branches case-insensitively and hides projects without hits', () => {
+    expect(ids(filterTasks(proj(1, 'web', 0), tasks, 'Login'))).toEqual([1, 2]);
+    expect(ids(filterTasks(proj(1, 'web', 0), tasks, 'docs'))).toEqual([2]);
+    expect(filterTasks(proj(2, 'api', 0), tasks, 'login')).toBeNull();
   });
 });
 

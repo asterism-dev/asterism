@@ -27,10 +27,16 @@ export interface Task {
   base_branch: string;
   worktree_path: string;
   prompt: string | null;
+  issue: IssueRef | null;
   archived: boolean;
   created_at: number;
   last_activity_at: number;
 }
+export interface IssueRef { source: string; key: string; url: string }
+export interface TaskIssue { source: string; key: string; title: string; url: string; branch: string | null }
+export interface IssueHit { key: string; title: string; url: string; state: string; assignee: string | null; updated_at: string | null }
+export interface IssueDetails { source: string; key: string; title: string; url: string; description: string; name: string; branch: string; prompt: string }
+export interface TaskSourceInfo { id: string; display_name: string; plugin: string; available: boolean; reason: string | null }
 export interface Session { id: number; task_id: number; kind: SessionKind; status: SessionStatus }
 export interface AgentInfo { name: string; available: boolean }
 export interface HelloResult {
@@ -57,7 +63,9 @@ export type NodeEvent =
   | { method: 'task.changed'; params: Task }
   | { method: 'task.removed'; params: { task_id: number } }
   | { method: 'project.changed'; params: Project }
-  | { method: 'project.removed'; params: { project_id: number } };
+  | { method: 'project.removed'; params: { project_id: number } }
+  | { method: 'plugins.changed'; params: Record<string, never> }
+  | { method: 'stores.changed'; params: Record<string, never> };
 
 export interface TaskDeleteCheck { dirty: boolean; branch: string; branch_exists: boolean; unmerged_commits: number }
 export interface TaskDeleteResult { warning: string | null }
@@ -74,14 +82,39 @@ export interface SessionReadResult { text: string }
 export interface PathSettings { repos: string; worktrees: string }
 export interface NodeConfig { paths: PathSettings }
 export interface NodeConfigInfo { config: NodeConfig; defaults: PathSettings }
-export interface GithubStatus { available: boolean; logged_in: boolean; login: string | null; orgs: string[]; error: string | null }
-export interface GithubRepo { name_with_owner: string; description: string | null; private: boolean }
+export interface ForgeInfo { id: string; display_name: string; hosts: string[]; plugin: string }
+export interface ForgeStatus { available: boolean; authenticated: boolean; account: string | null; owners: string[]; error: string | null }
+export interface ForgeRepo { owner: string; name: string; description: string | null; private: boolean }
 export type Visibility = 'public' | 'private' | 'internal';
-export interface GithubTarget { owner: string; visibility: Visibility }
+export interface RemoteTarget { forge: string; owner: string; visibility: Visibility }
 export interface ProcStats { memory_bytes: number; cpu_percent: number }
 export interface NodeStats {
   daemon: ProcStats;
   sessions: { session_id: number; stats: ProcStats }[];
   processes: { pid: number; stats: ProcStats }[];
 }
-export interface ProjectCreateResult { project: Project; github_error: string | null }
+export interface ProjectCreateResult { project: Project; remote_error: string | null }
+
+export type AgentSettingKind = 'args' | 'mcp' | 'hooks';
+export interface AgentInfo { name: string; available: boolean; display_name: string; settings: AgentSettingKind[]; plugin: string }
+export type PluginState =
+  | { state: 'ok' }
+  | { state: 'needs_setup'; missing: string[] }
+  | { state: 'broken'; reason: string }
+  | { state: 'failing'; reason: string }
+  | { state: 'disabled' };
+export type CapabilityKind = 'forge' | 'agent' | 'command' | 'task_source';
+export interface Capability { kind: CapabilityKind; id: string; description: string }
+export interface PluginInfo {
+  name: string; version: string | null; description: string; origin: 'builtin' | 'linked' | 'installed'; path: string;
+  capabilities: Capability[]; permissions: string[]; state: PluginState; backend: string[] | null;
+  store: string | null; update_available: boolean; previous_version: string | null;
+}
+export interface StoreInfo { name: string; source: string; official: boolean; last_refreshed: number | null; last_error: string | null; plugin_count: number }
+export interface StoreList { auto_update: boolean; stores: StoreInfo[]; error: string | null }
+export interface SearchHit { store: string; name: string; description: string; tags: string[]; installed_version: string | null; update_available: boolean; linked: boolean }
+export interface PluginDetails { store: string; name: string; version: string; description: string; permissions: string[]; capabilities: Capability[]; readme: string | null }
+export type SettingType = 'string' | 'secret' | 'bool' | 'number' | 'enum';
+export interface SettingSpec { key: string; title: string; type: SettingType; required: boolean; description: string | null; default: unknown; options?: string[] }
+export type SettingValue = string | number | boolean;
+export interface PluginSettings { schema: SettingSpec[]; values: Record<string, SettingValue>; secrets_set: string[] }

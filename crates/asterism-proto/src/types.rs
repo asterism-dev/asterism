@@ -34,8 +34,6 @@ pub mod method {
     pub const SESSION_REMOVE: &str = "session.remove";
     pub const NODE_CONFIG_GET: &str = "node_config.get";
     pub const NODE_CONFIG_SET: &str = "node_config.set";
-    pub const GITHUB_STATUS: &str = "github.status";
-    pub const GITHUB_REPOS: &str = "github.repos";
     pub const PROJECT_CLONE: &str = "project.clone";
     pub const PROJECT_CREATE: &str = "project.create";
     pub const NODE_STATS: &str = "node.stats";
@@ -43,6 +41,31 @@ pub mod method {
     pub const PROJECT_WORKTREE_SIZES: &str = "project.worktree_sizes";
     pub const PROJECT_WORKTREE_REMOVE: &str = "project.worktree_remove";
     pub const PROJECT_WORKTREE_PRUNE: &str = "project.worktree_prune";
+    pub const FORGE_LIST: &str = "forge.list";
+    pub const FORGE_STATUS: &str = "forge.status";
+    pub const FORGE_REPOS: &str = "forge.repos";
+    pub const AGENT_LIST: &str = "agent.list";
+    pub const PLUGIN_LIST: &str = "plugin.list";
+    pub const PLUGIN_LINK: &str = "plugin.link";
+    pub const PLUGIN_UNLINK: &str = "plugin.unlink";
+    pub const PLUGIN_RELOAD: &str = "plugin.reload";
+    pub const PLUGIN_SETTINGS: &str = "plugin.settings";
+    pub const PLUGIN_SET_SETTINGS: &str = "plugin.set_settings";
+    pub const STORE_LIST: &str = "store.list";
+    pub const STORE_ADD: &str = "store.add";
+    pub const STORE_REMOVE: &str = "store.remove";
+    pub const STORE_REFRESH: &str = "store.refresh";
+    pub const STORE_SET_AUTO_UPDATE: &str = "store.set_auto_update";
+    pub const PLUGIN_SEARCH: &str = "plugin.search";
+    pub const PLUGIN_DETAILS: &str = "plugin.details";
+    pub const PLUGIN_INSTALL: &str = "plugin.install";
+    pub const PLUGIN_UPDATE: &str = "plugin.update";
+    pub const PLUGIN_ROLLBACK: &str = "plugin.rollback";
+    pub const PLUGIN_UNINSTALL: &str = "plugin.uninstall";
+    pub const PLUGIN_SET_ENABLED: &str = "plugin.set_enabled";
+    pub const TASK_SOURCE_LIST: &str = "task_source.list";
+    pub const TASK_SOURCE_SEARCH: &str = "task_source.search";
+    pub const TASK_SOURCE_GET: &str = "task_source.get";
     pub const PROJECT_BRANCHES: &str = "project.branches";
     pub const PROJECT_UPDATE: &str = "project.update";
 }
@@ -60,10 +83,25 @@ pub struct HelloParams {
     pub client_kind: ClientKind,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentSettingKind {
+    Args,
+    Mcp,
+    Hooks,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentInfo {
     pub name: String,
     pub available: bool,
+    #[serde(default)]
+    pub display_name: String,
+    /// Which agent settings sections apply; environment settings always do.
+    #[serde(default)]
+    pub settings: Vec<AgentSettingKind>,
+    #[serde(default)]
+    pub plugin: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -200,27 +238,6 @@ pub struct NodeStats {
     pub processes: Vec<PidStats>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GithubStatus {
-    pub available: bool,
-    pub logged_in: bool,
-    pub login: Option<String>,
-    pub orgs: Vec<String>,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GithubRepo {
-    pub name_with_owner: String,
-    pub description: Option<String>,
-    pub private: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GithubOwnerParams {
-    pub owner: String,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Visibility {
@@ -230,27 +247,290 @@ pub enum Visibility {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GithubTarget {
+pub struct ForgeInfo {
+    pub id: String,
+    pub display_name: String,
+    pub hosts: Vec<String>,
+    pub plugin: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForgeStatus {
+    pub available: bool,
+    pub authenticated: bool,
+    pub account: Option<String>,
+    /// Organizations or groups the account can create repositories in.
+    #[serde(default)]
+    pub owners: Vec<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForgeRepo {
+    pub owner: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub private: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForgeParams {
+    pub forge: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForgeOwnerParams {
+    pub forge: String,
+    pub owner: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteTarget {
+    pub forge: String,
     pub owner: String,
     pub visibility: Visibility,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginOrigin {
+    Builtin,
+    Linked,
+    Installed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum PluginState {
+    Ok,
+    NeedsSetup { missing: Vec<String> },
+    Broken { reason: String },
+    Failing { reason: String },
+    Disabled,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityKind {
+    Forge,
+    Agent,
+    Command,
+    TaskSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Capability {
+    pub kind: CapabilityKind,
+    pub id: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginInfo {
+    pub name: String,
+    /// `None` when the manifest could not be read.
+    pub version: Option<String>,
+    pub description: String,
+    pub origin: PluginOrigin,
+    pub path: String,
+    pub capabilities: Vec<Capability>,
+    pub permissions: Vec<String>,
+    pub state: PluginState,
+    /// The backend argv with its program resolved; the CLI runs plugin commands with it.
+    pub backend: Option<Vec<String>>,
+    /// Store an installed plugin came from.
+    #[serde(default)]
+    pub store: Option<String>,
+    #[serde(default)]
+    pub update_available: bool,
+    #[serde(default)]
+    pub previous_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SettingType {
+    String,
+    Secret,
+    Bool,
+    Number,
+    Enum,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SettingSpec {
+    pub key: String,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub kind: SettingType,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub default: Option<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PluginSettings {
+    pub schema: Vec<SettingSpec>,
+    /// Non-secret values, defaults included.
+    pub values: BTreeMap<String, Value>,
+    /// Keys of secrets that are set; their values never leave the daemon.
+    pub secrets_set: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginPathParams {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginNameParams {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginReloadParams {
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PluginSetSettingsParams {
+    pub name: String,
+    /// A `null` value restores the default, or clears a secret.
+    pub values: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoreInfo {
+    pub name: String,
+    pub source: String,
+    pub official: bool,
+    /// Unix seconds of the last successful refresh in this daemon's lifetime.
+    pub last_refreshed: Option<i64>,
+    pub last_error: Option<String>,
+    pub plugin_count: usize,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoreList {
+    pub auto_update: bool,
+    pub stores: Vec<StoreInfo>,
+    /// Set when stores.toml cannot be read.
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoreAddParams {
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoreRemoveParams {
+    pub name: String,
+    #[serde(default)]
+    pub uninstall_plugins: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoreRefreshParams {
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AutoUpdateParams {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginSearchParams {
+    #[serde(default)]
+    pub query: Option<String>,
+    #[serde(default)]
+    pub capability: Option<CapabilityKind>,
+    #[serde(default)]
+    pub store: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SearchHit {
+    pub store: String,
+    pub name: String,
+    pub description: String,
+    pub tags: Vec<String>,
+    /// Set when this plugin is installed from this store.
+    pub installed_version: Option<String>,
+    pub update_available: bool,
+    /// A linked development copy overrides this plugin.
+    pub linked: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginRefParams {
+    pub store: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginDetails {
+    pub store: String,
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub permissions: Vec<String>,
+    pub capabilities: Vec<Capability>,
+    pub readme: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginInstallParams {
+    pub store: String,
+    pub name: String,
+    #[serde(default)]
+    pub accept_permissions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginUpdateParams {
+    pub name: String,
+    /// Without it, an update that adds permissions fails with PermissionsChanged.
+    #[serde(default)]
+    pub accept_permissions: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginEnableParams {
+    pub name: String,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectCloneParams {
     pub source: String,
+    /// Forge for an `owner/repo` shorthand; the default forge when absent.
+    #[serde(default)]
+    pub forge: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectCreateParams {
     pub name: String,
     #[serde(default)]
-    pub github: Option<GithubTarget>,
+    pub remote: Option<RemoteTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectCreateResult {
     pub project: Project,
-    pub github_error: Option<String>,
+    /// Set when the local repository was created but the remote was not.
+    pub remote_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -269,6 +549,8 @@ pub struct Task {
     /// Unix seconds (like `created_at`) of the last session start or status change.
     #[serde(default)]
     pub last_activity_at: i64,
+    #[serde(default)]
+    pub issue: Option<IssueRef>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -282,6 +564,7 @@ pub struct TaskListParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskCreateParams {
     pub project_id: i64,
+    #[serde(default)]
     pub title: String,
     #[serde(default)]
     pub prompt: Option<String>,
@@ -289,6 +572,97 @@ pub struct TaskCreateParams {
     pub agent: Option<String>,
     #[serde(default)]
     pub base: Option<String>,
+    #[serde(default)]
+    pub issue: Option<TaskIssue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IssueRef {
+    pub source: String,
+    pub key: String,
+    pub url: String,
+}
+
+/// The issue a task is created from; `branch` is the branch to create.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskIssue {
+    pub source: String,
+    pub key: String,
+    pub title: String,
+    pub url: String,
+    #[serde(default)]
+    pub branch: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IssueHit {
+    pub key: String,
+    pub title: String,
+    pub url: String,
+    pub state: String,
+    #[serde(default)]
+    pub assignee: Option<String>,
+    /// RFC 3339, as the source reports it.
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+/// An issue as a task-source plugin returns it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Issue {
+    pub key: String,
+    pub title: String,
+    pub url: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub branch: Option<String>,
+}
+
+/// An issue plus the task name, branch and prompt the daemon derives from it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IssueDetails {
+    pub source: String,
+    pub key: String,
+    pub title: String,
+    pub url: String,
+    pub description: String,
+    pub name: String,
+    pub branch: String,
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskSourceInfo {
+    pub id: String,
+    pub display_name: String,
+    pub plugin: String,
+    pub available: bool,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskSourceListParams {
+    #[serde(default)]
+    pub project_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskSourceSearchParams {
+    pub project_id: i64,
+    pub source: String,
+    #[serde(default)]
+    pub query: String,
+    #[serde(default)]
+    pub assigned_to_me: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskSourceGetParams {
+    pub project_id: i64,
+    pub source: String,
+    pub key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -511,6 +885,10 @@ pub enum Event {
     ProjectChanged(Project),
     #[serde(rename = "project.removed")]
     ProjectRemoved { project_id: i64 },
+    #[serde(rename = "plugins.changed")]
+    PluginsChanged {},
+    #[serde(rename = "stores.changed")]
+    StoresChanged {},
 }
 
 impl Event {

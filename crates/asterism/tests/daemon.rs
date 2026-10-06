@@ -20,7 +20,7 @@ fn setup() -> Env {
     let home = tempfile::tempdir().unwrap();
     let repo = tempfile::tempdir().unwrap();
     init_repo(repo.path());
-    let daemon = Daemon::new(Paths { home: home.path().to_path_buf() }).unwrap();
+    let daemon = Daemon::with_options(Paths { home: home.path().to_path_buf() }, common::daemon_options()).unwrap();
     Env { home, repo, daemon }
 }
 
@@ -28,14 +28,14 @@ fn sh(script: &str) -> SessionKind {
     SessionKind::Command { argv: vec!["sh".into(), "-c".into(), script.into()] }
 }
 
-fn new_task(env: &Env, title: &str) -> Task {
+async fn new_task(env: &Env, title: &str) -> Task {
     let project = env.daemon.add_project(&env.repo.path().display().to_string()).unwrap();
-    let params = TaskCreateParams { project_id: project.id, title: title.into(), prompt: None, agent: None, base: None };
-    env.daemon.create_task(params).unwrap().task
+    let params = TaskCreateParams { project_id: project.id, title: title.into(), prompt: None, agent: None, base: None, issue: None };
+    env.daemon.create_task(params).await.unwrap().task
 }
 
-fn start(env: &Env, task: &Task, kind: SessionKind) -> Session {
-    env.daemon.start_session(SessionStartParams { task_id: task.id, kind, prompt: None }).unwrap()
+async fn start(env: &Env, task: &Task, kind: SessionKind) -> Session {
+    env.daemon.start_session(SessionStartParams { task_id: task.id, kind, prompt: None }).await.unwrap()
 }
 
 #[tokio::test]
@@ -54,7 +54,7 @@ async fn projects_are_idempotent_and_must_be_repos() {
 #[tokio::test]
 async fn create_task_makes_branch_and_worktree() {
     let env = setup();
-    let task = new_task(&env, "Fix login");
+    let task = new_task(&env, "Fix login").await;
     assert_eq!(task.branch, "asterism/1-fix-login");
     assert_eq!(task.base_branch, "main");
     assert!(Path::new(&task.worktree_path).join("README.md").exists());
@@ -66,16 +66,16 @@ async fn create_task_makes_branch_and_worktree() {
 async fn unknown_agent_fails_before_creating_anything() {
     let env = setup();
     let project = env.daemon.add_project(&env.repo.path().display().to_string()).unwrap();
-    let params = TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: Some("nope".into()), base: None };
-    assert_eq!(env.daemon.create_task(params).unwrap_err().kind, ErrorKind::AgentUnavailable);
+    let params = TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: Some("nope".into()), base: None, issue: None };
+    assert_eq!(env.daemon.create_task(params).await.unwrap_err().kind, ErrorKind::AgentUnavailable);
     assert!(env.daemon.tasks(TaskListParams::default()).unwrap().is_empty());
 }
 
 #[tokio::test]
 async fn session_send_read_wait_and_kill() {
     let env = setup();
-    let task = new_task(&env, "shell work");
-    let session = start(&env, &task, sh("echo ready; cat"));
+    let task = new_task(&env, "shell work").await;
+    let session = start(&env, &task, sh("echo ready; cat")).await;
     assert_eq!(session.status, SessionStatus::Working);
 
     let idle = env.daemon
@@ -101,8 +101,8 @@ async fn session_send_read_wait_and_kill() {
 #[tokio::test]
 async fn wait_times_out_while_busy() {
     let env = setup();
-    let task = new_task(&env, "busy");
-    let session = start(&env, &task, sh("while true; do echo x; sleep 0.2; done"));
+    let task = new_task(&env, "busy").await;
+    let session = start(&env, &task, sh("while true; do echo x; sleep 0.2; done")).await;
     let err = env.daemon
         .wait(SessionWaitParams { session_id: session.id, until: SessionStatus::Idle, timeout_ms: Some(1_000) })
         .await
@@ -113,8 +113,8 @@ async fn wait_times_out_while_busy() {
 #[tokio::test]
 async fn hooks_override_the_heuristic() {
     let env = setup();
-    let task = new_task(&env, "hooked");
-    let session = start(&env, &task, sh("echo x; sleep 30"));
+    let task = new_task(&env, "hooked").await;
+    let session = start(&env, &task, sh("echo x; sleep 30")).await;
     env.daemon
         .hook(SessionHookParams { session_id: session.id, event: HookEvent::Notification, agent_ref: Some("abc".into()) })
         .unwrap();
@@ -129,7 +129,7 @@ async fn hooks_override_the_heuristic() {
 #[tokio::test]
 async fn archive_keeps_worktree_changes_and_restore_brings_the_task_back() {
     let env = setup();
-    let task = new_task(&env, "dirty");
+    let task = new_task(&env, "dirty").await;
     let scratch = Path::new(&task.worktree_path).join("scratch.txt");
     std::fs::write(&scratch, "wip").unwrap();
 
@@ -145,7 +145,7 @@ async fn archive_keeps_worktree_changes_and_restore_brings_the_task_back() {
 #[tokio::test]
 async fn restore_recreates_a_removed_worktree_from_its_branch() {
     let env = setup();
-    let task = new_task(&env, "legacy");
+    let task = new_task(&env, "legacy").await;
     env.daemon.archive_task(task.id).unwrap();
     run_git(env.repo.path(), &["worktree", "remove", "--force", &task.worktree_path]);
 
@@ -156,7 +156,7 @@ async fn restore_recreates_a_removed_worktree_from_its_branch() {
 #[tokio::test]
 async fn restore_fails_cleanly_without_the_branch() {
     let env = setup();
-    let task = new_task(&env, "gone");
+    let task = new_task(&env, "gone").await;
     env.daemon.archive_task(task.id).unwrap();
     run_git(env.repo.path(), &["worktree", "remove", "--force", &task.worktree_path]);
     run_git(env.repo.path(), &["branch", "-D", &task.branch]);
@@ -168,7 +168,7 @@ async fn restore_fails_cleanly_without_the_branch() {
 #[tokio::test]
 async fn delete_check_reports_dirty_and_unmerged_work() {
     let env = setup();
-    let task = new_task(&env, "check");
+    let task = new_task(&env, "check").await;
     let clean = env.daemon.delete_check(task.id).unwrap();
     assert_eq!(clean, TaskDeleteCheck { dirty: false, branch: task.branch.clone(), branch_exists: true, unmerged_commits: 0 });
 
@@ -185,8 +185,8 @@ async fn delete_check_reports_dirty_and_unmerged_work() {
 #[tokio::test(flavor = "multi_thread")]
 async fn delete_removes_sessions_worktree_and_optionally_the_branch() {
     let env = setup();
-    let keep = new_task(&env, "keep branch");
-    let session = start(&env, &keep, sh("sleep 30"));
+    let keep = new_task(&env, "keep branch").await;
+    let session = start(&env, &keep, sh("sleep 30")).await;
     let mut events = env.daemon.subscribe();
     assert_eq!(env.daemon.delete_task(keep.id, false).unwrap(), TaskDeleteResult { warning: None });
     assert!(!Path::new(&keep.worktree_path).exists());
@@ -200,7 +200,7 @@ async fn delete_removes_sessions_worktree_and_optionally_the_branch() {
     }
     assert_eq!(saw, (true, true));
 
-    let drop = new_task(&env, "drop branch");
+    let drop = new_task(&env, "drop branch").await;
     env.daemon.delete_task(drop.id, true).unwrap();
     let out = std::process::Command::new("git")
         .args(["-C", &env.repo.path().display().to_string(), "rev-parse", "--verify", "--quiet", &drop.branch])
@@ -212,7 +212,7 @@ async fn delete_removes_sessions_worktree_and_optionally_the_branch() {
 #[tokio::test]
 async fn diff_shows_worktree_changes() {
     let env = setup();
-    let task = new_task(&env, "diff me");
+    let task = new_task(&env, "diff me").await;
     std::fs::write(Path::new(&task.worktree_path).join("added.txt"), "new line\n").unwrap();
     let patch = env.daemon.diff(task.id).unwrap().patch;
     assert!(patch.contains("+new line"), "{patch}");
@@ -222,7 +222,7 @@ async fn diff_shows_worktree_changes() {
 async fn changes_are_published_as_events() {
     let env = setup();
     let mut events = env.daemon.subscribe();
-    let task = new_task(&env, "evented");
+    let task = new_task(&env, "evented").await;
     let mut saw_task = false;
     while let Ok(event) = events.try_recv() {
         saw_task |= matches!(event, Event::TaskChanged(t) if t.id == task.id);
@@ -233,7 +233,7 @@ async fn changes_are_published_as_events() {
 #[tokio::test]
 async fn project_with_active_tasks_cannot_be_removed() {
     let env = setup();
-    let task = new_task(&env, "keep");
+    let task = new_task(&env, "keep").await;
     assert_eq!(env.daemon.remove_project(task.project_id).unwrap_err().kind, ErrorKind::InvalidParams);
     env.daemon.archive_task(task.id).unwrap();
     env.daemon.remove_project(task.project_id).unwrap();
@@ -242,22 +242,22 @@ async fn project_with_active_tasks_cannot_be_removed() {
 #[tokio::test]
 async fn task_ids_are_not_reused_after_project_removal() {
     let env = setup();
-    let first = new_task(&env, "again");
+    let first = new_task(&env, "again").await;
     env.daemon.archive_task(first.id).unwrap();
     env.daemon.remove_project(first.project_id).unwrap();
-    let second = new_task(&env, "again");
+    let second = new_task(&env, "again").await;
     assert_ne!(first.branch, second.branch);
 }
 
 #[tokio::test]
 async fn restart_marks_non_resumable_sessions_exited() {
     let env = setup();
-    let task = new_task(&env, "restart");
-    let session = start(&env, &task, sh("sleep 30"));
+    let task = new_task(&env, "restart").await;
+    let session = start(&env, &task, sh("sleep 30")).await;
     assert_eq!(env.daemon.session(session.id).unwrap().status, SessionStatus::Working);
 
-    let restarted = Daemon::new(Paths { home: env.home.path().to_path_buf() }).unwrap();
-    restarted.recover().unwrap();
+    let restarted = Daemon::with_options(Paths { home: env.home.path().to_path_buf() }, common::daemon_options()).unwrap();
+    restarted.recover().await.unwrap();
     assert_eq!(restarted.session(session.id).unwrap().status, SessionStatus::Exited);
     env.daemon.kill_session(session.id).unwrap();
 }
@@ -265,8 +265,8 @@ async fn restart_marks_non_resumable_sessions_exited() {
 #[tokio::test]
 async fn zero_sized_resize_is_rejected() {
     let env = setup();
-    let task = new_task(&env, "resize");
-    let session = start(&env, &task, sh("echo alive; cat"));
+    let task = new_task(&env, "resize").await;
+    let session = start(&env, &task, sh("echo alive; cat")).await;
     let resize = |rows, cols| env.daemon.resize(SessionResizeParams { session_id: session.id, rows, cols });
     assert_eq!(resize(0, 80).unwrap_err().kind, ErrorKind::InvalidParams);
     assert_eq!(resize(24, 0).unwrap_err().kind, ErrorKind::InvalidParams);
@@ -277,8 +277,8 @@ async fn zero_sized_resize_is_rejected() {
 #[tokio::test]
 async fn read_includes_scrollback() {
     let env = setup();
-    let task = new_task(&env, "scroll");
-    let session = start(&env, &task, sh("read go; i=1; while [ $i -le 100 ]; do echo line$i; i=$((i+1)); done; cat"));
+    let task = new_task(&env, "scroll").await;
+    let session = start(&env, &task, sh("read go; i=1; while [ $i -le 100 ]; do echo line$i; i=$((i+1)); done; cat")).await;
     env.daemon.resize(SessionResizeParams { session_id: session.id, rows: 24, cols: 80 }).unwrap();
     env.daemon.send(SessionSendParams { session_id: session.id, text: "go".into(), submit: true }).await.unwrap();
     let read = || env.daemon.read(SessionReadParams { session_id: session.id, lines: 60 }).unwrap().text;
@@ -293,8 +293,8 @@ async fn read_includes_scrollback() {
 #[tokio::test]
 async fn exited_sessions_stay_readable() {
     let env = setup();
-    let task = new_task(&env, "exited");
-    let session = start(&env, &task, sh("echo done-marker"));
+    let task = new_task(&env, "exited").await;
+    let session = start(&env, &task, sh("echo done-marker")).await;
     let status = env.daemon
         .wait(SessionWaitParams { session_id: session.id, until: SessionStatus::Exited, timeout_ms: Some(5_000) })
         .await
@@ -309,8 +309,8 @@ async fn exited_sessions_stay_readable() {
 #[tokio::test]
 async fn submit_marks_hooked_sessions_working() {
     let env = setup();
-    let task = new_task(&env, "submit");
-    let session = start(&env, &task, sh("cat"));
+    let task = new_task(&env, "submit").await;
+    let session = start(&env, &task, sh("cat")).await;
     env.daemon.hook(SessionHookParams { session_id: session.id, event: HookEvent::Stop, agent_ref: None }).unwrap();
     env.daemon.send(SessionSendParams { session_id: session.id, text: "hi".into(), submit: true }).await.unwrap();
     let err = env.daemon
@@ -328,8 +328,8 @@ async fn agent_env_policy_from_node_config_applies_to_sessions() {
         "[agents.command.env]\nremove = [\"HOME\"]\nset = { FOO = \"bar\", ANTHROPIC_BASE_URL = \"http://proxy\" }\n",
     )
     .unwrap();
-    let task = new_task(&env, "env policy");
-    let session = start(&env, &task, sh("echo \"foo=$FOO home=[$HOME] base=$ANTHROPIC_BASE_URL task=$ASTERISM_TASK\"; sleep 30"));
+    let task = new_task(&env, "env policy").await;
+    let session = start(&env, &task, sh("echo \"foo=$FOO home=[$HOME] base=$ANTHROPIC_BASE_URL task=$ASTERISM_TASK\"; sleep 30")).await;
     let read = || env.daemon.read(SessionReadParams { session_id: session.id, lines: 5 }).unwrap().text;
     let expected = format!("foo=bar home=[] base=http://proxy task={}", task.id);
     assert!(eventually(|| read().contains(&expected)).await, "{}", read());
@@ -339,10 +339,11 @@ async fn agent_env_policy_from_node_config_applies_to_sessions() {
 #[tokio::test]
 async fn broken_node_config_fails_session_start_with_a_clear_error() {
     let env = setup();
-    let task = new_task(&env, "broken config");
+    let task = new_task(&env, "broken config").await;
     std::fs::write(env.home.path().join("config.toml"), "[agents.command\n").unwrap();
     let err = env.daemon
         .start_session(SessionStartParams { task_id: task.id, kind: sh("true"), prompt: None })
+        .await
         .unwrap_err();
     assert_eq!(err.kind, ErrorKind::InvalidParams);
     assert!(err.message.contains("config.toml"), "{}", err.message);
@@ -358,8 +359,6 @@ async fn agent_config_roundtrips_through_the_daemon() {
     };
     env.daemon.set_agent_config("claude", &config).unwrap();
     assert_eq!(env.daemon.agent_config("claude").unwrap(), config);
-    let merged = std::fs::read_to_string(env.home.path().join("claude-settings.json")).unwrap();
-    assert!(merged.contains("say done") && merged.contains("hook stop"), "{merged}");
     assert_eq!(
         env.daemon.set_agent_config("shell", &config).unwrap_err().kind,
         ErrorKind::InvalidParams
@@ -374,8 +373,8 @@ async fn shell_env_settings_reach_new_sessions() {
         ..Default::default()
     };
     env.daemon.set_agent_config("command", &config).unwrap();
-    let task = new_task(&env, "settings env");
-    let session = start(&env, &task, sh("echo \"value=$FROM_SETTINGS\"; sleep 30"));
+    let task = new_task(&env, "settings env").await;
+    let session = start(&env, &task, sh("echo \"value=$FROM_SETTINGS\"; sleep 30")).await;
     let read = || env.daemon.read(SessionReadParams { session_id: session.id, lines: 5 }).unwrap().text;
     assert!(eventually(|| read().contains("value=yes")).await, "{}", read());
     env.daemon.remove_session(session.id).await.unwrap();
@@ -384,8 +383,8 @@ async fn shell_env_settings_reach_new_sessions() {
 #[tokio::test]
 async fn remove_session_stops_live_sessions_and_deletes_them() {
     let env = setup();
-    let task = new_task(&env, "remove");
-    let live = start(&env, &task, sh("sleep 30"));
+    let task = new_task(&env, "remove").await;
+    let live = start(&env, &task, sh("sleep 30")).await;
     let mut events = env.daemon.subscribe();
     env.daemon.remove_session(live.id).await.unwrap();
     assert_eq!(env.daemon.session(live.id).unwrap_err().kind, ErrorKind::NotFound);
@@ -398,7 +397,7 @@ async fn remove_session_stops_live_sessions_and_deletes_them() {
     }
     assert!(removed);
 
-    let exited = start(&env, &task, sh("exit 0"));
+    let exited = start(&env, &task, sh("exit 0")).await;
     env.daemon
         .wait(SessionWaitParams { session_id: exited.id, until: SessionStatus::Exited, timeout_ms: Some(5_000) })
         .await
@@ -411,8 +410,8 @@ async fn remove_session_stops_live_sessions_and_deletes_them() {
 #[tokio::test]
 async fn remove_force_kills_stubborn_sessions() {
     let env = setup();
-    let task = new_task(&env, "stubborn");
-    let session = start(&env, &task, sh("trap '' HUP TERM INT; echo pid=$$; while true; do sleep 1; done"));
+    let task = new_task(&env, "stubborn").await;
+    let session = start(&env, &task, sh("trap '' HUP TERM INT; echo pid=$$; while true; do sleep 1; done")).await;
     let read = || env.daemon.read(SessionReadParams { session_id: session.id, lines: 5 }).unwrap().text;
     assert!(eventually(|| read().contains("pid=")).await);
     let text = read();
@@ -429,8 +428,8 @@ async fn remove_force_kills_stubborn_sessions() {
 #[tokio::test(flavor = "multi_thread")]
 async fn stats_cover_running_sessions_and_requested_pids() {
     let env = setup();
-    let task = new_task(&env, "Stats");
-    let session = start(&env, &task, sh("sleep 30"));
+    let task = new_task(&env, "Stats").await;
+    let session = start(&env, &task, sh("sleep 30")).await;
     let me = std::process::id();
     let stats = env.daemon.stats(NodeStatsParams { pids: vec![me] });
     assert!(stats.daemon.memory_bytes > 0);
@@ -445,7 +444,7 @@ async fn stats_cover_running_sessions_and_requested_pids() {
 async fn worktrees_cover_main_linked_and_foreign_checkouts() {
     let env = setup();
     let project = env.daemon.add_project(&env.repo.path().display().to_string()).unwrap();
-    let task = new_task(&env, "listed");
+    let task = new_task(&env, "listed").await;
     let foreign = tempfile::tempdir().unwrap();
     let foreign_path = foreign.path().join("hand-made");
     run_git(env.repo.path(), &["worktree", "add", "-q", "-b", "hand", &foreign_path.display().to_string()]);
@@ -467,7 +466,7 @@ async fn worktrees_cover_main_linked_and_foreign_checkouts() {
 async fn worktree_remove_only_takes_unlinked_listed_worktrees() {
     let env = setup();
     let project = env.daemon.add_project(&env.repo.path().display().to_string()).unwrap();
-    let task = new_task(&env, "linked");
+    let task = new_task(&env, "linked").await;
     let foreign = tempfile::tempdir().unwrap();
     let foreign_path = foreign.path().join("hand-made");
     run_git(env.repo.path(), &["worktree", "add", "-q", "-b", "hand", &foreign_path.display().to_string()]);
@@ -486,7 +485,7 @@ async fn worktree_remove_only_takes_unlinked_listed_worktrees() {
 #[tokio::test]
 async fn restore_refuses_an_occupied_worktree_path() {
     let env = setup();
-    let task = new_task(&env, "occupied");
+    let task = new_task(&env, "occupied").await;
     env.daemon.archive_task(task.id).unwrap();
     run_git(env.repo.path(), &["worktree", "remove", "--force", &task.worktree_path]);
     std::fs::create_dir_all(&task.worktree_path).unwrap();

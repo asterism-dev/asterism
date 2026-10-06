@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use asterism_proto::types::{Project, Session, SessionKind, SessionStatus, Task};
+use asterism_proto::types::{IssueRef, Project, Session, SessionKind, SessionStatus, Task};
 use rusqlite::types::Type;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::de::DeserializeOwned;
@@ -41,12 +41,15 @@ const MIGRATIONS: &[&str] = &[
      ALTER TABLE tasks ADD COLUMN last_activity_at INTEGER NOT NULL DEFAULT 0;
      UPDATE projects SET created_at = unixepoch();
      UPDATE tasks SET created_at = unixepoch(), last_activity_at = unixepoch();",
+    "ALTER TABLE tasks ADD COLUMN issue_source TEXT;
+     ALTER TABLE tasks ADD COLUMN issue_key TEXT;
+     ALTER TABLE tasks ADD COLUMN issue_url TEXT;",
     "ALTER TABLE projects ADD COLUMN default_base TEXT;",
 ];
 
 const PROJECT_COLUMNS: &str = "id, name, path, created_at, default_base";
 const TASK_COLUMNS: &str =
-    "id, project_id, title, slug, branch, base_branch, worktree_path, prompt, archived, created_at, last_activity_at";
+    "id, project_id, title, slug, branch, base_branch, worktree_path, prompt, archived, created_at, last_activity_at, issue_source, issue_key, issue_url";
 const SESSION_COLUMNS: &str = "id, task_id, kind, status, agent_ref";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,6 +130,19 @@ impl Store {
             params![project_id, title, prompt, base_branch],
         )?;
         Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn set_task_issue(&self, id: i64, issue: &IssueRef) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE tasks SET issue_source = ?2, issue_key = ?3, issue_url = ?4 WHERE id = ?1",
+            params![id, issue.source, issue.key, issue.url],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_task_title(&self, id: i64, title: &str) -> rusqlite::Result<()> {
+        self.conn.execute("UPDATE tasks SET title = ?2 WHERE id = ?1", params![id, title])?;
+        Ok(())
     }
 
     pub fn set_task_location(
@@ -266,6 +282,10 @@ fn task_row(row: &Row) -> rusqlite::Result<Task> {
         archived: row.get::<_, i64>(8)? != 0,
         created_at: row.get(9)?,
         last_activity_at: row.get(10)?,
+        issue: match (row.get::<_, Option<String>>(11)?, row.get::<_, Option<String>>(12)?, row.get::<_, Option<String>>(13)?) {
+            (Some(source), Some(key), Some(url)) => Some(IssueRef { source, key, url }),
+            _ => None,
+        },
     })
 }
 
@@ -285,6 +305,27 @@ fn session_row(row: &Row) -> rusqlite::Result<StoredSession> {
 mod tests {
     use asterism_proto::types::{SessionKind, SessionStatus};
     use super::*;
+
+    #[test]
+    fn upgrading_keeps_tasks_and_adds_issue_columns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.sqlite");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            for m in &MIGRATIONS[..2] {
+                conn.execute_batch(m).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 2).unwrap();
+            conn.execute("INSERT INTO projects (name, path) VALUES ('p', '/p')", []).unwrap();
+            conn.execute("INSERT INTO tasks (project_id, title, base_branch) VALUES (1, 'old', 'main')", []).unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        let task = store.task(1).unwrap().unwrap();
+        assert_eq!((task.title.as_str(), task.issue.clone()), ("old", None));
+        let issue = IssueRef { source: "linear".into(), key: "TRA-1".into(), url: "u".into() };
+        store.set_task_issue(1, &issue).unwrap();
+        assert_eq!(store.task(1).unwrap().unwrap().issue, Some(issue));
+    }
 
     #[test]
     fn add_project_is_idempotent_by_path() {

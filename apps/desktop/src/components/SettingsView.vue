@@ -1,45 +1,63 @@
 <script setup lang="ts">
 import { ask } from '@tauri-apps/plugin-dialog';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { computed, ref, watch } from 'vue';
+import { api } from '../api';
+import { pluginTabs, type PluginTab } from '../pluginsView';
 import { BASE_AGENTS } from '../settingsForm';
 import { leaveSettings } from '../settingsGuard';
 import { state } from '../store';
 import { setTheme, themeChoice, type ThemeChoice } from '../theme';
+import { checkForUpdates, installUpdate, RELEASES_URL, updateLabel, updater } from '../updater';
 import AgentSettings from './AgentSettings.vue';
 import PathsSettings from './PathsSettings.vue';
+import PluginSettingsForm from './plugins/PluginSettingsForm.vue';
+import PluginsSettings from './PluginsSettings.vue';
 
-const profiles = computed(() => ('hello' in state.node ? state.node.hello.agents : []));
-const agents = computed(() => [...profiles.value.map((a) => a.name), ...BASE_AGENTS]);
-const agent = ref(agents.value[0] ?? 'shell');
-let picked = false;
-const section = ref<'interface' | 'paths' | 'agents'>('interface');
+type Section = 'interface' | 'paths' | 'sessions' | 'plugins' | 'about' | `plugin:${string}`;
+const section = ref<Section>('interface');
+const sessionKind = ref(BASE_AGENTS[0]);
+const tabs = ref<PluginTab[]>([]);
+const plugin = computed(() => (section.value.startsWith('plugin:') ? section.value.slice('plugin:'.length) : null));
+const pluginAgents = computed(() => state.agents.filter((a) => a.plugin === plugin.value));
+
+watch(() => state.pluginSettingsRequest, (name) => {
+  if (!name) return;
+  section.value = `plugin:${name}`;
+  state.pluginSettingsRequest = null;
+}, { immediate: true });
+
+async function loadTabs() {
+  try {
+    const plugins = await api.plugins();
+    const withSettings: string[] = [];
+    await Promise.all(plugins.map(async (p) => {
+      // Broken or disabled plugins may not report settings; they get no tab anyway.
+      const settings = await api.pluginSettings(p.name).catch(() => null);
+      if (settings?.schema.length) withSettings.push(p.name);
+    }));
+    tabs.value = pluginTabs(plugins, withSettings, state.agents);
+  } catch {
+    // Keep the previous tabs; the Plugins section shows the error.
+  }
+}
+watch(() => [state.pluginsVersion, state.agents], loadTabs, { immediate: true });
 const themes: { value: ThemeChoice; label: string }[] = [
   { value: 'system', label: 'System' },
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
 ];
 
-// Opened before hello: switch to the first profile once it arrives, unless the user already chose.
-watch(agents, (list) => {
-  if (!picked && !state.settingsDirty && list[0]) agent.value = list[0];
-});
-
-function installed(name: string): boolean | null {
-  const profile = profiles.value.find((a) => a.name === name);
-  return profile ? profile.available : null;
-}
-
 async function discardChanges(): Promise<boolean> {
   return !state.settingsDirty || ask('Discard unsaved settings changes?', { title: 'Settings', kind: 'warning' });
 }
 
 async function pick(name: string) {
-  if (name === agent.value || !(await discardChanges())) return;
-  picked = true;
-  agent.value = name;
+  if (name === sessionKind.value || !(await discardChanges())) return;
+  sessionKind.value = name;
 }
 
-async function open(next: 'interface' | 'paths' | 'agents') {
+async function open(next: Section) {
   if (next === section.value || !(await discardChanges())) return;
   state.settingsDirty = false;
   section.value = next;
@@ -56,7 +74,10 @@ async function open(next: 'interface' | 'paths' | 'agents') {
       <nav class="settings-nav">
         <button :class="{ active: section === 'interface' }" @click="open('interface')">Interface</button>
         <button :class="{ active: section === 'paths' }" @click="open('paths')">Paths</button>
-        <button :class="{ active: section === 'agents' }" @click="open('agents')">Agents</button>
+        <button :class="{ active: section === 'sessions' }" @click="open('sessions')">Sessions</button>
+        <button :class="{ active: section === 'plugins' }" @click="open('plugins')">Plugins</button>
+        <button v-for="t in tabs" :key="t.name" :class="{ active: plugin === t.name }" @click="open(`plugin:${t.name}`)">{{ t.title }}</button>
+        <button :class="{ active: section === 'about' }" @click="open('about')">About</button>
       </nav>
       <div v-if="section === 'interface'" class="settings-content">
         <section>
@@ -79,14 +100,41 @@ async function open(next: 'interface' | 'paths' | 'agents') {
       <div v-else-if="section === 'paths'" class="settings-content">
         <PathsSettings />
       </div>
+      <div v-else-if="section === 'plugins'" class="settings-content">
+        <PluginsSettings />
+      </div>
+      <div v-else-if="plugin" class="settings-content">
+        <PluginSettingsForm :key="plugin" :plugin="plugin" />
+        <template v-for="a in pluginAgents" :key="`${plugin}:${a.name}`">
+          <h2 v-if="pluginAgents.length > 1">{{ a.display_name }}</h2>
+          <p v-if="!a.available" class="muted">{{ a.display_name }} is not installed on this node.</p>
+          <AgentSettings :agent="a.name" :info="a" />
+        </template>
+      </div>
+      <div v-else-if="section === 'about'" class="settings-content">
+        <section>
+          <h3>asterism {{ updater.current }}</h3>
+          <div class="about-actions">
+            <button :disabled="updater.checking || updater.installing" @click="checkForUpdates(true)">
+              {{ updater.checking ? 'Checking…' : 'Check for updates' }}
+            </button>
+            <button v-if="updater.available" :disabled="updater.installing" @click="installUpdate()">{{ updateLabel() }}</button>
+          </div>
+          <template v-if="updater.available">
+            <p class="muted">Version {{ updater.available.version }} is available.</p>
+            <pre v-if="updater.available.notes" class="release-notes">{{ updater.available.notes }}</pre>
+          </template>
+          <p v-else-if="updater.checked" class="muted">You're up to date.</p>
+          <p><a href="#" @click.prevent="openUrl(RELEASES_URL)">All releases</a></p>
+        </section>
+      </div>
       <div v-else class="settings-content">
         <div class="agent-picker">
-          <button v-for="name in agents" :key="name" :class="{ active: name === agent }" @click="pick(name)">
-            {{ name }}
-            <span v-if="installed(name) === false" class="muted">(not installed)</span>
+          <button v-for="name in BASE_AGENTS" :key="name" :class="{ active: name === sessionKind }" @click="pick(name)">
+            {{ name.charAt(0).toUpperCase() + name.slice(1) }}
           </button>
         </div>
-        <AgentSettings :key="agent" :agent="agent" />
+        <AgentSettings :key="sessionKind" :agent="sessionKind" />
       </div>
     </div>
   </section>
@@ -103,4 +151,6 @@ async function open(next: 'interface' | 'paths' | 'agents') {
 .settings-content { overflow-y: auto; padding: 14px 18px; }
 .agent-picker { display: flex; gap: 6px; margin-bottom: 12px; }
 .settings-content h3 { font-size: 13px; margin: 0 0 6px; }
+.about-actions { display: flex; gap: 8px; margin: 8px 0; }
+.release-notes { white-space: pre-wrap; font-size: 12px; max-height: 240px; overflow-y: auto; }
 </style>

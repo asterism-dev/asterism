@@ -1,4 +1,4 @@
-import type { GithubStatus, Project, Task, Visibility } from './types';
+import type { ForgeStatus, Project, Task, Visibility } from './types';
 
 export const COLLAPSED_KEY = 'asterism.collapsedProjects';
 
@@ -53,6 +53,15 @@ export function projectActivity(p: Project, tasks: Task[]): number {
 export function sortProjects(projects: Project[], tasks: Task[], mode: SortMode): Project[] {
   const key = (p: Project) => (mode === 'activity' ? projectActivity(p, tasks) : p.created_at);
   return [...projects].sort((a, b) => (mode === 'alphabetical' ? byName(a.name, b.name) : key(b) - key(a)) || b.id - a.id);
+}
+
+/** The project's tasks shown for a search, or null to hide the project; a matching project name keeps all its tasks. */
+export function filterTasks(project: Project, tasks: Task[], query: string): Task[] | null {
+  const q = query.trim().toLowerCase();
+  const own = tasks.filter((t) => t.project_id === project.id);
+  if (!q || project.name.toLowerCase().includes(q)) return own;
+  const hits = own.filter((t) => t.title.toLowerCase().includes(q) || t.branch.toLowerCase().includes(q));
+  return hits.length ? hits : null;
 }
 
 const UNITS: [number, string][] = [[31_536_000, 'y'], [604_800, 'w'], [86_400, 'd'], [3_600, 'h'], [60, 'm']];
@@ -119,10 +128,10 @@ export function targetPath(root: string, owner: string, repo: string): string {
   return `${root.replace(/\/+$/, '')}/${owner}/${repo}`;
 }
 
-export function visibilityChoices(owner: string, status: GithubStatus): Visibility[] {
+export function visibilityChoices(owner: string, status: ForgeStatus): Visibility[] {
   const ownerLower = owner.toLowerCase();
-  const loginLower = status.login?.toLowerCase();
-  const isOrg = status.orgs.some((org) => org.toLowerCase() === ownerLower);
-  const isNotOwn = !loginLower || ownerLower !== loginLower;
+  const accountLower = status.account?.toLowerCase();
+  const isOrg = status.owners.some((org) => org.toLowerCase() === ownerLower);
+  const isNotOwn = !accountLower || ownerLower !== accountLower;
   return isOrg && isNotOwn ? ['private', 'public', 'internal'] : ['private', 'public'];
 }

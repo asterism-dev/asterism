@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { DockviewApi, DockviewPanelApi } from 'dockview-vue';
-import { X } from 'lucide-vue-next';
+import { X } from '@lucide/vue';
 import { computed } from 'vue';
 import { dockFloating, floatUnlocked } from '../dock/main';
 import { closeSession } from '../sessionActions';

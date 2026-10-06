@@ -18,8 +18,15 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "deb", "appimage"],
+    "targets": ["app", "dmg"],
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
-    "externalBin": ["binaries/asterismd", "binaries/asterism"]
+    "externalBin": ["binaries/asterismd", "binaries/asterism", "binaries/asterism-plugin-claude", "binaries/asterism-plugin-github", "binaries/asterism-plugin-linear"],
+    "macOS": { "signingIdentity": "-" }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIwQjMwQjUzMzEyNDhCODcKUldTSGl5UXhVd3V6c0VsMDB6aUZKRFNXRU1yUnBXdTBJTDBsVVlRWTV0eG1ZbVNMaHNsa1VOckgK",
+      "endpoints": ["https://github.com/asterism-dev/asterism/releases/latest/download/latest.json"]
+    }
   }
 }
