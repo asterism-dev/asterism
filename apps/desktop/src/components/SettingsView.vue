@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ask } from '@tauri-apps/plugin-dialog';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { computed, ref, watch } from 'vue';
 import { BASE_AGENTS } from '../settingsForm';
 import { leaveSettings } from '../settingsGuard';
 import { state } from '../store';
 import { setTheme, themeChoice, type ThemeChoice } from '../theme';
+import { checkForUpdates, installUpdate, RELEASES_URL, updateLabel, updater } from '../updater';
 import AgentSettings from './AgentSettings.vue';
 import PathsSettings from './PathsSettings.vue';
 import PluginsSettings from './PluginsSettings.vue';
@@ -13,7 +15,7 @@ const profiles = computed(() => state.agents);
 const agents = computed(() => [...profiles.value.map((a) => a.name), ...BASE_AGENTS]);
 const agent = ref(agents.value[0] ?? 'shell');
 let picked = false;
-const section = ref<'interface' | 'paths' | 'agents' | 'plugins'>('interface');
+const section = ref<'interface' | 'paths' | 'agents' | 'plugins' | 'about'>('interface');
 watch(() => state.pluginSettingsRequest, (name) => { if (name) section.value = 'plugins'; }, { immediate: true });
 const themes: { value: ThemeChoice; label: string }[] = [
   { value: 'system', label: 'System' },
@@ -41,7 +43,7 @@ async function pick(name: string) {
   agent.value = name;
 }
 
-async function open(next: 'interface' | 'paths' | 'agents' | 'plugins') {
+async function open(next: 'interface' | 'paths' | 'agents' | 'plugins' | 'about') {
   if (next === section.value || !(await discardChanges())) return;
   state.settingsDirty = false;
   section.value = next;
@@ -60,6 +62,7 @@ async function open(next: 'interface' | 'paths' | 'agents' | 'plugins') {
         <button :class="{ active: section === 'paths' }" @click="open('paths')">Paths</button>
         <button :class="{ active: section === 'agents' }" @click="open('agents')">Agents</button>
         <button :class="{ active: section === 'plugins' }" @click="open('plugins')">Plugins</button>
+        <button :class="{ active: section === 'about' }" @click="open('about')">About</button>
       </nav>
       <div v-if="section === 'interface'" class="settings-content">
         <section>
@@ -85,6 +88,23 @@ async function open(next: 'interface' | 'paths' | 'agents' | 'plugins') {
       <div v-else-if="section === 'plugins'" class="settings-content">
         <PluginsSettings />
       </div>
+      <div v-else-if="section === 'about'" class="settings-content">
+        <section>
+          <h3>asterism {{ updater.current }}</h3>
+          <div class="about-actions">
+            <button :disabled="updater.checking || updater.installing" @click="checkForUpdates(true)">
+              {{ updater.checking ? 'Checking…' : 'Check for updates' }}
+            </button>
+            <button v-if="updater.available" :disabled="updater.installing" @click="installUpdate()">{{ updateLabel() }}</button>
+          </div>
+          <template v-if="updater.available">
+            <p class="muted">Version {{ updater.available.version }} is available.</p>
+            <pre v-if="updater.available.notes" class="release-notes">{{ updater.available.notes }}</pre>
+          </template>
+          <p v-else-if="updater.checked" class="muted">You're up to date.</p>
+          <p><a href="#" @click.prevent="openUrl(RELEASES_URL)">All releases</a></p>
+        </section>
+      </div>
       <div v-else class="settings-content">
         <div class="agent-picker">
           <button v-for="name in agents" :key="name" :class="{ active: name === agent }" @click="pick(name)">
@@ -109,4 +129,6 @@ async function open(next: 'interface' | 'paths' | 'agents' | 'plugins') {
 .settings-content { overflow-y: auto; padding: 14px 18px; }
 .agent-picker { display: flex; gap: 6px; margin-bottom: 12px; }
 .settings-content h3 { font-size: 13px; margin: 0 0 6px; }
+.about-actions { display: flex; gap: 8px; margin: 8px 0; }
+.release-notes { white-space: pre-wrap; font-size: 12px; max-height: 240px; overflow-y: auto; }
 </style>
