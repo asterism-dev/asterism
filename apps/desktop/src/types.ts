@@ -51,7 +51,8 @@ export type NodeEvent =
   | { method: 'task.removed'; params: { task_id: number } }
   | { method: 'project.changed'; params: Project }
   | { method: 'project.removed'; params: { project_id: number } }
-  | { method: 'plugins.changed'; params: Record<string, never> };
+  | { method: 'plugins.changed'; params: Record<string, never> }
+  | { method: 'stores.changed'; params: Record<string, never> };
 
 export interface TaskDeleteCheck { dirty: boolean; branch: string; branch_exists: boolean; unmerged_commits: number }
 export interface TaskDeleteResult { warning: string | null }
@@ -87,13 +88,19 @@ export type PluginState =
   | { state: 'ok' }
   | { state: 'needs_setup'; missing: string[] }
   | { state: 'broken'; reason: string }
-  | { state: 'failing'; reason: string };
+  | { state: 'failing'; reason: string }
+  | { state: 'disabled' };
 export type CapabilityKind = 'forge' | 'agent' | 'command' | 'task_source';
 export interface Capability { kind: CapabilityKind; id: string; description: string }
 export interface PluginInfo {
-  name: string; version: string | null; description: string; origin: 'builtin' | 'linked'; path: string;
+  name: string; version: string | null; description: string; origin: 'builtin' | 'linked' | 'installed'; path: string;
   capabilities: Capability[]; permissions: string[]; state: PluginState; backend: string[] | null;
+  store: string | null; update_available: boolean; previous_version: string | null;
 }
+export interface StoreInfo { name: string; source: string; official: boolean; last_refreshed: number | null; last_error: string | null; plugin_count: number }
+export interface StoreList { auto_update: boolean; stores: StoreInfo[]; error: string | null }
+export interface SearchHit { store: string; name: string; description: string; tags: string[]; installed_version: string | null; update_available: boolean; linked: boolean }
+export interface PluginDetails { store: string; name: string; version: string; description: string; permissions: string[]; capabilities: Capability[]; readme: string | null }
 export type SettingType = 'string' | 'secret' | 'bool' | 'number' | 'enum';
 export interface SettingSpec { key: string; title: string; type: SettingType; required: boolean; description: string | null; default: unknown; options?: string[] }
 export type SettingValue = string | number | boolean;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { capabilityChips, draftFrom, settingsPatch, stateDetail, stateLabel } from './pluginsView';
-import type { PluginInfo, PluginSettings } from './types';
+import { capabilityChips, draftFrom, hitAction, newPermissions, originLabel, permissionText, settingsPatch, stateDetail, stateLabel, statusLabel, updateCount } from './pluginsView';
+import type { PluginInfo, PluginSettings, SearchHit } from './types';
 
 const settings: PluginSettings = {
   schema: [
@@ -37,5 +37,42 @@ describe('plugin view helpers', () => {
     cleared.cleared.push('token');
     cleared.values.region = '';
     expect(settingsPatch(settings, cleared)).toEqual({ token: null, region: null });
+  });
+});
+
+function plugin(over: Partial<PluginInfo>): PluginInfo {
+  return {
+    name: 'one', version: '1.0.0', description: '', origin: 'installed', path: '/p', capabilities: [], permissions: [],
+    state: { state: 'ok' }, backend: null, store: 'acme', update_available: false, previous_version: null, ...over,
+  };
+}
+
+describe('store helpers', () => {
+  it('shows status only when meaningful', () => {
+    expect(statusLabel(plugin({}))).toBeNull();
+    expect(statusLabel(plugin({ update_available: true }))).toBe('update available');
+    expect(statusLabel(plugin({ state: { state: 'disabled' }, update_available: true }))).toBe('disabled');
+    expect(stateDetail({ state: 'disabled' })).toBeNull();
+  });
+
+  it('names origins and counts updates', () => {
+    expect(originLabel(plugin({}))).toBe('acme');
+    expect(originLabel(plugin({ origin: 'linked' }))).toBe('linked (dev)');
+    expect(originLabel(plugin({ origin: 'builtin', store: null }))).toBe('built-in');
+    expect(updateCount([plugin({ update_available: true }), plugin({}), plugin({ update_available: true, state: { state: 'disabled' } })])).toBe(2);
+  });
+
+  it('explains permissions and finds new ones', () => {
+    expect(permissionText('exec:glab')).toBe('Runs glab');
+    expect(permissionText('network')).toBe('Network access');
+    expect(permissionText('fs:read')).toBe('fs:read');
+    expect(newPermissions(['network'], ['network', 'exec:gh'])).toEqual(['exec:gh']);
+  });
+
+  it('picks the action for a search hit', () => {
+    const hit: SearchHit = { store: 'acme', name: 'one', description: '', tags: [], installed_version: null, update_available: false, linked: false };
+    expect(hitAction(hit)).toBe('install');
+    expect(hitAction({ ...hit, installed_version: '1.0.0' })).toBe('installed');
+    expect(hitAction({ ...hit, installed_version: '1.0.0', update_available: true })).toBe('update');
   });
 });

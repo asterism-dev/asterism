@@ -1,6 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type {
-  AgentConfig, AgentConfigRaw, AgentInfo, PluginInfo, PluginSettings, SettingValue, ForgeInfo, ForgeRepo, ForgeStatus, NodeConfig, NodeConfigInfo, NodeStats, NodeStatus, Project, ProjectCreateResult, RemoteTarget, Session, SessionAttachResult, SessionKind,
+  AgentConfig, AgentConfigRaw, AgentInfo, CapabilityKind, PluginDetails, PluginInfo, SearchHit, StoreInfo, StoreList, PluginSettings, SettingValue, ForgeInfo, ForgeRepo, ForgeStatus, NodeConfig, NodeConfigInfo, NodeStats, NodeStatus, Project, ProjectCreateResult, RemoteTarget, Session, SessionAttachResult, SessionKind,
   SessionReadResult, Task, TaskCreateResult, TaskDeleteCheck, TaskDeleteResult, TaskDiffResult, Worktree, WorktreeSize,
 } from './types';
 
@@ -99,6 +99,22 @@ export const api = {
   setPluginSettings: (name: string, values: Record<string, SettingValue | null>) =>
     call<null>('plugin.set_settings', { name, values }),
   reloadPlugins: () => call<null>('plugin.reload', {}),
+  storeList: () => call<StoreList>('store.list'),
+  addStore: (source: string) => call<StoreInfo>('store.add', { source }),
+  removeStore: (name: string, uninstallPlugins: boolean) => call<null>('store.remove', { name, uninstall_plugins: uninstallPlugins }),
+  refreshStores: (name?: string) => call<null>('store.refresh', name ? { name } : {}),
+  setAutoUpdate: (enabled: boolean) => call<null>('store.set_auto_update', { enabled }),
+  searchPlugins: (p: { query?: string; capability?: CapabilityKind; store?: string }) => call<SearchHit[]>('plugin.search', p),
+  pluginDetails: (store: string, name: string) => call<PluginDetails>('plugin.details', { store, name }),
+  installPlugin: (store: string, name: string, acceptPermissions: string[]) =>
+    call<PluginInfo>('plugin.install', { store, name, accept_permissions: acceptPermissions }),
+  updatePlugin: (name: string, acceptPermissions?: string[]) =>
+    call<PluginInfo>('plugin.update', { name, accept_permissions: acceptPermissions ?? null }),
+  rollbackPlugin: (name: string) => call<PluginInfo>('plugin.rollback', { name }),
+  uninstallPlugin: (name: string) => call<null>('plugin.uninstall', { name }),
+  setPluginEnabled: (name: string, enabled: boolean) => call<null>('plugin.set_enabled', { name, enabled }),
+  linkPlugin: (path: string) => call<PluginInfo>('plugin.link', { path }),
+  unlinkPlugin: (name: string) => call<null>('plugin.unlink', { name }),
   agentConfig: (agent: string) => call<AgentConfig>('agent_config.get', { agent }),
   agentConfigRaw: (agent: string) => call<AgentConfigRaw>('agent_config.get_raw', { agent }),
   setAgentConfig: (agent: string, config: AgentConfig) => call<null>('agent_config.set', { agent, config }),

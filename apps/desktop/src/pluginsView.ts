@@ -1,4 +1,4 @@
-import type { CapabilityKind, PluginInfo, PluginSettings, PluginState, SettingSpec, SettingValue } from './types';
+import type { CapabilityKind, PluginInfo, PluginSettings, PluginState, SearchHit, SettingSpec, SettingValue } from './types';
 
 export function stateLabel(state: PluginState): string | null {
   switch (state.state) {
@@ -6,6 +6,8 @@ export function stateLabel(state: PluginState): string | null {
       return null;
     case 'needs_setup':
       return 'needs setup';
+    case 'disabled':
+      return 'disabled';
     case 'broken':
     case 'failing':
       return state.state;
@@ -15,6 +17,7 @@ export function stateLabel(state: PluginState): string | null {
 export function stateDetail(state: PluginState): string | null {
   switch (state.state) {
     case 'ok':
+    case 'disabled':
       return null;
     case 'needs_setup':
       return `Missing: ${state.missing.join(', ')}`;
@@ -56,4 +59,46 @@ export function settingsPatch(settings: PluginSettings, draft: SettingsDraft): R
     patch[spec.key] = value === '' ? null : value;
   }
   return patch;
+}
+
+/** The status shown after a plugin's name; a problem outranks an available update. */
+export function statusLabel(p: PluginInfo): string | null {
+  return stateLabel(p.state) ?? (p.update_available ? 'update available' : null);
+}
+
+export function originLabel(p: PluginInfo): string {
+  switch (p.origin) {
+    case 'builtin':
+      return 'built-in';
+    case 'linked':
+      return 'linked (dev)';
+    case 'installed':
+      return p.store ?? 'installed';
+  }
+}
+
+export function updateCount(plugins: PluginInfo[]): number {
+  return plugins.filter((p) => p.update_available).length;
+}
+
+export function permissionText(permission: string): string {
+  if (permission === 'network') return 'Network access';
+  if (permission.startsWith('exec:')) return `Runs ${permission.slice('exec:'.length)}`;
+  return permission;
+}
+
+export function newPermissions(current: string[], offered: string[]): string[] {
+  return offered.filter((p) => !current.includes(p));
+}
+
+export const CAPABILITY_FILTERS: { value: CapabilityKind | null; label: string }[] = [
+  { value: null, label: 'All' },
+  { value: 'forge', label: 'Forges' },
+  { value: 'agent', label: 'Agents' },
+  { value: 'task_source', label: 'Task sources' },
+];
+
+export function hitAction(hit: SearchHit): 'install' | 'update' | 'installed' {
+  if (!hit.installed_version) return 'install';
+  return hit.update_available ? 'update' : 'installed';
 }
