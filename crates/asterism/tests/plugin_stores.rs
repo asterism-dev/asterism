@@ -22,6 +22,7 @@ async fn stores_are_added_listed_refreshed_and_removed() {
     assert!(added.last_refreshed.is_some());
     assert_eq!(events.recv().await.unwrap(), Event::StoresChanged {});
     daemon.store_add(&format!("file://{}", remote.display())).await.unwrap();
+    assert_eq!(events.recv().await.unwrap(), Event::StoresChanged {});
 
     let list = daemon.store_list();
     assert_eq!(list.stores.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["local", "remote"]);
@@ -29,8 +30,13 @@ async fn stores_are_added_listed_refreshed_and_removed() {
 
     daemon.set_auto_update(true).await.unwrap();
     assert!(daemon.store_list().auto_update);
+    assert_eq!(events.recv().await.unwrap(), Event::StoresChanged {});
+
+    daemon.refresh_stores(None).await.unwrap();
+    assert_eq!(events.recv().await.unwrap(), Event::StoresChanged {});
 
     daemon.store_remove("remote", false).await.unwrap();
+    assert_eq!(events.recv().await.unwrap(), Event::StoresChanged {});
     assert_eq!(daemon.store_list().stores.len(), 1);
     assert_eq!(daemon.store_remove("nope", false).await.unwrap_err().kind, asterism_proto::rpc::ErrorKind::NotFound);
 }

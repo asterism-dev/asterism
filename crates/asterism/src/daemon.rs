@@ -16,11 +16,11 @@ use crate::agent_settings;
 use crate::agents;
 use crate::config::{self, Config};
 use crate::error::{Error, Result};
+use crate::git::GitEnv;
 use crate::paths::Paths;
 use crate::plugins::manifest::{self, AgentDecl, LaunchKind};
 use crate::plugins::process::{self, HostFn};
 use crate::plugins::registry::{self, Plugin, Status};
-use crate::git::GitEnv;
 use crate::plugins::catalog::{self, StoreConfig};
 use crate::plugins::{install, settings, source, store_ops, PluginSet, Runtime, STORE_LOCK};
 use crate::proc_stats::{self, CpuTracker};
@@ -331,10 +331,10 @@ impl Daemon {
             })
             .await?;
         lock(&self.store_status).remove(name);
+        self.emit(Event::StoresChanged {});
         if !uninstalled.is_empty() {
             self.reload_plugins(None).await?;
         }
-        self.emit(Event::StoresChanged {});
         Ok(())
     }
 
@@ -348,7 +348,18 @@ impl Daemon {
         let mut failed = None;
         for store in targets {
             let config = store.clone();
-            let result = self.plugin_op(move |paths, env| store_ops::sync_store(paths, &config, env)).await;
+            let result = self
+                .plugin_op(move |paths, env| {
+                    // Skip a store removed since the snapshot so its checkout is not re-created.
+                    if !store_ops::load(paths)?.stores.iter().any(|s| s.name == config.name) {
+                        return Ok(false);
+                    }
+                    store_ops::sync_store(paths, &config, env).map(|_| true)
+                })
+                .await;
+            if matches!(result, Ok(false)) {
+                continue;
+            }
             self.set_store_status(&store.name, &result);
             if let Err(e) = result {
                 eprintln!("asterismd: refreshing store {}: {}", store.name, e.message);

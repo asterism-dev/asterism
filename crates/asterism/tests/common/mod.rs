@@ -162,7 +162,7 @@ pub fn store_repo(dir: &Path, store: &str, entries: serde_json::Value) {
     std::fs::write(dir.join("store.json"), serde_json::to_string_pretty(&index).unwrap()).unwrap();
 }
 
-/// A daemon whose stores.toml starts empty, so nothing reaches the network.
+/// A daemon with an empty stores.toml unless one exists, so nothing reaches the network.
 pub fn daemon_with_stores(home: &Path) -> (Paths, std::sync::Arc<asterism_core::daemon::Daemon>) {
     let paths = Paths { home: home.join("h") };
     paths.ensure_dirs().unwrap();
