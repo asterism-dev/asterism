@@ -63,7 +63,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .menu button { display: block; width: 100%; text-align: left; border: 0; }
 .menu button.danger { color: var(--danger); }
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); display: grid; place-items: center; z-index: 10001; }
-.modal { background: var(--panel); border-radius: 10px; padding: 18px; width: 460px; display: flex; flex-direction: column; gap: 10px; }
+.modal { background: var(--panel); border-radius: 10px; padding: 18px; width: 460px; max-height: calc(100vh - 32px); overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 .modal .actions { display: flex; justify-content: flex-end; gap: 8px; }
 .add-form { display: flex; flex-direction: column; gap: 10px; }
 .modal label { display: flex; flex-direction: column; gap: 6px; }

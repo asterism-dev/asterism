@@ -90,10 +90,19 @@ function openSettings(plugin: string) {
   emit('close');
 }
 
+function clearPicked() {
+  // Title and prompt came from the picked issue; keep them only for that issue.
+  if (details.value) {
+    title.value = '';
+    prompt.value = '';
+  }
+  details.value = null;
+}
+
 watch(projectId, () => {
   searchSeq++;
   pickSeq++;
-  details.value = null;
+  clearPicked();
   hits.value = [];
   searchError.value = null;
   loadSources().then(search);
@@ -101,7 +110,7 @@ watch(projectId, () => {
 watch(source, () => {
   clearTimeout(debounce);
   pickSeq++;
-  details.value = null;
+  clearPicked();
   hits.value = [];
   searchError.value = null;
   search();
