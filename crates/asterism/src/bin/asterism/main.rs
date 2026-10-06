@@ -72,9 +72,55 @@ enum Cmd {
     Daemon(DaemonCmd),
     #[command(subcommand)]
     Plugin(PluginCmd),
+    #[command(subcommand)]
+    Store(StoreCmd),
     /// A command contributed by a plugin (see `asterism plugin list`).
     #[command(external_subcommand)]
     External(Vec<String>),
+}
+
+#[derive(Subcommand)]
+enum StoreCmd {
+    List,
+    /// Add a store from a git URL or a local directory.
+    Add {
+        source: String,
+        #[arg(long)]
+        yes: bool,
+    },
+    Remove {
+        name: String,
+        #[arg(long)]
+        uninstall_plugins: bool,
+    },
+    Refresh { name: Option<String> },
+    /// Install plugin updates automatically when stores refresh.
+    AutoUpdate { state: OnOff },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum OnOff {
+    On,
+    Off,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum CapabilityArg {
+    Forge,
+    Agent,
+    Command,
+    TaskSource,
+}
+
+impl From<CapabilityArg> for CapabilityKind {
+    fn from(arg: CapabilityArg) -> Self {
+        match arg {
+            CapabilityArg::Forge => Self::Forge,
+            CapabilityArg::Agent => Self::Agent,
+            CapabilityArg::Command => Self::Command,
+            CapabilityArg::TaskSource => Self::TaskSource,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -93,6 +139,39 @@ enum PluginCmd {
         #[arg(long)]
         clear: bool,
     },
+    /// Search the plugins of all stores.
+    Search {
+        query: Option<String>,
+        #[arg(long, value_enum)]
+        capability: Option<CapabilityArg>,
+        #[arg(long)]
+        store: Option<String>,
+    },
+    /// Show a store plugin's details and README.
+    Info {
+        name: String,
+        #[arg(long)]
+        store: Option<String>,
+    },
+    Install {
+        name: String,
+        #[arg(long)]
+        store: Option<String>,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Update one plugin, or all with updates.
+    Update {
+        name: Option<String>,
+        #[arg(long, conflicts_with = "name")]
+        all: bool,
+        #[arg(long)]
+        yes: bool,
+    },
+    Rollback { name: String },
+    Uninstall { name: String },
+    Enable { name: String },
+    Disable { name: String },
 }
 
 #[derive(Subcommand)]
@@ -361,6 +440,97 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
             print_ok(json);
         }
         Cmd::Plugin(PluginCmd::Config { name, key, value, clear }) => plugin_config(&client, json, name, key, value, clear).await?,
+        Cmd::Store(StoreCmd::List) => {
+            let list: StoreList = client.call(method::STORE_LIST, ()).await?;
+            print(json, &list, || {
+                let mut out = format!("auto-update: {}", if list.auto_update { "on" } else { "off" });
+                if let Some(error) = &list.error {
+                    out.push_str(&format!("\nerror: {error}"));
+                }
+                for store in &list.stores {
+                    out.push('\n');
+                    out.push_str(&store_line(store));
+                }
+                out
+            });
+        }
+        Cmd::Store(StoreCmd::Add { source, yes }) => {
+            if asterism_core::plugins::catalog::official_source().as_deref() != Some(source.as_str()) {
+                confirm(&format!("{TRUST_WARNING} Add {source}?"), yes)?;
+            }
+            let store: StoreInfo = client.call(method::STORE_ADD, StoreAddParams { source }).await?;
+            print(json, &store, || store_line(&store));
+        }
+        Cmd::Store(StoreCmd::Remove { name, uninstall_plugins }) => {
+            client.call::<_, ()>(method::STORE_REMOVE, StoreRemoveParams { name, uninstall_plugins }).await?;
+            print_ok(json);
+        }
+        Cmd::Store(StoreCmd::Refresh { name }) => {
+            client.call::<_, ()>(method::STORE_REFRESH, StoreRefreshParams { name }).await?;
+            print_ok(json);
+        }
+        Cmd::Store(StoreCmd::AutoUpdate { state }) => {
+            let enabled = matches!(state, OnOff::On);
+            client.call::<_, ()>(method::STORE_SET_AUTO_UPDATE, AutoUpdateParams { enabled }).await?;
+            print_ok(json);
+        }
+        Cmd::Plugin(PluginCmd::Search { query, capability, store }) => {
+            let params = PluginSearchParams { query, capability: capability.map(Into::into), store };
+            let hits: Vec<SearchHit> = client.call(method::PLUGIN_SEARCH, params).await?;
+            print(json, &hits, || lines(&hits, hit_line));
+        }
+        Cmd::Plugin(PluginCmd::Info { name, store }) => {
+            let store = resolve_store(&client, &name, store).await?;
+            let d = details(&client, &store, &name).await?;
+            print(json, &d, || {
+                let capabilities: Vec<String> = d.capabilities.iter().map(|c| format!("{}:{}", label(&c.kind), c.id)).collect();
+                let mut out = format!("{} {} ({})\n{}\ncapabilities: {}\n{}", d.name, d.version, d.store, d.description, capabilities.join(", "), permission_list(&d.permissions));
+                if let Some(readme) = &d.readme {
+                    out.push_str("\n\n");
+                    out.push_str(readme.trim_end());
+                }
+                out
+            });
+        }
+        Cmd::Plugin(PluginCmd::Install { name, store, yes }) => {
+            let store = resolve_store(&client, &name, store).await?;
+            let d = details(&client, &store, &name).await?;
+            confirm(&format!("Install {name} {} from {store} with {}?", d.version, permission_list(&d.permissions)), yes)?;
+            let params = PluginInstallParams { store, name, accept_permissions: d.permissions };
+            let info: PluginInfo = client.call(method::PLUGIN_INSTALL, params).await?;
+            print(json, &info, || plugin_line(&info));
+        }
+        Cmd::Plugin(PluginCmd::Update { name, all, yes }) => {
+            let names = match (name, all) {
+                (Some(name), _) => vec![name],
+                (None, true) => {
+                    let plugins: Vec<PluginInfo> = client.call(method::PLUGIN_LIST, ()).await?;
+                    plugins.into_iter().filter(|p| p.update_available).map(|p| p.name).collect()
+                }
+                (None, false) => return Err(invalid("name a plugin or pass --all".into())),
+            };
+            let mut updated = Vec::new();
+            for name in names {
+                updated.push(update_plugin(&client, name, yes).await?);
+            }
+            print(json, &updated, || lines(&updated, plugin_line));
+        }
+        Cmd::Plugin(PluginCmd::Rollback { name }) => {
+            let info: PluginInfo = client.call(method::PLUGIN_ROLLBACK, PluginNameParams { name }).await?;
+            print(json, &info, || plugin_line(&info));
+        }
+        Cmd::Plugin(PluginCmd::Uninstall { name }) => {
+            client.call::<_, ()>(method::PLUGIN_UNINSTALL, PluginNameParams { name }).await?;
+            print_ok(json);
+        }
+        Cmd::Plugin(PluginCmd::Enable { name }) => {
+            client.call::<_, ()>(method::PLUGIN_SET_ENABLED, PluginEnableParams { name, enabled: true }).await?;
+            print_ok(json);
+        }
+        Cmd::Plugin(PluginCmd::Disable { name }) => {
+            client.call::<_, ()>(method::PLUGIN_SET_ENABLED, PluginEnableParams { name, enabled: false }).await?;
+            print_ok(json);
+        }
         Cmd::External(args) => return run_external(&client, args).await,
         Cmd::Attach | Cmd::Hook { .. } | Cmd::Daemon(DaemonCmd::Stop) => {}
     }
@@ -467,6 +637,78 @@ fn resolve_task(task: Option<i64>) -> Result<i64, ClientError> {
 
 fn env_id(name: &str) -> Option<i64> {
     std::env::var(name).ok()?.parse().ok()
+}
+
+const TRUST_WARNING: &str = "Plugins from this store run code on your machine.";
+
+/// Asks on the terminal; without one, only `--yes` confirms.
+fn confirm(question: &str, yes: bool) -> Result<(), ClientError> {
+    if yes {
+        return Ok(());
+    }
+    if !std::io::stdin().is_terminal() {
+        return Err(invalid(format!("{question} Pass --yes to confirm.")));
+    }
+    eprint!("{question} [y/N] ");
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    if matches!(answer.trim(), "y" | "Y" | "yes") {
+        Ok(())
+    } else {
+        Err(invalid("cancelled".into()))
+    }
+}
+
+fn permission_list(permissions: &[String]) -> String {
+    if permissions.is_empty() {
+        "no special permissions".into()
+    } else {
+        format!("permissions {}", permissions.join(", "))
+    }
+}
+
+async fn resolve_store(client: &Client, name: &str, store: Option<String>) -> Result<String, ClientError> {
+    if let Some(store) = store {
+        return Ok(store);
+    }
+    let params = PluginSearchParams { query: Some(name.to_string()), ..Default::default() };
+    let hits: Vec<SearchHit> = client.call(method::PLUGIN_SEARCH, params).await?;
+    let stores: Vec<String> = hits.into_iter().filter(|h| h.name == name).map(|h| h.store).collect();
+    match stores.as_slice() {
+        [] => Err(ClientError::Rpc(RpcError::new(ErrorKind::NotFound, format!("no store provides {name}")))),
+        [store] => Ok(store.clone()),
+        many => Err(invalid(format!("{name} is in several stores ({}); pass --store", many.join(", ")))),
+    }
+}
+
+async fn details(client: &Client, store: &str, name: &str) -> Result<PluginDetails, ClientError> {
+    client.call(method::PLUGIN_DETAILS, PluginRefParams { store: store.to_string(), name: name.to_string() }).await
+}
+
+async fn update_plugin(client: &Client, name: String, yes: bool) -> Result<PluginInfo, ClientError> {
+    let first = client.call(method::PLUGIN_UPDATE, PluginUpdateParams { name: name.clone(), accept_permissions: None }).await;
+    match first {
+        Err(ClientError::Rpc(e)) if e.kind() == ErrorKind::PermissionsChanged => {
+            let plugins: Vec<PluginInfo> = client.call(method::PLUGIN_LIST, ()).await?;
+            let store = plugins.iter().find(|p| p.name == name).and_then(|p| p.store.clone()).ok_or_else(|| ClientError::Rpc(e.clone()))?;
+            let offered = details(client, &store, &name).await?;
+            confirm(&format!("{name} {} asks for {}. Update?", offered.version, permission_list(&offered.permissions)), yes)?;
+            client.call(method::PLUGIN_UPDATE, PluginUpdateParams { name, accept_permissions: Some(offered.permissions) }).await
+        }
+        other => other,
+    }
+}
+
+fn store_line(s: &StoreInfo) -> String {
+    let official = if s.official { "\tofficial" } else { "" };
+    let error = s.last_error.as_ref().map(|e| format!("\terror: {e}")).unwrap_or_default();
+    format!("{}\t{}{official}\t{} plugins{error}", s.name, s.source, s.plugin_count)
+}
+
+fn hit_line(h: &SearchHit) -> String {
+    let installed = h.installed_version.as_ref().map(|v| format!("\tinstalled {v}")).unwrap_or_default();
+    let update = if h.update_available { "\tupdate available" } else { "" };
+    format!("{}\t{}\t{}{installed}{update}", h.store, h.name, h.description)
 }
 
 fn invalid(message: String) -> ClientError {

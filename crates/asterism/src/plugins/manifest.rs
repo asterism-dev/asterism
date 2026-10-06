@@ -5,7 +5,7 @@ use asterism_proto::types::{AgentSettingKind, Capability, CapabilityKind, Settin
 use serde::Deserialize;
 
 /// CLI subcommands a plugin command may not shadow.
-pub const BUILTIN_COMMANDS: &[&str] = &["project", "task", "session", "send", "read", "wait", "attach", "hook", "daemon", "plugin", "help"];
+pub const BUILTIN_COMMANDS: &[&str] = &["project", "task", "session", "send", "read", "wait", "attach", "hook", "daemon", "plugin", "store", "help"];
 /// Built-in session kinds that share the agent namespace for settings.
 const SESSION_KINDS: &[&str] = &["shell", "command"];
 
