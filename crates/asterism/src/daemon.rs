@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
-use asterism_plugin::protocol::{self, CloneParams, CreateRemoteParams, GetIssueParams, LaunchMode, ListReposParams, SearchIssuesParams, TaskSourceCheck, TaskSourceCheckParams, PrepareParams, PrepareResult, ResolveOwnerParams, ResolveOwnerResult};
+use asterism_plugin::protocol::{self, BranchPr, PullRequestsParams, CloneParams, CreateRemoteParams, GetIssueParams, LaunchMode, ListReposParams, SearchIssuesParams, TaskSourceCheck, TaskSourceCheckParams, PrepareParams, PrepareResult, ResolveOwnerParams, ResolveOwnerResult};
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
 use asterism_proto::PROTO_VERSION;
@@ -23,6 +23,7 @@ use crate::plugins::process::{self, HostFn};
 use crate::plugins::registry::{self, Plugin, Status};
 use crate::plugins::catalog::{self, EntrySource, StoreConfig};
 use crate::plugins::{install, settings, source, store_ops, PluginSet, Runtime, STORE_LOCK};
+use crate::pr_status::{self, ForgeCandidate, InFlight, PrStatus};
 use crate::proc_stats::{self, CpuTracker};
 use crate::session::{Pty, Snapshot, SpawnSpec, SCROLLBACK_LINES};
 use crate::store::Store;
@@ -95,6 +96,7 @@ fn plugin_env(paths: &Paths, extra: &[(String, String)]) -> Result<Vec<(String, 
 }
 
 pub const STORE_REFRESH_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+const PR_TICK: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, Default)]
 struct StoreStatus {
@@ -119,6 +121,7 @@ pub struct Daemon {
     runtime: Runtime,
     builtin_dir: PathBuf,
     store_status: Mutex<BTreeMap<String, StoreStatus>>,
+    pr_status: Mutex<PrStatus>,
 }
 
 impl Daemon {
@@ -157,6 +160,7 @@ impl Daemon {
                 runtime,
                 builtin_dir,
                 store_status: Mutex::new(BTreeMap::new()),
+                pr_status: Mutex::new(PrStatus::default()),
             }
         }))
     }
@@ -993,6 +997,111 @@ impl Daemon {
         Ok(self.store().tasks(params.project_id, params.include_archived)?)
     }
 
+    /// The PR-capable forge serving the repository's origin host, if any.
+    fn pr_forge(&self, repo: &Path) -> Option<String> {
+        let host = repo_source::url_host(&git::remote_url(repo, "origin")?)?;
+        let set = self.plugin_set();
+        let forges: Vec<ForgeCandidate> = set
+            .registry
+            .forges()
+            .map(|(_, f)| ForgeCandidate { id: &f.id, hosts: &f.hosts, pull_requests: f.pull_requests })
+            .collect();
+        pr_status::forge_for_host(&forges, &host)
+    }
+
+    pub fn pr_list(&self, project_id: Option<i64>) -> PrList {
+        let status = lock(&self.pr_status);
+        let mut prs: Vec<TaskPr> = status
+            .entries
+            .iter()
+            .filter(|(_, e)| project_id.is_none_or(|p| p == e.project_id))
+            .map(|(id, e)| TaskPr { task_id: *id, branch: e.branch.clone(), pr: e.pr.clone() })
+            .collect();
+        prs.sort_by_key(|p| p.task_id);
+        let errors = status
+            .errors
+            .iter()
+            .filter(|(id, _)| project_id.is_none_or(|p| p == **id))
+            .map(|(id, message)| PrProjectError { project_id: *id, message: message.clone() })
+            .collect();
+        PrList { prs, errors }
+    }
+
+    pub async fn refresh_prs(&self, project_id: i64) -> Result<PrList> {
+        let project = self.store().project(project_id)?.ok_or_else(|| not_found("project", project_id))?;
+        let Some(_guard) = InFlight::start(&self.pr_status, project_id) else {
+            return Ok(self.pr_list(Some(project_id)));
+        };
+        let result = self.poll_project(&project).await;
+        let mut status = lock(&self.pr_status);
+        status.polled.insert(project_id, unix_now());
+        match result {
+            Ok(()) => {
+                status.errors.remove(&project_id);
+                status.rate_limited.remove(&project_id);
+            }
+            Err(e) => {
+                if pr_status::is_rate_limit(&e.message) {
+                    status.rate_limited.insert(project_id);
+                }
+                status.errors.insert(project_id, e.message);
+            }
+        }
+        drop(status);
+        Ok(self.pr_list(Some(project_id)))
+    }
+
+    async fn poll_project(&self, project: &Project) -> Result<()> {
+        let repo = PathBuf::from(&project.path);
+        let tasks: Vec<(i64, String)> = self.store().tasks(Some(project.id), false)?.into_iter().map(|t| (t.id, t.branch)).collect();
+        let (asked, reply) = match self.pr_forge(&repo) {
+            None => (Vec::new(), Vec::new()),
+            Some(forge) => {
+                let asked = pr_status::branches_to_ask(&tasks, &lock(&self.pr_status).entries);
+                let reply: Vec<BranchPr> = if asked.is_empty() {
+                    Vec::new()
+                } else {
+                    let params = PullRequestsParams { forge: forge.clone(), project_path: project.path.clone(), branches: asked.clone() };
+                    self.forge_call(&forge, protocol::method::FORGE_PULL_REQUESTS, params, Some(self.call_timeout())).await?
+                };
+                (asked, reply)
+            }
+        };
+        let changes = pr_status::merge(project.id, &tasks, &asked, reply, &mut lock(&self.pr_status).entries);
+        for (task_id, pr) in changes {
+            self.emit(Event::PrChanged { task_id, pr });
+        }
+        Ok(())
+    }
+
+    fn drop_pr(&self, task_id: i64) {
+        if lock(&self.pr_status).entries.remove(&task_id).is_some() {
+            self.emit(Event::PrChanged { task_id, pr: None });
+        }
+    }
+
+    pub async fn pr_poll_loop(self: Arc<Self>) {
+        loop {
+            tokio::time::sleep(PR_TICK).await;
+            // Nobody is watching without a subscriber; avoid needless forge calls.
+            if self.events.receiver_count() == 0 {
+                continue;
+            }
+            let Ok(projects) = self.projects() else { continue };
+            let now = unix_now();
+            for project in projects {
+                let last_activity = self.store().tasks(Some(project.id), false).map(|ts| ts.iter().map(|t| t.last_activity_at).max().unwrap_or(0)).unwrap_or(0);
+                let due = {
+                    let status = lock(&self.pr_status);
+                    pr_status::is_due(now, status.polled.get(&project.id).copied(), last_activity, status.rate_limited.contains(&project.id))
+                };
+                if due {
+                    let _ = self.refresh_prs(project.id).await;
+                }
+            }
+        }
+    }
+
     /// Stops the task's sessions; worktree, uncommitted changes and branch stay.
     pub fn archive_task(&self, task_id: i64) -> Result<Task> {
         let task = self.task(task_id)?;
@@ -1005,6 +1114,7 @@ impl Daemon {
             }
         }
         self.store().set_task_archived(task_id)?;
+        self.drop_pr(task_id);
         let task = self.task(task_id)?;
         self.emit(Event::TaskChanged(task.clone()));
         Ok(task)
@@ -1081,6 +1191,7 @@ impl Daemon {
         for stored in sessions {
             self.emit(Event::SessionRemoved { session_id: stored.session.id });
         }
+        self.drop_pr(task_id);
         self.emit(Event::TaskRemoved { task_id });
         Ok(TaskDeleteResult { warning: (!warnings.is_empty()).then(|| warnings.join("; ")) })
     }
@@ -1232,6 +1343,11 @@ impl Daemon {
         let session = self.session(id)?;
         self.emit(Event::SessionChanged(session.clone()));
         self.touch_task(task.id);
+        let daemon = self.clone();
+        let project_id = task.project_id;
+        tokio::spawn(async move {
+            let _ = daemon.refresh_prs(project_id).await;
+        });
         Ok(session)
     }
 

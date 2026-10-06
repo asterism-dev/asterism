@@ -11,6 +11,7 @@ command = ["./backend.py"]
 id = "echo-forge"
 display_name = "Echo"
 hosts = ["echo.test"]
+pull_requests = true
 
 [[provides.command]]
 name = "echo-cmd"
