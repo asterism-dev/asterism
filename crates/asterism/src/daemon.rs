@@ -206,8 +206,10 @@ impl Daemon {
                     _ => PluginState::Ok,
                 },
             },
+            Status::Disabled => PluginState::Disabled,
         };
         let manifest = plugin.manifest.as_ref();
+        let entry = (plugin.origin == PluginOrigin::Installed).then(|| set.installed.plugins.get(&plugin.name)).flatten();
         PluginInfo {
             name: plugin.name.clone(),
             version: manifest.map(|m| m.version.clone()),
@@ -218,9 +220,9 @@ impl Daemon {
             permissions: manifest.map(|m| m.permissions.clone()).unwrap_or_default(),
             state,
             backend: plugin.backend_command(),
-            store: None,
+            store: entry.map(|e| e.store.clone()),
             update_available: false,
-            previous_version: None,
+            previous_version: entry.and_then(|e| e.previous.clone()),
         }
     }
 
