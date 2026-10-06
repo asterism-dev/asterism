@@ -2,22 +2,12 @@
 import { ask, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { computed, onMounted, ref, watch } from 'vue';
 import { api, errorMessage, RpcError } from '../../api';
-import {
-  capabilityChips, draftFrom, newPermissions, originLabel, permissionText, settingsPatch, stateDetail, statusLabel, updateCount,
-  type SettingsDraft,
-} from '../../pluginsView';
+import { capabilityChips, newPermissions, originLabel, permissionText, stateDetail, statusLabel, updateCount } from '../../pluginsView';
 import { state, toast } from '../../store';
-import type { PluginInfo, PluginSettings } from '../../types';
-
-const props = defineProps<{ configureRequest: string | null }>();
-const emit = defineEmits<{ configured: [] }>();
+import type { PluginInfo } from '../../types';
 
 const plugins = ref<PluginInfo[]>([]);
 const error = ref<string | null>(null);
-const open = ref<string | null>(null);
-const settings = ref<PluginSettings | null>(null);
-const draft = ref<SettingsDraft | null>(null);
-const saving = ref(false);
 const busy = ref<Record<string, boolean>>({});
 const rowError = ref<Record<string, string>>({});
 const updates = computed(() => updateCount(plugins.value));
@@ -28,34 +18,6 @@ async function load() {
     plugins.value = await api.plugins();
   } catch (e) {
     error.value = errorMessage(e);
-  }
-}
-
-async function configure(name: string) {
-  if (open.value === name) {
-    open.value = null;
-    return;
-  }
-  try {
-    settings.value = await api.pluginSettings(name);
-    draft.value = draftFrom(settings.value);
-    open.value = name;
-  } catch (e) {
-    toast(errorMessage(e));
-  }
-}
-
-async function save() {
-  if (!open.value || !settings.value || !draft.value) return;
-  saving.value = true;
-  try {
-    await api.setPluginSettings(open.value, settingsPatch(settings.value, draft.value));
-    toast(`Saved ${open.value} settings`);
-    open.value = null;
-  } catch (e) {
-    toast(errorMessage(e));
-  } finally {
-    saving.value = false;
   }
 }
 
@@ -114,16 +76,6 @@ async function linkLocal() {
 
 onMounted(load);
 watch(() => [state.pluginsVersion, state.storesVersion], load);
-watch(
-  () => props.configureRequest,
-  async (name) => {
-    if (!name) return;
-    await load();
-    await configure(name);
-    emit('configured');
-  },
-  { immediate: true },
-);
 </script>
 
 <template>
@@ -150,7 +102,7 @@ watch(
               <input type="checkbox" :checked="p.state.state !== 'disabled'" @change="act(p.name, () => setEnabled(p))" />
               Enabled
             </label>
-            <button v-if="p.state.state !== 'broken' && p.state.state !== 'disabled'" @click="configure(p.name)">Configure</button>
+            <button v-if="p.state.state !== 'broken' && p.state.state !== 'disabled'" @click="state.pluginSettingsRequest = p.name">Configure</button>
             <button v-if="p.origin === 'installed'" @click="uninstall(p)">Uninstall</button>
             <button v-if="p.origin === 'linked'" @click="act(p.name, () => unlink(p.name))">Unlink</button>
           </template>
@@ -162,32 +114,6 @@ watch(
         <div class="chips">
           <span v-for="c in capabilityChips(p)" :key="c" class="chip">{{ c }}</span>
         </div>
-        <form v-if="open === p.name && settings && draft" class="add-form" @submit.prevent="save">
-          <p v-if="!settings.schema.length" class="muted">This plugin has no settings.</p>
-          <label v-for="spec in settings.schema" :key="spec.key">
-            {{ spec.title }}<span v-if="spec.required"> *</span>
-            <template v-if="spec.type === 'secret'">
-              <input
-                v-model="draft.secrets[spec.key]"
-                type="password"
-                autocomplete="off"
-                :placeholder="settings.secrets_set.includes(spec.key) && !draft.cleared.includes(spec.key) ? 'set — type to replace' : 'not set'"
-              />
-              <button v-if="settings.secrets_set.includes(spec.key)" type="button" @click="draft.cleared.push(spec.key)">Clear</button>
-            </template>
-            <input v-else-if="spec.type === 'bool'" v-model="draft.values[spec.key]" type="checkbox" />
-            <input v-else-if="spec.type === 'number'" v-model.number="draft.values[spec.key]" type="number" />
-            <select v-else-if="spec.type === 'enum'" v-model="draft.values[spec.key]">
-              <option v-for="o in spec.options ?? []" :key="o" :value="o">{{ o }}</option>
-            </select>
-            <input v-else v-model="draft.values[spec.key]" spellcheck="false" />
-            <span v-if="spec.description" class="muted">{{ spec.description }}</span>
-          </label>
-          <div class="actions">
-            <button type="button" @click="open = null">Cancel</button>
-            <button type="submit" :disabled="saving">{{ saving ? 'Saving…' : 'Save' }}</button>
-          </div>
-        </form>
       </li>
     </ul>
   </section>
