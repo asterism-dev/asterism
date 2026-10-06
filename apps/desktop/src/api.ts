@@ -66,6 +66,7 @@ export const api = {
   nodeStatus: () => command<NodeStatus>('node_status'),
   restartDaemon: () => command<void>('restart_daemon'),
   appPid: () => command<number>('app_pid'),
+  quit: (stopDaemon: boolean) => command<void>('quit', { stopDaemon }),
   projects: () => call<Project[]>('project.list'),
   addProject: (path: string) => call<Project>('project.add', { path }),
   removeProject: (projectId: number) => call<null>('project.remove', { project_id: projectId }),

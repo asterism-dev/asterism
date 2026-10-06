@@ -5,7 +5,13 @@ use asterism_proto::paths::Paths;
 use asterism_proto::types::{Event, SessionAttachResult};
 use serde_json::Value;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Emitter, Manager, State};
+#[cfg(target_os = "macos")]
+use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
+#[cfg(target_os = "macos")]
+use tauri::Wry;
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
+
+const QUIT_MENU_ID: &str = "quit";
 
 struct TauriSink(AppHandle);
 
@@ -52,12 +58,50 @@ async fn restart_daemon(node: State<'_, Arc<LocalNode>>) -> Result<(), CallError
 }
 
 #[tauri::command]
+async fn quit(app: AppHandle, node: State<'_, Arc<LocalNode>>, stop_daemon: bool) -> Result<(), ()> {
+    if stop_daemon {
+        // An unreachable daemon is as good as stopped.
+        let _ = node.call(asterism_proto::types::method::SHUTDOWN, Value::Null).await;
+    }
+    app.exit(0);
+    Ok(())
+}
+
+#[tauri::command]
 fn app_pid() -> u32 {
     std::process::id()
 }
 
+/// The default macOS Quit item terminates the app outright, so ⌘Q gets an item that asks first.
+#[cfg(target_os = "macos")]
+fn app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
+    let menu = Menu::default(app)?;
+    let app_submenu = Submenu::with_items(
+        app,
+        "asterism",
+        true,
+        &[
+            &PredefinedMenuItem::about(app, None, Some(AboutMetadata::default()))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::services(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::hide(app, None)?,
+            &PredefinedMenuItem::hide_others(app, None)?,
+            &PredefinedMenuItem::show_all(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, QUIT_MENU_ID, "Quit asterism", true, Some("CmdOrCtrl+Q"))?,
+        ],
+    )?;
+    menu.remove_at(0)?;
+    menu.prepend(&app_submenu)?;
+    Ok(menu)
+}
+
 fn main() {
-    let result = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(app_menu);
+    let result = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
@@ -75,7 +119,19 @@ fn main() {
             tauri::async_runtime::spawn(node.run());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![node_status, node_call, session_attach, session_detach, restart_daemon, app_pid])
+        // Closing and ⌘Q ask the frontend whether to stop the daemon; it then calls `quit`.
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.emit("quit-requested", ());
+            }
+        })
+        .on_menu_event(|app, event| {
+            if event.id() == QUIT_MENU_ID {
+                let _ = app.emit("quit-requested", ());
+            }
+        })
+        .invoke_handler(tauri::generate_handler![node_status, node_call, session_attach, session_detach, restart_daemon, quit, app_pid])
         .run(tauri::generate_context!());
     if let Err(e) = result {
         eprintln!("asterism: {e}");

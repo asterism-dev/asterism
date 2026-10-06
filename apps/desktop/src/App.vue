@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
-import { computed, onMounted, onUnmounted } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api, errorMessage } from './api';
 import MainDock from './components/MainDock.vue';
 import PaneHandle from './components/PaneHandle.vue';
@@ -14,6 +14,7 @@ import { sidebar } from './dock/sidebar';
 import AddProjectDialog from './components/AddProjectDialog.vue';
 import ContextMenu from './components/ContextMenu.vue';
 import NewTaskDialog from './components/NewTaskDialog.vue';
+import QuitDialog from './components/QuitDialog.vue';
 import SettingsView from './components/SettingsView.vue';
 import { activeTab, applyEvent, isConnected, nextWaiting, refresh, refreshPluginUpdates, selectSession, state, toast } from './store';
 import { appShortcut } from './shortcuts';
@@ -22,6 +23,7 @@ import type { NodeEvent, NodeStatus, Session } from './types';
 
 const unlisteners: UnlistenFn[] = [];
 const selectedTask = computed(() => state.tasks.find((t) => t.id === state.selectedTaskId) ?? null);
+const quitRunning = ref<number | null>(null);
 const columns = computed(() => (sidebar.open ? `${sidebar.width}px 0 minmax(0, 1fr)` : 'minmax(0, 1fr)'));
 
 async function notify(session: Session) {
@@ -58,6 +60,12 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
+function onQuitRequested() {
+  const running = state.sessions.filter((s) => s.status !== 'exited').length;
+  if (running === 0) api.quit(true).catch((e) => toast(errorMessage(e)));
+  else quitRunning.value = running;
+}
+
 function restart() {
   api.restartDaemon().catch((e) => toast(errorMessage(e)));
 }
@@ -76,6 +84,7 @@ onMounted(async () => {
       if (waiting) notify(waiting).catch(() => {});
     }),
   );
+  unlisteners.push(await listen('quit-requested', onQuitRequested));
   window.addEventListener('keydown', onKey);
   onStatus(await api.nodeStatus());
 });
@@ -114,6 +123,7 @@ onUnmounted(() => {
     </div>
     <NewTaskDialog v-if="state.newTaskFor !== null" :project-id="state.newTaskFor" @close="state.newTaskFor = null" />
     <AddProjectDialog v-if="state.projectDialog" />
+    <QuitDialog v-if="quitRunning !== null" :running="quitRunning" @close="quitRunning = null" />
     <ContextMenu />
     <div class="toasts">
       <div v-for="t in state.toasts" :key="t.id" class="toast">{{ t.message }}</div>
