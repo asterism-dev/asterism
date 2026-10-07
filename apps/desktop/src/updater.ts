@@ -57,7 +57,8 @@ export async function installUpdate() {
 }
 
 export function updateLabel(): string {
-  if (updater.installing) return updater.progress === null ? 'Installing…' : `Installing… ${updater.progress}%`;
+  if (updater.installing)
+    return updater.progress === null ? 'Installing…' : `Installing… ${updater.progress}%`;
   return updater.available ? `Update to ${updater.available.version}` : '';
 }
 

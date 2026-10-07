@@ -1,16 +1,41 @@
 import { describe, expect, it } from 'vitest';
 import {
-  createRequest, filterBranches, defaultBranch, finalSlug, issueStateClass, liveSlug, prDisabledReason,
-  randomSlug, randomSuffix, type TaskForm,
+  createRequest,
+  filterBranches,
+  defaultBranch,
+  finalSlug,
+  issueStateClass,
+  liveSlug,
+  prDisabledReason,
+  randomSlug,
+  randomSuffix,
+  type TaskForm,
 } from './taskForm';
 import type { PrHit } from './types';
 
 const form = (over: Partial<TaskForm> = {}): TaskForm => ({
-  projectId: 1, title: 'fix-login', placeholder: 'two-hairs-begin', prompt: ' do it ', agent: 'claude',
-  mode: 'new', base: 'origin/main', branch: 'asterism/fix-login-x8d4t', checkout: '', push: true, issue: null, ...over,
+  projectId: 1,
+  title: 'fix-login',
+  placeholder: 'two-hairs-begin',
+  prompt: ' do it ',
+  agent: 'claude',
+  mode: 'new',
+  base: 'origin/main',
+  branch: 'asterism/fix-login-x8d4t',
+  checkout: '',
+  push: true,
+  issue: null,
+  ...over,
 });
 const pr = (over: Partial<PrHit> = {}): PrHit => ({
-  number: 1, title: 'T', url: 'u', author: 'a', head_branch: 'feature/x', draft: false, from_fork: false, ...over,
+  number: 1,
+  title: 'T',
+  url: 'u',
+  author: 'a',
+  head_branch: 'feature/x',
+  draft: false,
+  from_fork: false,
+  ...over,
 });
 
 describe('taskForm', () => {
@@ -54,18 +79,32 @@ describe('taskForm', () => {
 
   it('creates a new branch with push', () => {
     expect(createRequest(form())).toEqual({
-      project_id: 1, title: 'fix-login', prompt: 'do it', agent: 'claude', base: 'origin/main', issue: null,
-      branch: 'asterism/fix-login-x8d4t', checkout: null, push: true,
+      project_id: 1,
+      title: 'fix-login',
+      prompt: 'do it',
+      agent: 'claude',
+      base: 'origin/main',
+      issue: null,
+      branch: 'asterism/fix-login-x8d4t',
+      checkout: null,
+      push: true,
     });
   });
 
   it('checks out an existing branch without base, branch or push', () => {
     expect(createRequest(form({ mode: 'checkout', checkout: 'feature/x' }))).toMatchObject({
-      base: null, branch: null, checkout: 'feature/x', push: false,
+      base: null,
+      branch: null,
+      checkout: 'feature/x',
+      push: false,
     });
   });
 
   it('falls back to the placeholder title and drops the prompt without an agent', () => {
-    expect(createRequest(form({ title: '!!!', agent: '' }))).toMatchObject({ title: 'two-hairs-begin', agent: null, prompt: null });
+    expect(createRequest(form({ title: '!!!', agent: '' }))).toMatchObject({
+      title: 'two-hairs-begin',
+      agent: null,
+      prompt: null,
+    });
   });
 });

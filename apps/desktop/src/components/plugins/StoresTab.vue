@@ -6,7 +6,8 @@ import { relativeTime } from '../../projects';
 import { state, toast } from '../../store';
 import type { StoreList } from '../../types';
 
-const TRUST_WARNING = 'Plugins from this store run code on your machine. Only add stores you trust.';
+const TRUST_WARNING =
+  'Plugins from this store run code on your machine. Only add stores you trust.';
 const list = ref<StoreList | null>(null);
 const error = ref<string | null>(null);
 const source = ref('');
@@ -29,7 +30,11 @@ async function add() {
   const value = source.value.trim();
   if (!value) return;
   try {
-    if (value !== OFFICIAL_SOURCE && !(await ask(`${TRUST_WARNING}\n\nAdd ${value}?`, { title: 'Add store', kind: 'warning' }))) return;
+    if (
+      value !== OFFICIAL_SOURCE &&
+      !(await ask(`${TRUST_WARNING}\n\nAdd ${value}?`, { title: 'Add store', kind: 'warning' }))
+    )
+      return;
   } catch (e) {
     toast(errorMessage(e));
     return;
@@ -69,7 +74,13 @@ async function act(name: string, action: () => Promise<unknown>) {
 
 async function remove(name: string) {
   try {
-    if (!(await ask(`Remove store ${name}? Plugins installed from it are uninstalled too.`, { title: 'Remove store', kind: 'warning' }))) return;
+    if (
+      !(await ask(`Remove store ${name}? Plugins installed from it are uninstalled too.`, {
+        title: 'Remove store',
+        kind: 'warning',
+      }))
+    )
+      return;
   } catch (e) {
     rowError.value[name] = errorMessage(e);
     return;
@@ -99,7 +110,14 @@ watch(() => [state.storesVersion, state.pluginsVersion], load);
         <div class="store-row">
           <strong>{{ s.name }}</strong>
           <span v-if="s.official" class="plugin-state">official</span>
-          <span class="muted">{{ s.plugin_count }} plugins · {{ s.last_refreshed ? `refreshed ${relativeTime(s.last_refreshed, Math.floor(Date.now() / 1000))} ago` : 'not refreshed yet' }}</span>
+          <span class="muted"
+            >{{ s.plugin_count }} plugins ·
+            {{
+              s.last_refreshed
+                ? `refreshed ${relativeTime(s.last_refreshed, Math.floor(Date.now() / 1000))} ago`
+                : 'not refreshed yet'
+            }}</span
+          >
           <span class="spacer" />
           <template v-if="!busy[s.name]">
             <button @click="refresh(s.name)">Refresh</button>
@@ -113,12 +131,20 @@ watch(() => [state.storesVersion, state.pluginsVersion], load);
       </li>
     </ul>
     <form class="add-form" @submit.prevent="add">
-      <label>Add store
-        <input v-model="source" placeholder="https://…/plugins.git or a local folder" spellcheck="false" :disabled="adding" />
+      <label
+        >Add store
+        <input
+          v-model="source"
+          placeholder="https://…/plugins.git or a local folder"
+          spellcheck="false"
+          :disabled="adding"
+        />
       </label>
       <div class="actions">
         <button type="button" :disabled="adding" @click="pickFolder">Choose folder…</button>
-        <button type="submit" :disabled="adding || !source.trim()">{{ adding ? 'Adding…' : 'Add store' }}</button>
+        <button type="submit" :disabled="adding || !source.trim()">
+          {{ adding ? 'Adding…' : 'Add store' }}
+        </button>
       </div>
     </form>
     <label class="toggle">
@@ -130,9 +156,32 @@ watch(() => [state.storesVersion, state.pluginsVersion], load);
 </template>
 
 <style scoped>
-.store-list { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.store-row { display: flex; align-items: center; gap: 8px; }
-.store-row .spacer { flex: 1; }
-.plugin-state { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: var(--select); }
-.toggle { display: flex; align-items: center; gap: 6px; margin-top: 12px; }
+.store-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.store-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.store-row .spacer {
+  flex: 1;
+}
+.plugin-state {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--select);
+}
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+}
 </style>

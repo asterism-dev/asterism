@@ -19,13 +19,23 @@ const error = ref<string | null>(null);
 const busy = ref(false);
 const input = ref<HTMLInputElement>();
 
-const owners = computed(() => (status.value?.account ? [status.value.account, ...status.value.owners] : []));
-const forgeName = computed(() => forges.value.find((f) => f.id === forge.value)?.display_name ?? 'remote');
+const owners = computed(() =>
+  status.value?.account ? [status.value.account, ...status.value.owners] : [],
+);
+const forgeName = computed(
+  () => forges.value.find((f) => f.id === forge.value)?.display_name ?? 'remote',
+);
 const parsed = computed(() => sourceOwnerRepo(source.value));
-const preview = computed(() => (parsed.value && reposRoot.value ? targetPath(reposRoot.value, parsed.value.owner, parsed.value.repo) : ''));
+const preview = computed(() =>
+  parsed.value && reposRoot.value
+    ? targetPath(reposRoot.value, parsed.value.owner, parsed.value.repo)
+    : '',
+);
 const shown = computed(() => {
   const needle = filter.value.trim().toLowerCase();
-  return repos.value.filter((r) => !needle || `${r.owner}/${r.name}`.toLowerCase().includes(needle));
+  return repos.value.filter(
+    (r) => !needle || `${r.owner}/${r.name}`.toLowerCase().includes(needle),
+  );
 });
 
 async function loadRepos() {
@@ -99,20 +109,36 @@ watch(busy, (b) => emit('busy', b));
 
 <template>
   <form class="add-form" @submit.prevent="clone">
-    <label>Repository <input ref="input" v-model="source" placeholder="owner/repo or https://… / git@…" spellcheck="false" :disabled="busy" /></label>
+    <label
+      >Repository
+      <input
+        ref="input"
+        v-model="source"
+        placeholder="owner/repo or https://… / git@…"
+        spellcheck="false"
+        :disabled="busy"
+    /></label>
     <p v-if="preview" class="muted mono">→ {{ preview }}</p>
-    <label v-if="forges.length > 1">Forge
+    <label v-if="forges.length > 1"
+      >Forge
       <select v-model="forge" :disabled="busy">
         <option v-for="f in forges" :key="f.id" :value="f.id">{{ f.display_name }}</option>
       </select>
     </label>
     <template v-if="status?.authenticated">
-      <label>Browse
+      <label
+        >Browse
         <select v-model="owner" :disabled="busy">
           <option v-for="o in owners" :key="o" :value="o">{{ o }}</option>
         </select>
       </label>
-      <input v-model="filter" placeholder="Filter repositories" aria-label="Filter repositories" :disabled="busy" @keydown.enter.prevent />
+      <input
+        v-model="filter"
+        placeholder="Filter repositories"
+        aria-label="Filter repositories"
+        :disabled="busy"
+        @keydown.enter.prevent
+      />
       <ul class="repo-list">
         <li v-for="r in shown" :key="`${r.owner}/${r.name}`">
           <button type="button" :disabled="busy" @click="source = `${r.owner}/${r.name}`">
@@ -122,7 +148,9 @@ watch(busy, (b) => emit('busy', b));
         </li>
       </ul>
     </template>
-    <p v-else-if="status" class="muted">{{ status.error ?? `${forgeName} is not available` }} — you can still clone by URL.</p>
+    <p v-else-if="status" class="muted">
+      {{ status.error ?? `${forgeName} is not available` }} — you can still clone by URL.
+    </p>
     <p v-if="error" class="error">{{ error }}</p>
     <div class="actions">
       <button type="button" :disabled="busy" @click="emit('close')">Cancel</button>

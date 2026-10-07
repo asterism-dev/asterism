@@ -1,4 +1,13 @@
-import type { AgentInfo, CapabilityKind, PluginInfo, PluginSettings, PluginState, SearchHit, SettingSpec, SettingValue } from './types';
+import type {
+  AgentInfo,
+  CapabilityKind,
+  PluginInfo,
+  PluginSettings,
+  PluginState,
+  SearchHit,
+  SettingSpec,
+  SettingValue,
+} from './types';
 
 export function stateLabel(state: PluginState): string | null {
   switch (state.state) {
@@ -27,13 +36,22 @@ export function stateDetail(state: PluginState): string | null {
   }
 }
 
-const KIND_LABELS: Record<CapabilityKind, string> = { forge: 'Forge', agent: 'Agent', command: 'Command', task_source: 'Task source' };
+const KIND_LABELS: Record<CapabilityKind, string> = {
+  forge: 'Forge',
+  agent: 'Agent',
+  command: 'Command',
+  task_source: 'Task source',
+};
 
 export function capabilityChips(plugin: PluginInfo): string[] {
   return plugin.capabilities.map((c) => `${KIND_LABELS[c.kind]}: ${c.id}`);
 }
 
-export interface SettingsDraft { values: Record<string, SettingValue>; secrets: Record<string, string>; cleared: string[] }
+export interface SettingsDraft {
+  values: Record<string, SettingValue>;
+  secrets: Record<string, string>;
+  cleared: string[];
+}
 
 function shown(spec: SettingSpec, settings: PluginSettings): SettingValue {
   return settings.values[spec.key] ?? (spec.type === 'bool' ? false : '');
@@ -41,12 +59,16 @@ function shown(spec: SettingSpec, settings: PluginSettings): SettingValue {
 
 export function draftFrom(settings: PluginSettings): SettingsDraft {
   const values: Record<string, SettingValue> = {};
-  for (const spec of settings.schema) if (spec.type !== 'secret') values[spec.key] = shown(spec, settings);
+  for (const spec of settings.schema)
+    if (spec.type !== 'secret') values[spec.key] = shown(spec, settings);
   return { values, secrets: {}, cleared: [] };
 }
 
 /** Only changes: empty text restores the default; secrets are sent only when typed or cleared. */
-export function settingsPatch(settings: PluginSettings, draft: SettingsDraft): Record<string, SettingValue | null> {
+export function settingsPatch(
+  settings: PluginSettings,
+  draft: SettingsDraft,
+): Record<string, SettingValue | null> {
   const patch: Record<string, SettingValue | null> = {};
   for (const spec of settings.schema) {
     if (spec.type === 'secret') {
@@ -103,16 +125,24 @@ export function hitAction(hit: SearchHit): 'install' | 'update' | 'installed' {
   return hit.update_available ? 'update' : 'installed';
 }
 
-export interface PluginTab { name: string; title: string }
+export interface PluginTab {
+  name: string;
+  title: string;
+}
 
 /** Usable plugins with own settings or agents get a settings tab, titled after their single agent if they have one. */
-export function pluginTabs(plugins: PluginInfo[], withSettings: string[], agents: AgentInfo[]): PluginTab[] {
+export function pluginTabs(
+  plugins: PluginInfo[],
+  withSettings: string[],
+  agents: AgentInfo[],
+): PluginTab[] {
   return plugins
     .filter((p) => p.state.state !== 'disabled' && p.state.state !== 'broken')
     .filter((p) => withSettings.includes(p.name) || agents.some((a) => a.plugin === p.name))
     .map((p) => {
       const own = agents.filter((a) => a.plugin === p.name);
-      const title = own.length === 1 ? own[0].display_name : p.name.charAt(0).toUpperCase() + p.name.slice(1);
+      const title =
+        own.length === 1 ? own[0].display_name : p.name.charAt(0).toUpperCase() + p.name.slice(1);
       return { name: p.name, title };
     });
 }

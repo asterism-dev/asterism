@@ -1,11 +1,53 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type {
-  AgentConfig, AgentConfigRaw, AgentInfo, CapabilityKind, PluginDetails, PluginInfo, SearchHit, StoreInfo, StoreList, PluginSettings, SettingValue, ForgeInfo, ForgeRepo, ForgeStatus, NodeConfig, NodeConfigInfo, NodeStats, NodeStatus, PrList, PrListState, PrSearchResult, Project, ProjectBranches, ProjectCreateResult, RemoteTarget, Session, SessionAttachResult, SessionKind,
-  SessionReadResult, IssueDetails, IssueHit, Task, TaskCreateRequest, TaskCreateResult, TaskSourceInfo, TaskDeleteCheck, TaskDeleteResult, TaskDiffResult, TaskFileResult, Worktree, WorktreeSize,
+  AgentConfig,
+  AgentConfigRaw,
+  AgentInfo,
+  CapabilityKind,
+  PluginDetails,
+  PluginInfo,
+  SearchHit,
+  StoreInfo,
+  StoreList,
+  PluginSettings,
+  SettingValue,
+  ForgeInfo,
+  ForgeRepo,
+  ForgeStatus,
+  NodeConfig,
+  NodeConfigInfo,
+  NodeStats,
+  NodeStatus,
+  PrList,
+  PrListState,
+  PrSearchResult,
+  Project,
+  ProjectBranches,
+  ProjectCreateResult,
+  RemoteTarget,
+  Session,
+  SessionAttachResult,
+  SessionKind,
+  SessionReadResult,
+  IssueDetails,
+  IssueHit,
+  Task,
+  TaskCreateRequest,
+  TaskCreateResult,
+  TaskSourceInfo,
+  TaskDeleteCheck,
+  TaskDeleteResult,
+  TaskDiffResult,
+  TaskFileResult,
+  Worktree,
+  WorktreeSize,
 } from './types';
 
 export class RpcError extends Error {
-  constructor(public kind: string, message: string) {
+  constructor(
+    public kind: string,
+    message: string,
+  ) {
     super(message);
   }
 }
@@ -56,7 +98,9 @@ async function send(sessionId: number, text: string): Promise<void> {
   let next = text;
   while (next) {
     sendBuffers.set(sessionId, '');
-    await call<null>('session.send', { session_id: sessionId, text: next, submit: false }).catch(() => {});
+    await call<null>('session.send', { session_id: sessionId, text: next, submit: false }).catch(
+      () => {},
+    );
     next = sendBuffers.get(sessionId) ?? '';
   }
   sendBuffers.delete(sessionId);
@@ -75,38 +119,56 @@ export const api = {
   createTask: (p: TaskCreateRequest) => call<TaskCreateResult>('task.create', p),
   searchPullRequests: (projectId: number, query: string, state: PrListState) =>
     call<PrSearchResult>('pr.search', { project_id: projectId, query, state }),
-  taskSources: (projectId: number) => call<TaskSourceInfo[]>('task_source.list', { project_id: projectId }),
+  taskSources: (projectId: number) =>
+    call<TaskSourceInfo[]>('task_source.list', { project_id: projectId }),
   searchIssues: (projectId: number, source: string, query: string, assignedToMe: boolean) =>
-    call<IssueHit[]>('task_source.search', { project_id: projectId, source, query, assigned_to_me: assignedToMe }),
+    call<IssueHit[]>('task_source.search', {
+      project_id: projectId,
+      source,
+      query,
+      assigned_to_me: assignedToMe,
+    }),
   getIssue: (projectId: number, source: string, key: string) =>
     call<IssueDetails>('task_source.get', { project_id: projectId, source, key }),
-  projectBranches: (projectId: number) => call<ProjectBranches>('project.branches', { project_id: projectId }),
+  projectBranches: (projectId: number) =>
+    call<ProjectBranches>('project.branches', { project_id: projectId }),
   updateProject: (projectId: number, defaultBase: string | null) =>
     call<Project>('project.update', { project_id: projectId, default_base: defaultBase }),
   archiveTask: (taskId: number) => call<Task>('task.archive', { task_id: taskId }),
   restoreTask: (taskId: number) => call<Task>('task.restore', { task_id: taskId }),
   deleteCheck: (taskId: number) => call<TaskDeleteCheck>('task.delete_check', { task_id: taskId }),
-  deleteTask: (taskId: number, deleteBranch: boolean) => call<TaskDeleteResult>('task.delete', { task_id: taskId, delete_branch: deleteBranch }),
+  deleteTask: (taskId: number, deleteBranch: boolean) =>
+    call<TaskDeleteResult>('task.delete', { task_id: taskId, delete_branch: deleteBranch }),
   prList: (projectId?: number) => call<PrList>('pr.list', { project_id: projectId ?? null }),
   refreshPrs: (projectId: number) => call<PrList>('pr.refresh', { project_id: projectId }),
-  projectTasks: (projectId: number) => call<Task[]>('task.list', { project_id: projectId, include_archived: true }),
-  worktrees: (projectId: number) => call<Worktree[]>('project.worktrees', { project_id: projectId }),
-  worktreeSizes: (projectId: number) => call<WorktreeSize[]>('project.worktree_sizes', { project_id: projectId }),
-  removeWorktree: (projectId: number, path: string) => call<void>('project.worktree_remove', { project_id: projectId, path }),
-  pruneWorktrees: (projectId: number) => call<void>('project.worktree_prune', { project_id: projectId }),
+  projectTasks: (projectId: number) =>
+    call<Task[]>('task.list', { project_id: projectId, include_archived: true }),
+  worktrees: (projectId: number) =>
+    call<Worktree[]>('project.worktrees', { project_id: projectId }),
+  worktreeSizes: (projectId: number) =>
+    call<WorktreeSize[]>('project.worktree_sizes', { project_id: projectId }),
+  removeWorktree: (projectId: number, path: string) =>
+    call<void>('project.worktree_remove', { project_id: projectId, path }),
+  pruneWorktrees: (projectId: number) =>
+    call<void>('project.worktree_prune', { project_id: projectId }),
   diff: (taskId: number) => call<TaskDiffResult>('task.diff', { task_id: taskId }),
   file: (taskId: number, path: string, knownMtime: number | null = null) =>
     call<TaskFileResult>('task.file', { task_id: taskId, path, known_mtime: knownMtime }),
   sessions: () => call<Session[]>('session.list'),
-  startSession: (taskId: number, kind: SessionKind) => call<Session>('session.start', { task_id: taskId, kind }),
+  startSession: (taskId: number, kind: SessionKind) =>
+    call<Session>('session.start', { task_id: taskId, kind }),
   killSession: (sessionId: number) => call<null>('session.kill', { session_id: sessionId }),
   send,
   resize: (sessionId: number, rows: number, cols: number) =>
     call<null>('session.resize', { session_id: sessionId, rows, cols }),
-  read: (sessionId: number, lines: number) => call<SessionReadResult>('session.read', { session_id: sessionId, lines }),
+  read: (sessionId: number, lines: number) =>
+    call<SessionReadResult>('session.read', { session_id: sessionId, lines }),
   attach: (sessionId: number, onOutput: Channel<string>) =>
-    serialized(sessionId, () => command<SessionAttachResult>('session_attach', { sessionId, onOutput })),
-  detach: (sessionId: number) => serialized(sessionId, () => command<void>('session_detach', { sessionId })),
+    serialized(sessionId, () =>
+      command<SessionAttachResult>('session_attach', { sessionId, onOutput }),
+    ),
+  detach: (sessionId: number) =>
+    serialized(sessionId, () => command<void>('session_detach', { sessionId })),
   agents: () => call<AgentInfo[]>('agent.list'),
   plugins: () => call<PluginInfo[]>('plugin.list'),
   pluginSettings: (name: string) => call<PluginSettings>('plugin.settings', { name }),
@@ -115,23 +177,28 @@ export const api = {
   reloadPlugins: () => call<null>('plugin.reload', {}),
   storeList: () => call<StoreList>('store.list'),
   addStore: (source: string) => call<StoreInfo>('store.add', { source }),
-  removeStore: (name: string, uninstallPlugins: boolean) => call<null>('store.remove', { name, uninstall_plugins: uninstallPlugins }),
+  removeStore: (name: string, uninstallPlugins: boolean) =>
+    call<null>('store.remove', { name, uninstall_plugins: uninstallPlugins }),
   refreshStores: (name?: string) => call<null>('store.refresh', name ? { name } : {}),
   setAutoUpdate: (enabled: boolean) => call<null>('store.set_auto_update', { enabled }),
-  searchPlugins: (p: { query?: string; capability?: CapabilityKind; store?: string }) => call<SearchHit[]>('plugin.search', p),
-  pluginDetails: (store: string, name: string) => call<PluginDetails>('plugin.details', { store, name }),
+  searchPlugins: (p: { query?: string; capability?: CapabilityKind; store?: string }) =>
+    call<SearchHit[]>('plugin.search', p),
+  pluginDetails: (store: string, name: string) =>
+    call<PluginDetails>('plugin.details', { store, name }),
   installPlugin: (store: string, name: string, acceptPermissions: string[]) =>
     call<PluginInfo>('plugin.install', { store, name, accept_permissions: acceptPermissions }),
   updatePlugin: (name: string, acceptPermissions?: string[]) =>
     call<PluginInfo>('plugin.update', { name, accept_permissions: acceptPermissions ?? null }),
   rollbackPlugin: (name: string) => call<PluginInfo>('plugin.rollback', { name }),
   uninstallPlugin: (name: string) => call<null>('plugin.uninstall', { name }),
-  setPluginEnabled: (name: string, enabled: boolean) => call<null>('plugin.set_enabled', { name, enabled }),
+  setPluginEnabled: (name: string, enabled: boolean) =>
+    call<null>('plugin.set_enabled', { name, enabled }),
   linkPlugin: (path: string) => call<PluginInfo>('plugin.link', { path }),
   unlinkPlugin: (name: string) => call<null>('plugin.unlink', { name }),
   agentConfig: (agent: string) => call<AgentConfig>('agent_config.get', { agent }),
   agentConfigRaw: (agent: string) => call<AgentConfigRaw>('agent_config.get_raw', { agent }),
-  setAgentConfig: (agent: string, config: AgentConfig) => call<null>('agent_config.set', { agent, config }),
+  setAgentConfig: (agent: string, config: AgentConfig) =>
+    call<null>('agent_config.set', { agent, config }),
   removeSession: (sessionId: number) => call<null>('session.remove', { session_id: sessionId }),
   nodeConfig: () => call<NodeConfigInfo>('node_config.get'),
   nodeStats: (pids: number[]) => call<NodeStats>('node.stats', { pids }),
@@ -139,7 +206,8 @@ export const api = {
   forges: () => call<ForgeInfo[]>('forge.list'),
   forgeStatus: (forge: string) => call<ForgeStatus>('forge.status', { forge }),
   forgeRepos: (forge: string, owner: string) => call<ForgeRepo[]>('forge.repos', { forge, owner }),
-  cloneProject: (source: string, forge?: string) => call<Project>('project.clone', { source, forge }),
+  cloneProject: (source: string, forge?: string) =>
+    call<Project>('project.clone', { source, forge }),
   createProject: (name: string, remote: RemoteTarget | null) =>
     call<ProjectCreateResult>('project.create', { name, remote }),
 };

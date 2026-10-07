@@ -7,9 +7,14 @@ export function filterTasks(tasks: Task[], filter: TaskFilter): Task[] {
   return filter === 'all' ? tasks : tasks.filter((t) => t.archived === (filter === 'archived'));
 }
 
-export function taskState(task: Task, sessions: Session[]): 'archived' | SessionStatus | 'no sessions' {
+export function taskState(
+  task: Task,
+  sessions: Session[],
+): 'archived' | SessionStatus | 'no sessions' {
   if (task.archived) return 'archived';
-  return aggregate(sessions.filter((s) => s.task_id === task.id).map((s) => s.status)) ?? 'no sessions';
+  return (
+    aggregate(sessions.filter((s) => s.task_id === task.id).map((s) => s.status)) ?? 'no sessions'
+  );
 }
 
 export function worktreeActions(w: Worktree): { open: boolean; remove: boolean } {

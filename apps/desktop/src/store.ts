@@ -1,12 +1,30 @@
 import { reactive } from 'vue';
 import { api } from './api';
 import { updateCount } from './pluginsView';
-import type { AgentInfo, NodeEvent, NodeStatus, PrList, Project, PullRequest, Session, SessionStatus, Task } from './types';
+import type {
+  AgentInfo,
+  NodeEvent,
+  NodeStatus,
+  PrList,
+  Project,
+  PullRequest,
+  Session,
+  SessionStatus,
+  Task,
+} from './types';
 
 export type Tab = number | null;
 export type ProjectDialogTab = 'folder' | 'clone' | 'create';
-export interface MenuItem { label: string; action: () => void; danger?: boolean; checked?: boolean }
-export interface Toast { id: number; message: string }
+export interface MenuItem {
+  label: string;
+  action: () => void;
+  danger?: boolean;
+  checked?: boolean;
+}
+export interface Toast {
+  id: number;
+  message: string;
+}
 
 export interface State {
   node: NodeStatus;
@@ -104,7 +122,9 @@ export function activeTab(s: State, taskId: number): Tab {
 
 export function waitingSessions(s: State): Session[] {
   const known = new Set(s.tasks.map((t) => t.id));
-  return s.sessions.filter((x) => x.status === 'waiting_input' && known.has(x.task_id)).sort((a, b) => a.id - b.id);
+  return s.sessions
+    .filter((x) => x.status === 'waiting_input' && known.has(x.task_id))
+    .sort((a, b) => a.id - b.id);
 }
 
 export function nextWaiting(s: State): Session | null {
@@ -199,7 +219,8 @@ export function applyEvent(s: State, event: NodeEvent): Session | null {
     case 'project.removed':
       if (s.projectPage === event.params.project_id) s.projectPage = null;
       s.projects = s.projects.filter((p) => p.id !== event.params.project_id);
-      for (const t of s.tasks.filter((t) => t.project_id === event.params.project_id)) dropTask(s, t.id);
+      for (const t of s.tasks.filter((t) => t.project_id === event.params.project_id))
+        dropTask(s, t.id);
       return null;
   }
 }
@@ -238,12 +259,21 @@ export async function refreshPluginUpdates() {
 }
 
 export async function refresh() {
-  const [projects, tasks, sessions, agents] = await Promise.all([api.projects(), api.tasks(), api.sessions(), api.agents()]);
+  const [projects, tasks, sessions, agents] = await Promise.all([
+    api.projects(),
+    api.tasks(),
+    api.sessions(),
+    api.agents(),
+  ]);
   state.agents = agents;
   state.projects = projects;
   state.tasks = tasks;
   state.sessions = sessions;
   refreshPluginUpdates().catch(() => {});
-  api.prList().then((l) => applyPrList(state, l, null)).catch(() => {});
-  if (state.selectedTaskId !== null && !tasks.some((t) => t.id === state.selectedTaskId)) state.selectedTaskId = null;
+  api
+    .prList()
+    .then((l) => applyPrList(state, l, null))
+    .catch(() => {});
+  if (state.selectedTaskId !== null && !tasks.some((t) => t.id === state.selectedTaskId))
+    state.selectedTaskId = null;
 }

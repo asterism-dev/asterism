@@ -2,9 +2,17 @@ import type { PullRequest } from './types';
 
 export type BadgeTone = 'draft' | 'pending' | 'success' | 'failure' | 'merged' | 'closed';
 
-const STATE_LABELS: Record<PullRequest['state'], string> = { open: 'Open', draft: 'Draft', merged: 'Merged', closed: 'Closed' };
+const STATE_LABELS: Record<PullRequest['state'], string> = {
+  open: 'Open',
+  draft: 'Draft',
+  merged: 'Merged',
+  closed: 'Closed',
+};
 const REVIEW_LABELS: Record<PullRequest['review'], string | null> = {
-  approved: 'approved', changes_requested: 'changes requested', review_required: 'review required', none: null,
+  approved: 'approved',
+  changes_requested: 'changes requested',
+  review_required: 'review required',
+  none: null,
 };
 
 function checksText(pr: PullRequest): string {
@@ -26,5 +34,9 @@ export function prBadge(pr: PullRequest): { tone: BadgeTone; label: string; tool
   else if (pr.checks.state === 'failure' || pr.review === 'changes_requested') tone = 'failure';
   else if (pr.checks.state === 'pending') tone = 'pending';
   else tone = 'success';
-  return { tone, label: `#${pr.number}`, tooltip: [STATE_LABELS[pr.state], prSummary(pr)].join(' · ') };
+  return {
+    tone,
+    label: `#${pr.number}`,
+    tooltip: [STATE_LABELS[pr.state], prSummary(pr)].join(' · '),
+  };
 }

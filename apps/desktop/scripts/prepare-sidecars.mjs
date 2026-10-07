@@ -13,11 +13,31 @@ const host = execFileSync('rustc', ['--print', 'host-tuple']).toString().trim();
 const triple = process.env.TAURI_ENV_TARGET_TRIPLE ?? host;
 const cross = triple !== host;
 
-execFileSync('cargo', ['build', '-p', 'asterism', '--bins', ...(release ? ['--release'] : []), ...(cross ? ['--target', triple] : [])], {
-  cwd: root,
-  stdio: 'inherit',
-});
+execFileSync(
+  'cargo',
+  [
+    'build',
+    '-p',
+    'asterism',
+    '--bins',
+    ...(release ? ['--release'] : []),
+    ...(cross ? ['--target', triple] : []),
+  ],
+  {
+    cwd: root,
+    stdio: 'inherit',
+  },
+);
 mkdirSync(binaries, { recursive: true });
-for (const bin of ['asterismd', 'asterism', 'asterism-plugin-claude', 'asterism-plugin-github', 'asterism-plugin-linear']) {
-  copyFileSync(join(root, 'target', ...(cross ? [triple] : []), release ? 'release' : 'debug', bin), join(binaries, `${bin}-${triple}`));
+for (const bin of [
+  'asterismd',
+  'asterism',
+  'asterism-plugin-claude',
+  'asterism-plugin-github',
+  'asterism-plugin-linear',
+]) {
+  copyFileSync(
+    join(root, 'target', ...(cross ? [triple] : []), release ? 'release' : 'debug', bin),
+    join(binaries, `${bin}-${triple}`),
+  );
 }

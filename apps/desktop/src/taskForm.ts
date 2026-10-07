@@ -1,15 +1,69 @@
 import type { PrHit, TaskCreateRequest, TaskIssue } from './types';
 
-const ADJECTIVES = ['two', 'slimy', 'quiet', 'brave', 'tiny', 'odd', 'swift', 'calm', 'bold', 'lucky', 'fuzzy', 'mellow', 'shiny', 'witty', 'sunny', 'rusty'];
-const NOUNS = ['hairs', 'laws', 'clouds', 'foxes', 'pens', 'waves', 'stones', 'birds', 'lamps', 'trees', 'socks', 'maps', 'kites', 'bells', 'seeds', 'moons'];
-const VERBS = ['begin', 'tan', 'jump', 'sing', 'drift', 'glow', 'spin', 'wander', 'nap', 'bloom', 'hum', 'race', 'dance', 'rest', 'wave', 'roam'];
+const ADJECTIVES = [
+  'two',
+  'slimy',
+  'quiet',
+  'brave',
+  'tiny',
+  'odd',
+  'swift',
+  'calm',
+  'bold',
+  'lucky',
+  'fuzzy',
+  'mellow',
+  'shiny',
+  'witty',
+  'sunny',
+  'rusty',
+];
+const NOUNS = [
+  'hairs',
+  'laws',
+  'clouds',
+  'foxes',
+  'pens',
+  'waves',
+  'stones',
+  'birds',
+  'lamps',
+  'trees',
+  'socks',
+  'maps',
+  'kites',
+  'bells',
+  'seeds',
+  'moons',
+];
+const VERBS = [
+  'begin',
+  'tan',
+  'jump',
+  'sing',
+  'drift',
+  'glow',
+  'spin',
+  'wander',
+  'nap',
+  'bloom',
+  'hum',
+  'race',
+  'dance',
+  'rest',
+  'wave',
+  'roam',
+];
 const SUFFIX_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
 const pick = <T>(list: T[], rand: () => number) => list[Math.floor(rand() * list.length)];
 
 /** Matches the daemon's slug rules; a trailing dash survives so typing a space feels natural. */
 export function liveSlug(input: string): string {
-  return input.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+/, '');
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+/, '');
 }
 
 export function finalSlug(input: string): string {
@@ -70,5 +124,11 @@ export function createRequest(f: TaskForm): TaskCreateRequest {
   };
   return f.mode === 'checkout'
     ? { ...common, base: null, branch: null, checkout: f.checkout, push: false }
-    : { ...common, base: f.base || null, branch: f.branch.trim() || null, checkout: null, push: f.push };
+    : {
+        ...common,
+        base: f.base || null,
+        branch: f.branch.trim() || null,
+        checkout: null,
+        push: f.push,
+      };
 }

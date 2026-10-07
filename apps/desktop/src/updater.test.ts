@@ -8,7 +8,10 @@ vi.mock('./store', () => ({ toast: mocks.toast }));
 
 const { checkForUpdates, installUpdate, updateLabel, updater } = await import('./updater');
 
-type Event = { event: 'Started'; data: { contentLength?: number } } | { event: 'Progress'; data: { chunkLength: number } } | { event: 'Finished' };
+type Event =
+  | { event: 'Started'; data: { contentLength?: number } }
+  | { event: 'Progress'; data: { chunkLength: number } }
+  | { event: 'Finished' };
 
 function fakeUpdate(download: (onEvent: (e: Event) => void) => Promise<void> = async () => {}) {
   return { version: '0.4.0', body: 'Fixes', downloadAndInstall: vi.fn(download) };
@@ -16,7 +19,14 @@ function fakeUpdate(download: (onEvent: (e: Event) => void) => Promise<void> = a
 
 beforeEach(() => {
   vi.clearAllMocks();
-  Object.assign(updater, { current: '0.3.0', available: null, checked: false, checking: false, installing: false, progress: null });
+  Object.assign(updater, {
+    current: '0.3.0',
+    available: null,
+    checked: false,
+    checking: false,
+    installing: false,
+    progress: null,
+  });
 });
 
 describe('checkForUpdates', () => {
@@ -59,14 +69,16 @@ describe('checkForUpdates', () => {
 describe('installUpdate', () => {
   it('reports progress and relaunches', async () => {
     const seen: (number | null)[] = [];
-    mocks.check.mockResolvedValue(fakeUpdate(async (on) => {
-      on({ event: 'Started', data: { contentLength: 200 } });
-      on({ event: 'Progress', data: { chunkLength: 50 } });
-      seen.push(updater.progress);
-      on({ event: 'Progress', data: { chunkLength: 150 } });
-      seen.push(updater.progress);
-      on({ event: 'Finished' });
-    }));
+    mocks.check.mockResolvedValue(
+      fakeUpdate(async (on) => {
+        on({ event: 'Started', data: { contentLength: 200 } });
+        on({ event: 'Progress', data: { chunkLength: 50 } });
+        seen.push(updater.progress);
+        on({ event: 'Progress', data: { chunkLength: 150 } });
+        seen.push(updater.progress);
+        on({ event: 'Finished' });
+      }),
+    );
     await checkForUpdates();
     await installUpdate();
     expect(seen).toEqual([25, 100]);
@@ -75,11 +87,13 @@ describe('installUpdate', () => {
 
   it('shows no percentage without a content length', async () => {
     let label = '';
-    mocks.check.mockResolvedValue(fakeUpdate(async (on) => {
-      on({ event: 'Started', data: {} });
-      on({ event: 'Progress', data: { chunkLength: 50 } });
-      label = updateLabel();
-    }));
+    mocks.check.mockResolvedValue(
+      fakeUpdate(async (on) => {
+        on({ event: 'Started', data: {} });
+        on({ event: 'Progress', data: { chunkLength: 50 } });
+        label = updateLabel();
+      }),
+    );
     await checkForUpdates();
     await installUpdate();
     expect(label).toBe('Installing…');
@@ -98,7 +112,11 @@ describe('installUpdate', () => {
   });
 
   it('recovers from a failed install', async () => {
-    mocks.check.mockResolvedValue(fakeUpdate(async () => { throw new Error('bad signature'); }));
+    mocks.check.mockResolvedValue(
+      fakeUpdate(async () => {
+        throw new Error('bad signature');
+      }),
+    );
     await checkForUpdates();
     await installUpdate();
     expect(mocks.toast).toHaveBeenCalledWith('Update failed: bad signature');

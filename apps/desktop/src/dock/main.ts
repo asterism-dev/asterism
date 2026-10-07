@@ -3,8 +3,20 @@ import { ref, shallowRef } from 'vue';
 import { api, errorMessage } from '../api';
 import { toast } from '../store';
 import {
-  LEGACY_KEYS, TEMPLATE_KEY, filePanelId, fileTaskOf, floatKey, keptSizes, sessionIdOf, staleKeys, toggleAction, workspaceKey,
-  type GroupSize, type PaneState, type Placement, type ToolPane,
+  LEGACY_KEYS,
+  TEMPLATE_KEY,
+  filePanelId,
+  fileTaskOf,
+  floatKey,
+  keptSizes,
+  sessionIdOf,
+  staleKeys,
+  toggleAction,
+  workspaceKey,
+  type GroupSize,
+  type PaneState,
+  type Placement,
+  type ToolPane,
 } from './model';
 import { keys, read, remove, write } from './storage';
 
@@ -35,15 +47,31 @@ const gridGroups = (api: DockviewApi) => api.groups.filter((g) => g.api.location
 const hasSession = (g: DockviewGroupPanel) => g.panels.some((p) => sessionIdOf(p.id) !== null);
 
 /** Adds a tool pane into `group`, else Activity behind Diff, else right of the sessions. */
-export function addTool(api: DockviewApi, pane: ToolPane, options: { background?: boolean; group?: string } = {}) {
-  const base = { id: pane, component: pane, tabComponent: 'pane', title: TITLES[pane], inactive: options.background };
+export function addTool(
+  api: DockviewApi,
+  pane: ToolPane,
+  options: { background?: boolean; group?: string } = {},
+) {
+  const base = {
+    id: pane,
+    component: pane,
+    tabComponent: 'pane',
+    title: TITLES[pane],
+    inactive: options.background,
+  };
   const diff = api.getPanel('diff');
-  if (options.group) api.addPanel({ ...base, position: { referenceGroup: options.group, direction: 'within' } });
-  else if (pane === 'activity' && diff) api.addPanel({ ...base, position: { referencePanel: diff, direction: 'within' } });
+  if (options.group)
+    api.addPanel({ ...base, position: { referenceGroup: options.group, direction: 'within' } });
+  else if (pane === 'activity' && diff)
+    api.addPanel({ ...base, position: { referencePanel: diff, direction: 'within' } });
   else {
     const grid = gridGroups(api);
     const anchor = grid.find(hasSession) ?? grid[0];
-    api.addPanel({ ...base, initialWidth: 420, ...(anchor && { position: { referenceGroup: anchor, direction: 'right' } }) });
+    api.addPanel({
+      ...base,
+      initialWidth: 420,
+      ...(anchor && { position: { referenceGroup: anchor, direction: 'right' } }),
+    });
   }
 }
 
@@ -66,7 +94,13 @@ export async function openFile(taskId: number, path: string, line?: number) {
     existing.api.updateParameters(params);
     return;
   }
-  const base = { id: filePanelId(taskId, shown), component: 'file', tabComponent: 'pane', title: shown.slice(shown.lastIndexOf('/') + 1), params };
+  const base = {
+    id: filePanelId(taskId, shown),
+    component: 'file',
+    tabComponent: 'pane',
+    title: shown.slice(shown.lastIndexOf('/') + 1),
+    params,
+  };
   const sibling = dock.panels.find((p) => fileTaskOf(p.id) !== null);
   if (sibling) {
     dock.addPanel({ ...base, position: { referenceGroup: sibling.group.id, direction: 'within' } });
@@ -74,7 +108,11 @@ export async function openFile(taskId: number, path: string, line?: number) {
   }
   const grid = gridGroups(dock);
   const anchor = grid.find(hasSession) ?? grid[0];
-  dock.addPanel({ ...base, initialWidth: 560, ...(anchor && { position: { referenceGroup: anchor, direction: 'right' } }) });
+  dock.addPanel({
+    ...base,
+    initialWidth: 560,
+    ...(anchor && { position: { referenceGroup: anchor, direction: 'right' } }),
+  });
 }
 
 /** Moves every floating panel back into the grid, as tabs of its first group. */
@@ -82,7 +120,8 @@ export function dockFloating(api: DockviewApi) {
   const floating = api.groups.filter((g) => g.api.location.type === 'floating');
   if (!floating.length) return;
   const target = gridGroups(api)[0] ?? api.addGroup();
-  for (const group of floating) for (const panel of [...group.panels]) panel.api.moveTo({ group: target, position: 'center' });
+  for (const group of floating)
+    for (const panel of [...group.panels]) panel.api.moveTo({ group: target, position: 'center' });
 }
 
 export function attachMain(api: DockviewApi, taskId: number) {
@@ -113,11 +152,19 @@ export function keepSizesOnRemove(api: DockviewApi): { dispose(): void }[] {
   let before: GroupSize[] = [];
   return [
     api.onWillMutateLayout((e) => {
-      if (e.kind === 'remove') before = gridGroups(api).map((g) => ({ id: g.id, width: g.api.width, height: g.api.height }));
+      if (e.kind === 'remove')
+        before = gridGroups(api).map((g) => ({
+          id: g.id,
+          width: g.api.width,
+          height: g.api.height,
+        }));
     }),
     api.onDidMutateLayout((e) => {
       if (e.kind !== 'remove') return;
-      for (const size of keptSizes(before, gridGroups(api).map((g) => g.id))) {
+      for (const size of keptSizes(
+        before,
+        gridGroups(api).map((g) => g.id),
+      )) {
         api.getGroup(size.id)?.api.setSize({ width: size.width, height: size.height });
       }
     }),

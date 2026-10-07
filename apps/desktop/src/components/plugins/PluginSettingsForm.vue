@@ -49,12 +49,26 @@ watch(() => props.plugin, load, { immediate: true });
           v-model="draft.secrets[spec.key]"
           type="password"
           autocomplete="off"
-          :placeholder="settings.secrets_set.includes(spec.key) && !draft.cleared.includes(spec.key) ? 'set — type to replace' : 'not set'"
+          :placeholder="
+            settings.secrets_set.includes(spec.key) && !draft.cleared.includes(spec.key)
+              ? 'set — type to replace'
+              : 'not set'
+          "
         />
-        <button v-if="settings.secrets_set.includes(spec.key)" type="button" @click="draft.cleared.push(spec.key)">Clear</button>
+        <button
+          v-if="settings.secrets_set.includes(spec.key)"
+          type="button"
+          @click="draft.cleared.push(spec.key)"
+        >
+          Clear
+        </button>
       </template>
       <input v-else-if="spec.type === 'bool'" v-model="draft.values[spec.key]" type="checkbox" />
-      <input v-else-if="spec.type === 'number'" v-model.number="draft.values[spec.key]" type="number" />
+      <input
+        v-else-if="spec.type === 'number'"
+        v-model.number="draft.values[spec.key]"
+        type="number"
+      />
       <select v-else-if="spec.type === 'enum'" v-model="draft.values[spec.key]">
         <option v-for="o in spec.options ?? []" :key="o" :value="o">{{ o }}</option>
       </select>

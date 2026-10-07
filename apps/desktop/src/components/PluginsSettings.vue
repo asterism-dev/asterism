@@ -18,7 +18,14 @@ const configure = (name: string) => (state.pluginSettingsRequest = name);
 <template>
   <section>
     <div class="tabs" role="tablist" aria-label="Plugins">
-      <button v-for="t in TABS" :key="t.value" role="tab" :aria-selected="tab === t.value" :class="{ active: tab === t.value }" @click="tab = t.value">
+      <button
+        v-for="t in TABS"
+        :key="t.value"
+        role="tab"
+        :aria-selected="tab === t.value"
+        :class="{ active: tab === t.value }"
+        @click="tab = t.value"
+      >
         {{ t.label }}
       </button>
     </div>
@@ -29,7 +36,15 @@ const configure = (name: string) => (state.pluginSettingsRequest = name);
 </template>
 
 <style scoped>
-.tabs { display: flex; gap: 6px; margin-bottom: 12px; }
-.tabs button { border: 0; }
-.tabs button.active { background: var(--select); }
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.tabs button {
+  border: 0;
+}
+.tabs button.active {
+  background: var(--select);
+}
 </style>

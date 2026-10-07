@@ -4,8 +4,16 @@ import { X } from '@lucide/vue';
 import { computed, ref, watch } from 'vue';
 import { api, errorMessage, RpcError } from '../api';
 import {
-  agentSections, BASE_AGENTS, commandPreview, emptyForm, fromForm, HOOKS_EXAMPLE, MCP_EXAMPLE, toForm,
-  type AgentForm, type FormErrors,
+  agentSections,
+  BASE_AGENTS,
+  commandPreview,
+  emptyForm,
+  fromForm,
+  HOOKS_EXAMPLE,
+  MCP_EXAMPLE,
+  toForm,
+  type AgentForm,
+  type FormErrors,
 } from '../settingsForm';
 import { state, toast } from '../store';
 import type { AgentInfo } from '../types';
@@ -34,7 +42,8 @@ async function load() {
     form.value = toForm(await api.agentConfig(props.agent));
   } catch (e) {
     if (e instanceof RpcError && e.kind === 'method_not_found') {
-      loadError.value = 'The running daemon is too old for settings. Restart it from the node menu (right-click the computer name).';
+      loadError.value =
+        'The running daemon is too old for settings. Restart it from the node menu (right-click the computer name).';
       return;
     }
     // Broken hand-edited files: show their raw text so they can be repaired here.
@@ -97,7 +106,9 @@ watch(() => props.agent, load, { immediate: true });
 
     <section>
       <h3>Environment</h3>
-      <p class="muted">CLAUDE* and ANTHROPIC_* are never inherited — set them here if sessions need them.</p>
+      <p class="muted">
+        CLAUDE* and ANTHROPIC_* are never inherited — set them here if sessions need them.
+      </p>
       <div v-for="(row, i) in form.set" :key="i" class="settings-row">
         <input v-model="row.key" placeholder="NAME" spellcheck="false" />
         <input v-model="row.value" placeholder="value" spellcheck="false" />
@@ -119,7 +130,13 @@ watch(() => props.agent, load, { immediate: true });
         {{ label }}'s MCP format, added to your own {{ label }} configuration.
         <a href="#" @click.prevent="docs(MCP_DOCS)">Docs</a>
       </p>
-      <textarea v-model="form.mcpText" class="json" rows="8" :placeholder="MCP_EXAMPLE" spellcheck="false" />
+      <textarea
+        v-model="form.mcpText"
+        class="json"
+        rows="8"
+        :placeholder="MCP_EXAMPLE"
+        spellcheck="false"
+      />
       <p v-if="errors.mcp" class="error">{{ errors.mcp }}</p>
     </section>
 
@@ -129,12 +146,20 @@ watch(() => props.agent, load, { immediate: true });
         {{ label }}'s hooks format. asterism's status hooks stay active as well.
         <a href="#" @click.prevent="docs(HOOKS_DOCS)">Docs</a>
       </p>
-      <textarea v-model="form.hooksText" class="json" rows="8" :placeholder="HOOKS_EXAMPLE" spellcheck="false" />
+      <textarea
+        v-model="form.hooksText"
+        class="json"
+        rows="8"
+        :placeholder="HOOKS_EXAMPLE"
+        spellcheck="false"
+      />
       <p v-if="errors.hooks" class="error">{{ errors.hooks }}</p>
     </section>
 
     <div class="save-bar">
-      <button :class="{ primary: dirty }" :disabled="saving || !dirty || gone" @click="save">Save</button>
+      <button :class="{ primary: dirty }" :disabled="saving || !dirty || gone" @click="save">
+        Save
+      </button>
       <span v-if="gone" class="muted">This agent is no longer installed.</span>
       <span v-else class="muted">Applies to newly started sessions.</span>
     </div>

@@ -23,10 +23,25 @@ function start(e: PointerEvent) {
 </script>
 
 <template>
-  <div class="pane-handle" role="separator" aria-orientation="vertical" @pointerdown.prevent="start" @dblclick="emit('reset')"></div>
+  <div
+    class="pane-handle"
+    role="separator"
+    aria-orientation="vertical"
+    @pointerdown.prevent="start"
+    @dblclick="emit('reset')"
+  ></div>
 </template>
 
 <style scoped>
-.pane-handle { width: 5px; margin: 0 -2px; cursor: col-resize; z-index: 5; position: relative; }
-.pane-handle:hover { background: var(--accent); opacity: 0.4; }
+.pane-handle {
+  width: 5px;
+  margin: 0 -2px;
+  cursor: col-resize;
+  z-index: 5;
+  position: relative;
+}
+.pane-handle:hover {
+  background: var(--accent);
+  opacity: 0.4;
+}
 </style>

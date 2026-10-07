@@ -15,5 +15,12 @@ function open() {
 </script>
 
 <template>
-  <a class="pr-badge" :class="`pr-${badge.tone}`" :href="pr.url" :title="badge.tooltip" @click.prevent.stop="open">{{ badge.label }}</a>
+  <a
+    class="pr-badge"
+    :class="`pr-${badge.tone}`"
+    :href="pr.url"
+    :title="badge.tooltip"
+    @click.prevent.stop="open"
+    >{{ badge.label }}</a
+  >
 </template>

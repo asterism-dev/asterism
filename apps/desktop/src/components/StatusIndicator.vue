@@ -30,20 +30,56 @@ const LABELS: Record<SessionStatus, string> = {
     <circle class="star" cx="18.5" cy="17" r="2.5" />
     <circle class="star" cx="5.5" cy="17" r="2.5" />
   </svg>
-  <span v-else-if="status === 'waiting_input' || (status && showAll)" class="dot" :class="status" :title="LABELS[status]" role="img" :aria-label="LABELS[status]"></span>
+  <span
+    v-else-if="status === 'waiting_input' || (status && showAll)"
+    class="dot"
+    :class="status"
+    :title="LABELS[status]"
+    role="img"
+    :aria-label="LABELS[status]"
+  ></span>
 </template>
 
 <style scoped>
-.stars { width: 14px; height: 14px; flex: none; color: var(--accent); overflow: visible; }
-.links { stroke: currentColor; stroke-width: 1.2; opacity: 0.35; }
-.star { fill: currentColor; transform-box: fill-box; transform-origin: center; animation: twinkle 1.2s ease-in-out infinite; }
-.star:nth-of-type(2) { animation-delay: 0.4s; }
-.star:nth-of-type(3) { animation-delay: 0.8s; }
+.stars {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--accent);
+  overflow: visible;
+}
+.links {
+  stroke: currentColor;
+  stroke-width: 1.2;
+  opacity: 0.35;
+}
+.star {
+  fill: currentColor;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: twinkle 1.2s ease-in-out infinite;
+}
+.star:nth-of-type(2) {
+  animation-delay: 0.4s;
+}
+.star:nth-of-type(3) {
+  animation-delay: 0.8s;
+}
 @keyframes twinkle {
-  0%, 100% { opacity: 0.35; transform: scale(0.7); }
-  40% { opacity: 1; transform: scale(1.15); }
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .star { animation: none; opacity: 1; }
+  .star {
+    animation: none;
+    opacity: 1;
+  }
 }
 </style>

@@ -18,12 +18,22 @@ export function restoreTask(task: Task) {
 export async function deleteTask(task: Task) {
   try {
     const check = await api.deleteCheck(task.id);
-    const dirtyNote = check.dirty ? ' Its worktree has uncommitted changes, which will be lost.' : '';
-    if (!(await ask(`Delete "${task.title}"?${dirtyNote}`, { title: 'Delete task', kind: 'warning' }))) return;
+    const dirtyNote = check.dirty
+      ? ' Its worktree has uncommitted changes, which will be lost.'
+      : '';
+    if (
+      !(await ask(`Delete "${task.title}"?${dirtyNote}`, { title: 'Delete task', kind: 'warning' }))
+    )
+      return;
     let deleteBranch = false;
     if (check.branch_exists) {
-      const unmerged = check.unmerged_commits ? ` It has ${check.unmerged_commits} commit(s) not on ${task.base_branch}.` : '';
-      deleteBranch = await ask(`Also delete branch ${check.branch}?${unmerged}`, { title: 'Delete branch', kind: 'warning' });
+      const unmerged = check.unmerged_commits
+        ? ` It has ${check.unmerged_commits} commit(s) not on ${task.base_branch}.`
+        : '';
+      deleteBranch = await ask(`Also delete branch ${check.branch}?${unmerged}`, {
+        title: 'Delete branch',
+        kind: 'warning',
+      });
     }
     const result = await api.deleteTask(task.id, deleteBranch);
     remove(workspaceKey(task.id));
