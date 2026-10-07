@@ -117,3 +117,15 @@ async fn branches_report_the_worktree_root() {
     let created = env.daemon.create_task(TaskCreateParams { branch: Some("asterism/a-11111".into()), ..params(&env, "a") }).await.unwrap();
     assert_eq!(created.task.worktree_path, format!("{root}/a-11111"));
 }
+
+#[tokio::test]
+async fn checkout_rejects_a_branch_deleted_on_origin_despite_a_stale_tracking_ref() {
+    let env = setup();
+    run_git(env.repo.path(), &["fetch", "-q", "origin", "feature/pr:refs/remotes/origin/feature/pr"]);
+    run_git(env.origin.path(), &["branch", "-D", "feature/pr"]);
+    run_git(env.repo.path(), &["rev-parse", "--verify", "refs/remotes/origin/feature/pr"]);
+    let err = env.daemon.create_task(TaskCreateParams { checkout: Some("feature/pr".into()), ..params(&env, "t") }).await.unwrap_err();
+    assert_eq!(err.kind, ErrorKind::NotFound);
+    assert!(err.message.contains("not found locally or on origin"), "{}", err.message);
+    assert_eq!(task_count(&env), 0);
+}

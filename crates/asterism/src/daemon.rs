@@ -972,7 +972,8 @@ impl Daemon {
         let repo = PathBuf::from(&project.path);
         let checkout = params.checkout.as_deref().map(str::trim).filter(|b| !b.is_empty());
         let new_branch = params.branch.as_deref().map(str::trim).filter(|b| !b.is_empty());
-        if checkout.is_some() && (new_branch.is_some() || params.base.is_some()) {
+        let explicit_base = params.base.as_deref().map(str::trim).filter(|b| !b.is_empty());
+        if checkout.is_some() && (new_branch.is_some() || explicit_base.is_some()) {
             return Err(Error::new(ErrorKind::InvalidParams, "checkout cannot be combined with base or branch"));
         }
         let base = match params.base.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
@@ -1101,15 +1102,12 @@ impl Daemon {
         if git::branch_exists(repo, branch) {
             return Ok(true);
         }
-        if let Err(e) = fetched {
-            if !e.message.contains("couldn't find remote ref") {
-                return Err(e);
-            }
-        }
-        if has_origin && git::remote_branch_exists(repo, "origin", branch) {
-            Ok(false)
-        } else {
-            Err(Error::new(ErrorKind::NotFound, format!("branch `{branch}` not found locally or on origin")))
+        let not_found = || Error::new(ErrorKind::NotFound, format!("branch `{branch}` not found locally or on origin"));
+        match fetched {
+            Err(e) if e.message.contains("couldn't find remote ref") => Err(not_found()),
+            Err(e) => Err(e),
+            Ok(()) if has_origin && git::remote_branch_exists(repo, "origin", branch) => Ok(false),
+            Ok(()) => Err(not_found()),
         }
     }
 

@@ -7,7 +7,8 @@ use crate::error::{Error, Result};
 
 // ponytail: git runs synchronously on the calling (async) worker; move to spawn_blocking if big repos stall other requests.
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output()?;
+    // Callers match on git's English messages.
+    let out = Command::new("git").env("LC_ALL", "C").arg("-C").arg(dir).args(args).output()?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
@@ -192,6 +193,7 @@ pub fn clone_env(extra: &GitEnv) -> Vec<(String, String)> {
 
 fn run_with_env(dir: Option<&Path>, args: &[&str], env: &GitEnv) -> Result<String> {
     let mut cmd = Command::new("git");
+    cmd.env("LC_ALL", "C");
     if let Some(dir) = dir {
         cmd.arg("-C").arg(dir);
     }
