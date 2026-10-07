@@ -26,16 +26,15 @@ similar are found even though the app is launched from Finder.
 
 When the app starts it connects to the Asterism daemon (`asterismd`) and starts it if it is not running yet.
 The computer's name appears at the top of the sidebar; while the daemon starts it shows *starting…*.
-To show a different name, set `ASTERISM_NODE_NAME` in the environment the daemon starts from.
 
 From there, add a project with the **+** button next to the computer name — see
 [Projects and tasks](projects-and-tasks.md).
 
 ### The daemon
 
-The daemon owns your projects, tasks and sessions. It keeps running when you close the window, so agents can
-continue working in the background. When you quit (++cmd+q++ or closing the window) while sessions are still
-running, Asterism asks:
+The daemon owns your projects, tasks and sessions, so agents can keep working in the background after the app
+is gone. Closing the window counts as quitting. When you quit (++cmd+q++ or closing the window) while sessions are
+still running, Asterism asks:
 
 - **Keep running** — quit the app but leave the daemon and its sessions running. Reopen the app to pick them up
   again.

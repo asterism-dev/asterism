@@ -2,7 +2,7 @@
 
 A **session** is a terminal running inside a task's worktree: an agent such as Claude Code, a shell, or a
 command. Sessions run in the Asterism daemon, not in the app window, so they keep running when you switch
-tasks, close the window or quit the app with **Keep running** (see [Install](install.md#the-daemon)).
+tasks, and keep running after you close the window or quit the app if you choose **Keep running** (see [Install](install.md#the-daemon)).
 
 ## Start a session
 
