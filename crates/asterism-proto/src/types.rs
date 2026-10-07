@@ -664,7 +664,6 @@ pub struct PrHit {
     pub head_branch: String,
     pub draft: bool,
     pub from_fork: bool,
-    pub head_deleted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

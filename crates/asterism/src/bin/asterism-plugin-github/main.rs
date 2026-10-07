@@ -2,7 +2,7 @@ mod gh;
 
 use std::path::{Path, PathBuf};
 
-use asterism_plugin::protocol::{method, CloneParams, CreateRemoteParams, GetIssueParams, InitializeResult, ListReposParams, PullRequestsParams, ResolveOwnerParams, ResolveOwnerResult, SearchIssuesParams, TaskSourceCheck, TaskSourceCheckParams};
+use asterism_plugin::protocol::{method, CloneParams, CreateRemoteParams, GetIssueParams, InitializeResult, ListReposParams, PullRequestsParams, ResolveOwnerParams, ResolveOwnerResult, SearchIssuesParams, SearchPullRequestsParams, TaskSourceCheck, TaskSourceCheckParams};
 use asterism_plugin::{params, serve, to_value, ErrorKind, Host, RpcError};
 use serde_json::Value;
 
@@ -33,6 +33,10 @@ fn handle(method_name: &str, raw: Value) -> Result<Value, RpcError> {
         method::FORGE_PULL_REQUESTS => {
             let p: PullRequestsParams = params(raw)?;
             to_value(gh::pull_requests(&gh, Path::new(&p.project_path), &p.branches)?)
+        }
+        method::FORGE_SEARCH_PULL_REQUESTS => {
+            let p: SearchPullRequestsParams = params(raw)?;
+            to_value(gh::search_pull_requests(&gh, Path::new(&p.project_path), &p.query, p.state)?)
         }
         method::TASK_SOURCE_CHECK => {
             let p: TaskSourceCheckParams = params(raw)?;

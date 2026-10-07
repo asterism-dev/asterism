@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use asterism_plugin::protocol::BranchPr;
 use asterism_plugin::{ErrorKind, RpcError};
-use asterism_proto::types::{ChecksState, ForgeRepo, ForgeStatus, Issue, IssueHit, PrChecks, PrState, PullRequest, ReviewState, Visibility};
+use asterism_proto::types::{ChecksState, ForgeRepo, ForgeStatus, Issue, IssueHit, PrChecks, PrHit, PrListState, PrState, PullRequest, ReviewState, Visibility};
 use serde_json::Value;
 
 const REPO_LIMIT: &str = "200";
@@ -303,6 +303,36 @@ pub fn pull_requests(gh: &Path, project: &Path, branches: &[String]) -> Result<V
     Ok(pick_prs(&items, branches))
 }
 
+const PR_SEARCH_LIMIT: &str = "50";
+const PR_SEARCH_FIELDS: &str = "number,title,url,author,headRefName,isDraft,isCrossRepository";
+
+fn pr_hit(item: &Value) -> Option<PrHit> {
+    Some(PrHit {
+        number: item["number"].as_u64()?,
+        title: item["title"].as_str()?.to_string(),
+        url: item["url"].as_str()?.to_string(),
+        author: item["author"]["login"].as_str().unwrap_or_default().to_string(),
+        head_branch: item["headRefName"].as_str()?.to_string(),
+        draft: item["isDraft"].as_bool().unwrap_or(false),
+        from_fork: item["isCrossRepository"].as_bool().unwrap_or(false),
+    })
+}
+
+pub fn search_pull_requests(gh: &Path, project: &Path, query: &str, state: PrListState) -> Result<Vec<PrHit>, RpcError> {
+    let repo = origin_repo(project)?;
+    let state = match state {
+        PrListState::Open => "open",
+        PrListState::Closed => "closed",
+    };
+    let query = query.trim();
+    let mut args = vec!["pr", "list", "-R", &repo, "--state", state, "--limit", PR_SEARCH_LIMIT, "--json", PR_SEARCH_FIELDS];
+    if !query.is_empty() {
+        args.extend(["--search", query]);
+    }
+    let items: Vec<Value> = parse(&run_with_timeout(gh, &args, ISSUE_TIMEOUT, Some(project))?)?;
+    Ok(items.iter().filter_map(pr_hit).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -458,6 +488,40 @@ exit 0
         assert!(log.contains("--assignee @me") && log.contains("login sort:updated-desc"), "{log}");
         assert!(log.contains("issue view 42 -R acme/api"), "{log}");
         assert_eq!(get_issue(&gh, &repo, "#x").unwrap_err().kind(), ErrorKind::InvalidParams);
+    }
+
+    fn fake_pr_gh(dir: &Path) -> PathBuf {
+        let log = dir.join("gh.log");
+        let script = format!(
+            r#"#!/bin/sh
+echo "$@" >> "{log}"
+echo '[{{"number":12,"title":"Add search","url":"https://github.com/acme/api/pull/12","author":{{"login":"octo"}},"headRefName":"feature/search","isDraft":true,"isCrossRepository":false,"headRepository":{{"name":"api"}}}},{{"number":9,"title":"From fork","url":"u9","author":{{"login":"ext"}},"headRefName":"patch-1","isDraft":false,"isCrossRepository":true,"headRepository":null}}]'
+"#,
+            log = log.display()
+        );
+        let bin = dir.join("gh");
+        std::fs::write(&bin, script).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        bin
+    }
+
+    #[test]
+    fn pull_requests_are_searched_through_gh() {
+        let dir = tempfile::tempdir().unwrap();
+        let gh = fake_pr_gh(dir.path());
+        let repo = repo_with_origin(dir.path(), Some("https://github.com/acme/api.git"));
+        let hits = search_pull_requests(&gh, &repo, " search ", PrListState::Closed).unwrap();
+        assert_eq!(hits[0], PrHit {
+            number: 12, title: "Add search".into(), url: "https://github.com/acme/api/pull/12".into(), author: "octo".into(),
+            head_branch: "feature/search".into(), draft: true, from_fork: false,
+        });
+        assert!(hits[1].from_fork);
+        search_pull_requests(&gh, &repo, "  ", PrListState::Open).unwrap();
+        let log = std::fs::read_to_string(dir.path().join("gh.log")).unwrap();
+        let lines: Vec<&str> = log.lines().collect();
+        assert!(lines[0].starts_with("pr list -R acme/api --state closed --limit 50 --json"), "{log}");
+        assert!(lines[0].ends_with("--search search"), "{log}");
+        assert!(lines[1].contains("--state open") && !lines[1].contains("--search"), "{log}");
     }
 
     fn item(branch: &str, number: u64, state: &str, draft: bool, updated: &str, rollup: Value, review: Value) -> Value {
