@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { Check, ChevronDown, GitPullRequest, GitPullRequestDraft, X } from '@lucide/vue';
 import { api, errorMessage, RpcError } from '../api';
 import { issueStateClass, prDisabledReason } from '../taskForm';
@@ -12,6 +12,7 @@ const kind = defineModel<'issue' | 'pr'>('kind', { required: true });
 const emit = defineEmits<{ issue: [IssueDetails | null]; pr: [PrHit | null]; openSettings: [plugin: string] }>();
 
 const open = ref(false);
+const searchInput = ref<HTMLInputElement>();
 const menuOpen = ref(false);
 const query = ref('');
 const source = ref('');
@@ -102,7 +103,10 @@ function pickPr(hit: PrHit) {
 
 function toggle() {
   open.value = !open.value;
-  if (open.value) search();
+  if (open.value) {
+    search();
+    nextTick(() => searchInput.value?.focus());
+  }
 }
 
 function closePanel(): boolean {
@@ -169,7 +173,7 @@ onUnmounted(() => clearTimeout(debounce));
             </li>
           </ul>
         </div>
-        <input v-model="query" autofocus @keydown.enter.prevent
+        <input ref="searchInput" v-model="query" @keydown.enter.prevent
           :placeholder="kind === 'pr' ? 'Search pull requests…' : `Search ${sourceInfo?.display_name ?? 'issues'}…`" />
         <select v-if="kind === 'pr'" v-model="prState" class="state" aria-label="Pull request state">
           <option value="open">Open</option>
