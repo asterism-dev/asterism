@@ -1,3 +1,9 @@
+## v0.9.0 (2026-10-07)
+
+### Feat
+
+- open tasks from pull requests and redesign the create task modal (#12)
+
 ## v0.8.1 (2026-10-07)
 
 ### Fix
