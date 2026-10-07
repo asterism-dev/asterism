@@ -26,6 +26,7 @@ similar are found even though the app is launched from Finder.
 
 When the app starts it connects to the Asterism daemon (`asterismd`) and starts it if it is not running yet.
 The computer's name appears at the top of the sidebar; while the daemon starts it shows *starting…*.
+To show a different name, set `ASTERISM_NODE_NAME` in the environment the daemon starts from.
 
 From there, add a project with the **+** button next to the computer name — see
 [Projects and tasks](projects-and-tasks.md).

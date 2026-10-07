@@ -45,6 +45,8 @@ To run a second development instance at the same time, give it its own port and 
 make dev DEV_PORT=1430 DEV_HOME=~/.asterism-dev2
 ```
 
+Set `DEV_NAME` to show a name other than the hostname at the top of the sidebar, e.g. `make dev DEV_NAME=demo`. It is passed to the daemon as `ASTERISM_NODE_NAME`.
+
 Quitting the app can leave the daemon running, as in a release build. `make dev-stop` sends `shutdown` to the daemon at `$(DEV_HOME)/asterismd.sock`; pass the same `DEV_HOME` to stop a second instance. The app only replaces a running daemon by itself when its version or build id (`git describe --always --dirty`) differs and no session is running, so stop the daemon after changing daemon or plugin code to be sure the next `make dev` runs the new build.
 
 ## Continuous integration

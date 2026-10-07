@@ -59,6 +59,8 @@ pub struct DaemonOptions {
     pub plugin_env: Vec<(String, String)>,
     pub plugin_call_timeout: Duration,
     pub plugin_idle: Duration,
+    /// Shown to clients instead of the hostname, e.g. to keep it out of screenshots.
+    pub node_name: Option<String>,
 }
 
 impl Default for DaemonOptions {
@@ -69,6 +71,9 @@ impl Default for DaemonOptions {
             plugin_env: Vec::new(),
             plugin_call_timeout: process::CALL_TIMEOUT,
             plugin_idle: process::IDLE_TIMEOUT,
+            node_name: std::env::var("ASTERISM_NODE_NAME")
+                .ok()
+                .filter(|name| !name.trim().is_empty()),
         }
     }
 }
@@ -879,7 +884,11 @@ impl Daemon {
             daemon_version: env!("CARGO_PKG_VERSION").into(),
             daemon_build: asterism_proto::BUILD_ID.into(),
             pid: std::process::id(),
-            hostname: gethostname::gethostname().to_string_lossy().into_owned(),
+            hostname: self
+                .options
+                .node_name
+                .clone()
+                .unwrap_or_else(|| gethostname::gethostname().to_string_lossy().into_owned()),
             os: std::env::consts::OS.into(),
             agents: self.agent_infos(),
         })
