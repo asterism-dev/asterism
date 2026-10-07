@@ -12,6 +12,11 @@ fn claude_patterns() -> Vec<String> {
 }
 
 fn start(argv: &[&str], patterns: Vec<String>, hooks: bool) -> watch::Receiver<SessionStatus> {
+    let initial = if hooks { SessionStatus::Idle } else { SessionStatus::Working };
+    start_in(argv, patterns, hooks, initial)
+}
+
+fn start_in(argv: &[&str], patterns: Vec<String>, hooks: bool, initial: SessionStatus) -> watch::Receiver<SessionStatus> {
     let pty = Pty::spawn(SpawnSpec {
         argv: argv.iter().map(|s| s.to_string()).collect(),
         cwd: std::env::temp_dir(),
@@ -20,7 +25,6 @@ fn start(argv: &[&str], patterns: Vec<String>, hooks: bool) -> watch::Receiver<S
         cols: 80,
     })
     .unwrap();
-    let initial = if hooks { SessionStatus::Idle } else { SessionStatus::Working };
     let (tx, rx) = watch::channel(initial);
     tokio::spawn(track(pty, Arc::from(patterns), Arc::new(tx), Arc::new(AtomicBool::new(hooks))));
     rx
@@ -42,10 +46,10 @@ fn idle_status_detects_waiting_prompts() {
 
 #[test]
 fn hook_events_map_to_statuses() {
-    assert_eq!(hook_status(HookEvent::PromptSubmit), SessionStatus::Working);
-    assert_eq!(hook_status(HookEvent::Tool), SessionStatus::Working);
-    assert_eq!(hook_status(HookEvent::Stop), SessionStatus::Idle);
-    assert_eq!(hook_status(HookEvent::Notification), SessionStatus::WaitingInput);
+    assert_eq!(hook_status(HookEvent::PromptSubmit), Some(SessionStatus::Working));
+    assert_eq!(hook_status(HookEvent::Tool), Some(SessionStatus::Working));
+    assert_eq!(hook_status(HookEvent::Stop), None);
+    assert_eq!(hook_status(HookEvent::Notification), Some(SessionStatus::WaitingInput));
 }
 
 #[tokio::test]
@@ -72,4 +76,19 @@ async fn hook_driven_sessions_ignore_output_but_not_exit() {
     tokio::time::sleep(Duration::from_millis(800)).await;
     assert_eq!(*rx.borrow(), SessionStatus::Idle);
     reaches(&mut rx, SessionStatus::Exited).await;
+}
+
+#[tokio::test]
+async fn hook_driven_work_ends_only_after_output_goes_quiet() {
+    let mut rx = start_in(&["sh", "-c", "for i in 1 2 3 4 5 6; do echo spin; sleep 0.5; done; sleep 30"], vec![], true, SessionStatus::Working);
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(*rx.borrow(), SessionStatus::Working);
+    reaches(&mut rx, SessionStatus::Idle).await;
+}
+
+#[tokio::test]
+async fn silence_keeps_hook_driven_waiting_input() {
+    let rx = start_in(&["sh", "-c", "echo hi; sleep 30"], vec![], true, SessionStatus::WaitingInput);
+    tokio::time::sleep(Duration::from_millis(2800)).await;
+    assert_eq!(*rx.borrow(), SessionStatus::WaitingInput);
 }
