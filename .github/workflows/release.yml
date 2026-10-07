@@ -116,3 +116,14 @@ jobs:
           gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/${asset}" > latest.json
           jq -e '.platforms["darwin-aarch64"] and .platforms["darwin-x86_64"]' latest.json
       - run: gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" -F draft=false -f make_latest=true
+
+  docs:
+    needs: [bump, publish]
+    if: needs.bump.outputs.released == 'true' && needs.bump.outputs.dry_run != 'true'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/docs.yml
+    with:
+      ref: v${{ needs.bump.outputs.version }}
