@@ -33,10 +33,17 @@ pub fn extract_marked(output: &str) -> Option<String> {
 
 /// Inherited PATH plus the usual user tool dirs, for when the login shell cannot be read.
 pub fn fallback_path(inherited: &str, home: Option<&str>) -> String {
-    let mut dirs: Vec<String> = inherited.split(':').filter(|d| !d.is_empty()).map(String::from).collect();
-    let extra = ["/opt/homebrew/bin".to_string(), "/usr/local/bin".to_string()]
-        .into_iter()
-        .chain(home.map(|h| format!("{h}/.local/bin")));
+    let mut dirs: Vec<String> = inherited
+        .split(':')
+        .filter(|d| !d.is_empty())
+        .map(String::from)
+        .collect();
+    let extra = [
+        "/opt/homebrew/bin".to_string(),
+        "/usr/local/bin".to_string(),
+    ]
+    .into_iter()
+    .chain(home.map(|h| format!("{h}/.local/bin")));
     for dir in extra {
         if !dirs.contains(&dir) {
             dirs.push(dir);

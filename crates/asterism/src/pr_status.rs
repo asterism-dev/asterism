@@ -12,7 +12,11 @@ pub const ACTIVE_WINDOW: i64 = 86_400;
 
 pub fn is_due(now: i64, last_polled: Option<i64>, last_activity: i64, rate_limited: bool) -> bool {
     let Some(last) = last_polled else { return true };
-    let interval = if rate_limited || now - last_activity > ACTIVE_WINDOW { IDLE_INTERVAL } else { ACTIVE_INTERVAL };
+    let interval = if rate_limited || now - last_activity > ACTIVE_WINDOW {
+        IDLE_INTERVAL
+    } else {
+        ACTIVE_INTERVAL
+    };
     now - last >= interval
 }
 
@@ -49,17 +53,31 @@ fn finished(pr: &PullRequest) -> bool {
 pub fn branches_to_ask(tasks: &[(i64, String)], known: &HashMap<i64, Entry>) -> Vec<String> {
     tasks
         .iter()
-        .filter(|(id, branch)| !known.get(id).is_some_and(|e| e.branch == *branch && finished(&e.pr)))
+        .filter(|(id, branch)| {
+            !known
+                .get(id)
+                .is_some_and(|e| e.branch == *branch && finished(&e.pr))
+        })
         .map(|(_, branch)| branch.clone())
         .collect()
 }
 
 /// Applies one project's poll to `known`; returns the task ids whose PR changed, in id order.
-pub fn merge(project_id: i64, tasks: &[(i64, String)], asked: &[String], reply: Vec<BranchPr>, known: &mut HashMap<i64, Entry>) -> Vec<(i64, Option<PullRequest>)> {
+pub fn merge(
+    project_id: i64,
+    tasks: &[(i64, String)],
+    asked: &[String],
+    reply: Vec<BranchPr>,
+    known: &mut HashMap<i64, Entry>,
+) -> Vec<(i64, Option<PullRequest>)> {
     let reply: HashMap<String, PullRequest> = reply.into_iter().map(|b| (b.branch, b.pr)).collect();
     let mut changes = Vec::new();
     let current: HashSet<i64> = tasks.iter().map(|(id, _)| *id).collect();
-    let gone: Vec<i64> = known.iter().filter(|(id, e)| e.project_id == project_id && !current.contains(id)).map(|(id, _)| *id).collect();
+    let gone: Vec<i64> = known
+        .iter()
+        .filter(|(id, e)| e.project_id == project_id && !current.contains(id))
+        .map(|(id, _)| *id)
+        .collect();
     for id in gone {
         known.remove(&id);
         changes.push((id, None));
@@ -75,7 +93,14 @@ pub fn merge(project_id: i64, tasks: &[(i64, String)], asked: &[String], reply: 
         }
         match &new {
             Some(pr) => {
-                known.insert(*id, Entry { project_id, branch: branch.clone(), pr: pr.clone() });
+                known.insert(
+                    *id,
+                    Entry {
+                        project_id,
+                        branch: branch.clone(),
+                        pr: pr.clone(),
+                    },
+                );
             }
             None => {
                 known.remove(id);
@@ -104,7 +129,10 @@ pub struct InFlight<'a> {
 
 impl<'a> InFlight<'a> {
     pub fn start(status: &'a Mutex<PrStatus>, project_id: i64) -> Option<Self> {
-        lock(status).in_flight.insert(project_id).then(|| Self { status, project_id })
+        lock(status)
+            .in_flight
+            .insert(project_id)
+            .then(|| Self { status, project_id })
     }
 }
 
@@ -126,7 +154,10 @@ mod tests {
             title: "t".into(),
             state,
             review: ReviewState::None,
-            checks: PrChecks { state: ChecksState::Success, failing: vec![] },
+            checks: PrChecks {
+                state: ChecksState::Success,
+                failing: vec![],
+            },
         }
     }
 
@@ -136,20 +167,40 @@ mod tests {
         assert!(is_due(now, None, 0, false));
         assert!(!is_due(now, Some(now - 30), now, false));
         assert!(is_due(now, Some(now - 60), now, false));
-        assert!(!is_due(now, Some(now - 120), now - ACTIVE_WINDOW - 1, false));
+        assert!(!is_due(
+            now,
+            Some(now - 120),
+            now - ACTIVE_WINDOW - 1,
+            false
+        ));
         assert!(is_due(now, Some(now - 600), now - ACTIVE_WINDOW - 1, false));
         assert!(!is_due(now, Some(now - 120), now, true));
-        assert!(is_rate_limit("API rate limit exceeded for user") && is_rate_limit("Rate Limit") && !is_rate_limit("not logged in"));
+        assert!(
+            is_rate_limit("API rate limit exceeded for user")
+                && is_rate_limit("Rate Limit")
+                && !is_rate_limit("not logged in")
+        );
     }
 
     #[test]
     fn only_flagged_forges_match_the_host() {
         let gh = vec!["github.com".to_string()];
         let forges = [
-            ForgeCandidate { id: "plain", hosts: &gh, pull_requests: false },
-            ForgeCandidate { id: "github", hosts: &gh, pull_requests: true },
+            ForgeCandidate {
+                id: "plain",
+                hosts: &gh,
+                pull_requests: false,
+            },
+            ForgeCandidate {
+                id: "github",
+                hosts: &gh,
+                pull_requests: true,
+            },
         ];
-        assert_eq!(forge_for_host(&forges, "GitHub.com").as_deref(), Some("github"));
+        assert_eq!(
+            forge_for_host(&forges, "GitHub.com").as_deref(),
+            Some("github")
+        );
         assert_eq!(forge_for_host(&forges[..1], "github.com"), None);
         assert_eq!(forge_for_host(&forges, "gitlab.com"), None);
     }
@@ -158,11 +209,39 @@ mod tests {
     fn finished_prs_are_kept_and_not_asked_again() {
         let mut known = HashMap::new();
         let tasks = vec![(1, "a".to_string()), (2, "b".to_string())];
-        let changes = merge(9, &tasks, &["a".into(), "b".into()], vec![BranchPr { branch: "a".into(), pr: pr(5, PrState::Open) }], &mut known);
+        let changes = merge(
+            9,
+            &tasks,
+            &["a".into(), "b".into()],
+            vec![BranchPr {
+                branch: "a".into(),
+                pr: pr(5, PrState::Open),
+            }],
+            &mut known,
+        );
         assert_eq!(changes, vec![(1, Some(pr(5, PrState::Open)))]);
-        assert!(merge(9, &tasks, &["a".into(), "b".into()], vec![BranchPr { branch: "a".into(), pr: pr(5, PrState::Open) }], &mut known).is_empty());
+        assert!(merge(
+            9,
+            &tasks,
+            &["a".into(), "b".into()],
+            vec![BranchPr {
+                branch: "a".into(),
+                pr: pr(5, PrState::Open)
+            }],
+            &mut known
+        )
+        .is_empty());
 
-        merge(9, &tasks, &["a".into(), "b".into()], vec![BranchPr { branch: "a".into(), pr: pr(5, PrState::Merged) }], &mut known);
+        merge(
+            9,
+            &tasks,
+            &["a".into(), "b".into()],
+            vec![BranchPr {
+                branch: "a".into(),
+                pr: pr(5, PrState::Merged),
+            }],
+            &mut known,
+        );
         assert_eq!(branches_to_ask(&tasks, &known), vec!["b".to_string()]);
         let changes = merge(9, &tasks, &["b".into()], vec![], &mut known);
         assert!(changes.is_empty(), "the merged PR of task 1 stays");
@@ -173,9 +252,25 @@ mod tests {
     fn prs_vanish_with_their_task_or_from_the_reply() {
         let mut known = HashMap::new();
         let tasks = vec![(1, "a".to_string()), (2, "b".to_string())];
-        let both = vec![BranchPr { branch: "a".into(), pr: pr(5, PrState::Open) }, BranchPr { branch: "b".into(), pr: pr(6, PrState::Open) }];
+        let both = vec![
+            BranchPr {
+                branch: "a".into(),
+                pr: pr(5, PrState::Open),
+            },
+            BranchPr {
+                branch: "b".into(),
+                pr: pr(6, PrState::Open),
+            },
+        ];
         merge(9, &tasks, &["a".into(), "b".into()], both, &mut known);
-        known.insert(3, Entry { project_id: 4, branch: "other".into(), pr: pr(1, PrState::Open) });
+        known.insert(
+            3,
+            Entry {
+                project_id: 4,
+                branch: "other".into(),
+                pr: pr(1, PrState::Open),
+            },
+        );
         let changes = merge(9, &tasks[..1], &["a".into()], vec![], &mut known);
         assert_eq!(changes, vec![(1, None), (2, None)]);
         assert!(known.contains_key(&3), "other projects are untouched");
@@ -184,14 +279,37 @@ mod tests {
     #[test]
     fn a_branch_change_replaces_or_drops_the_old_pr() {
         let mut known = HashMap::new();
-        known.insert(1, Entry { project_id: 9, branch: "x".into(), pr: pr(5, PrState::Open) });
+        known.insert(
+            1,
+            Entry {
+                project_id: 9,
+                branch: "x".into(),
+                pr: pr(5, PrState::Open),
+            },
+        );
         let tasks = vec![(1, "y".to_string())];
-        assert_eq!(merge(9, &tasks, &["y".into()], vec![], &mut known), vec![(1, None)]);
+        assert_eq!(
+            merge(9, &tasks, &["y".into()], vec![], &mut known),
+            vec![(1, None)]
+        );
         assert!(!known.contains_key(&1));
 
-        known.insert(1, Entry { project_id: 9, branch: "x".into(), pr: pr(5, PrState::Open) });
-        let reply = vec![BranchPr { branch: "y".into(), pr: pr(7, PrState::Open) }];
-        assert_eq!(merge(9, &tasks, &["y".into()], reply, &mut known), vec![(1, Some(pr(7, PrState::Open)))]);
+        known.insert(
+            1,
+            Entry {
+                project_id: 9,
+                branch: "x".into(),
+                pr: pr(5, PrState::Open),
+            },
+        );
+        let reply = vec![BranchPr {
+            branch: "y".into(),
+            pr: pr(7, PrState::Open),
+        }];
+        assert_eq!(
+            merge(9, &tasks, &["y".into()], reply, &mut known),
+            vec![(1, Some(pr(7, PrState::Open)))]
+        );
         assert_eq!(known[&1].branch, "y");
     }
 

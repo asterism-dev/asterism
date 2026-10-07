@@ -33,23 +33,35 @@ pub fn store_dir(paths: &Paths, store: &StoreConfig) -> PathBuf {
 pub fn load(paths: &Paths) -> Result<StoresFile> {
     let file = catalog::load_stores(&paths.plugin_stores_file()).map_err(invalid)?;
     if let Some(store) = file.stores.iter().find(|s| !is_slug(&s.name)) {
-        return Err(invalid(format!("stores.toml: invalid store name {:?}", store.name)));
+        return Err(invalid(format!(
+            "stores.toml: invalid store name {:?}",
+            store.name
+        )));
     }
     Ok(file)
 }
 
 pub fn find_store<'a>(file: &'a StoresFile, name: &str) -> Result<&'a StoreConfig> {
-    file.stores.iter().find(|s| s.name == name).ok_or_else(|| Error::new(ErrorKind::NotFound, format!("no store named {name}")))
+    file.stores
+        .iter()
+        .find(|s| s.name == name)
+        .ok_or_else(|| Error::new(ErrorKind::NotFound, format!("no store named {name}")))
 }
 
 pub fn add_store(paths: &Paths, source: &str, env: &GitEnv) -> Result<StoreConfig> {
     let mut file = load(paths)?;
     let official = official_source().as_deref() == Some(source);
     let (source, index, checkout) = if is_local(source) {
-        let dir = expand_home(source)?.canonicalize().map_err(|e| invalid(format!("{source}: {e}")))?;
+        let dir = expand_home(source)?
+            .canonicalize()
+            .map_err(|e| invalid(format!("{source}: {e}")))?;
         (dir.display().to_string(), source::read_index(&dir)?, None)
     } else {
-        let temp = paths.plugin_stores_dir().join(format!(".adding-{}-{}", std::process::id(), TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)));
+        let temp = paths.plugin_stores_dir().join(format!(
+            ".adding-{}-{}",
+            std::process::id(),
+            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
         std::fs::create_dir_all(paths.plugin_stores_dir())?;
         let read = source::clone_store(source, &temp, env).and_then(|()| source::read_index(&temp));
         match read {
@@ -60,13 +72,24 @@ pub fn add_store(paths: &Paths, source: &str, env: &GitEnv) -> Result<StoreConfi
             }
         }
     };
-    if file.stores.iter().any(|s| s.name == index.name || s.source == source) {
+    if file
+        .stores
+        .iter()
+        .any(|s| s.name == index.name || s.source == source)
+    {
         if let Some(temp) = &checkout {
             let _ = std::fs::remove_dir_all(temp);
         }
-        return Err(invalid(format!("a store named {} (or with this source) is already added", index.name)));
+        return Err(invalid(format!(
+            "a store named {} (or with this source) is already added",
+            index.name
+        )));
     }
-    let store = StoreConfig { name: index.name, source, official };
+    let store = StoreConfig {
+        name: index.name,
+        source,
+        official,
+    };
     if let Some(temp) = checkout {
         let target = store_dir(paths, &store);
         let _ = std::fs::remove_dir_all(&target);
@@ -102,7 +125,10 @@ pub fn sync_store(paths: &Paths, store: &StoreConfig, env: &GitEnv) -> Result<St
 fn validate_checkout(dir: &std::path::Path, store: &StoreConfig) -> Result<StoreIndex> {
     let index = source::read_index(dir)?;
     if index.name != store.name {
-        return Err(invalid(format!("store.json of {} now names {:?}; remove and add the store again", store.name, index.name)));
+        return Err(invalid(format!(
+            "store.json of {} now names {:?}; remove and add the store again",
+            store.name, index.name
+        )));
     }
     Ok(index)
 }
@@ -122,6 +148,11 @@ pub fn remove_store(paths: &Paths, name: &str) -> Result<StoreConfig> {
 pub fn indexes(paths: &Paths, file: &StoresFile) -> Vec<(String, StoreIndex)> {
     file.stores
         .iter()
-        .filter_map(|s| Some((s.name.clone(), source::read_index(&store_dir(paths, s)).ok()?)))
+        .filter_map(|s| {
+            Some((
+                s.name.clone(),
+                source::read_index(&store_dir(paths, s)).ok()?,
+            ))
+        })
         .collect()
 }

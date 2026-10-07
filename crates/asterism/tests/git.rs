@@ -10,10 +10,16 @@ fn toplevel_finds_repo_root_and_rejects_plain_dirs() {
     init_repo(repo.path());
     std::fs::create_dir(repo.path().join("sub")).unwrap();
     let root = git::toplevel(&repo.path().join("sub")).unwrap();
-    assert_eq!(root.canonicalize().unwrap(), repo.path().canonicalize().unwrap());
+    assert_eq!(
+        root.canonicalize().unwrap(),
+        repo.path().canonicalize().unwrap()
+    );
 
     let plain = tempfile::tempdir().unwrap();
-    assert_eq!(git::toplevel(plain.path()).unwrap_err().kind, ErrorKind::NotARepo);
+    assert_eq!(
+        git::toplevel(plain.path()).unwrap_err().kind,
+        ErrorKind::NotARepo
+    );
 }
 
 #[test]
@@ -46,8 +52,13 @@ fn worktree_lifecycle_and_diff() {
     assert!(patch.contains("+changed"), "{patch}");
     assert!(patch.contains("+fresh"), "{patch}");
 
-    let err = git::add_worktree(repo.path(), "asterism/1-fix", &wt_parent.path().join("other"), "main")
-        .unwrap_err();
+    let err = git::add_worktree(
+        repo.path(),
+        "asterism/1-fix",
+        &wt_parent.path().join("other"),
+        "main",
+    )
+    .unwrap_err();
     assert_eq!(err.kind, ErrorKind::BranchExists);
 
     assert!(git::remove_worktree(repo.path(), &wt, false).is_err());
@@ -70,24 +81,52 @@ fn repo_with_origin() -> (tempfile::TempDir, tempfile::TempDir) {
     run_git(origin.path(), &["init", "-q", "--bare", "-b", "main"]);
     let repo = tempfile::tempdir().unwrap();
     init_repo(repo.path());
-    run_git(repo.path(), &["remote", "add", "origin", &origin.path().display().to_string()]);
-    run_git(repo.path(), &["push", "-q", "origin", "main", "main:feature/pr"]);
-    run_git(repo.path(), &["update-ref", "-d", "refs/remotes/origin/feature/pr"]);
+    run_git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            &origin.path().display().to_string(),
+        ],
+    );
+    run_git(
+        repo.path(),
+        &["push", "-q", "origin", "main", "main:feature/pr"],
+    );
+    run_git(
+        repo.path(),
+        &["update-ref", "-d", "refs/remotes/origin/feature/pr"],
+    );
     (origin, repo)
 }
 
 #[test]
 fn origin_only_branches_check_out_with_upstream() {
     let (_origin, repo) = repo_with_origin();
-    assert!(!git::remote_branch_exists(repo.path(), "origin", "feature/pr"));
+    assert!(!git::remote_branch_exists(
+        repo.path(),
+        "origin",
+        "feature/pr"
+    ));
     git::fetch_branch(repo.path(), "origin", "feature/pr", &[]).unwrap();
-    assert!(git::remote_branch_exists(repo.path(), "origin", "feature/pr"));
+    assert!(git::remote_branch_exists(
+        repo.path(),
+        "origin",
+        "feature/pr"
+    ));
     assert!(!git::branch_exists(repo.path(), "feature/pr"));
     let parent = tempfile::tempdir().unwrap();
     let wt = parent.path().join("pr");
     git::add_tracking_worktree(repo.path(), &wt, "feature/pr", "origin").unwrap();
-    assert_eq!(run_git(&wt, &["rev-parse", "--abbrev-ref", "@{upstream}"]).trim(), "origin/feature/pr");
-    assert!(git::fetch_branch(repo.path(), "origin", "missing", &[]).unwrap_err().message.contains("couldn't find remote ref"));
+    assert_eq!(
+        run_git(&wt, &["rev-parse", "--abbrev-ref", "@{upstream}"]).trim(),
+        "origin/feature/pr"
+    );
+    assert!(git::fetch_branch(repo.path(), "origin", "missing", &[])
+        .unwrap_err()
+        .message
+        .contains("couldn't find remote ref"));
 }
 
 #[test]
@@ -97,9 +136,18 @@ fn push_upstream_publishes_and_tracks_the_branch() {
     let wt = parent.path().join("x");
     git::add_worktree(repo.path(), "asterism/x", &wt, "main").unwrap();
     git::push_upstream(&wt, "origin", "asterism/x", &[]).unwrap();
-    run_git(origin.path(), &["rev-parse", "--verify", "refs/heads/asterism/x"]);
-    assert_eq!(run_git(&wt, &["rev-parse", "--abbrev-ref", "@{upstream}"]).trim(), "origin/asterism/x");
-    run_git(repo.path(), &["remote", "set-url", "origin", "/nonexistent/origin.git"]);
+    run_git(
+        origin.path(),
+        &["rev-parse", "--verify", "refs/heads/asterism/x"],
+    );
+    assert_eq!(
+        run_git(&wt, &["rev-parse", "--abbrev-ref", "@{upstream}"]).trim(),
+        "origin/asterism/x"
+    );
+    run_git(
+        repo.path(),
+        &["remote", "set-url", "origin", "/nonexistent/origin.git"],
+    );
     assert!(git::push_upstream(&wt, "origin", "asterism/x", &[]).is_err());
 }
 
@@ -109,10 +157,26 @@ fn branches_split_into_local_and_one_remote() {
     git::fetch(repo.path(), "origin", &[]).unwrap();
     run_git(repo.path(), &["branch", "feature/local"]);
     run_git(repo.path(), &["remote", "add", "upstream", "/nonexistent"]);
-    run_git(repo.path(), &["update-ref", "refs/remotes/upstream/main", "HEAD"]);
-    run_git(repo.path(), &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
-    assert_eq!(git::local_branches(repo.path()).unwrap(), ["feature/local", "main"]);
-    assert_eq!(git::remote_branches(repo.path(), "origin").unwrap(), ["origin/feature/pr", "origin/main"]);
+    run_git(
+        repo.path(),
+        &["update-ref", "refs/remotes/upstream/main", "HEAD"],
+    );
+    run_git(
+        repo.path(),
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ],
+    );
+    assert_eq!(
+        git::local_branches(repo.path()).unwrap(),
+        ["feature/local", "main"]
+    );
+    assert_eq!(
+        git::remote_branches(repo.path(), "origin").unwrap(),
+        ["origin/feature/pr", "origin/main"]
+    );
 }
 
 #[test]
@@ -126,5 +190,8 @@ fn push_upstream_skips_pre_push_hooks() {
     let wt = parent.path().join("h");
     git::add_worktree(repo.path(), "asterism/h", &wt, "main").unwrap();
     git::push_upstream(&wt, "origin", "asterism/h", &[]).unwrap();
-    run_git(origin.path(), &["rev-parse", "--verify", "refs/heads/asterism/h"]);
+    run_git(
+        origin.path(),
+        &["rev-parse", "--verify", "refs/heads/asterism/h"],
+    );
 }

@@ -12,7 +12,12 @@ const MAX_BYTES: u64 = 2 * 1024 * 1024;
 const SNIFF_BYTES: usize = 8 * 1024;
 
 /// Reads a text file for display; relative paths resolve against `worktree`, `~/` against `home`.
-pub fn read(worktree: &Path, home: Option<&Path>, path: &str, known_mtime: Option<i64>) -> Result<TaskFileResult> {
+pub fn read(
+    worktree: &Path,
+    home: Option<&Path>,
+    path: &str,
+    known_mtime: Option<i64>,
+) -> Result<TaskFileResult> {
     let full = fs::canonicalize(resolve(worktree, home, path)?).map_err(|e| io_error(path, e))?;
     let meta = fs::metadata(&full).map_err(|e| io_error(path, e))?;
     if !meta.is_file() {
@@ -21,26 +26,43 @@ pub fn read(worktree: &Path, home: Option<&Path>, path: &str, known_mtime: Optio
     if meta.len() > MAX_BYTES {
         return Err(invalid(format!("{path} is larger than 2 MB")));
     }
-    let mtime = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as i64);
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_millis() as i64);
     let shown = display(worktree, home, &full);
     if known_mtime == Some(mtime) {
-        return Ok(TaskFileResult { path: shown, mtime, content: None });
+        return Ok(TaskFileResult {
+            path: shown,
+            mtime,
+            content: None,
+        });
     }
     let mut bytes = Vec::new();
-    fs::File::open(&full).and_then(|f| f.take(MAX_BYTES + 1).read_to_end(&mut bytes)).map_err(|e| io_error(path, e))?;
+    fs::File::open(&full)
+        .and_then(|f| f.take(MAX_BYTES + 1).read_to_end(&mut bytes))
+        .map_err(|e| io_error(path, e))?;
     if bytes.len() as u64 > MAX_BYTES {
         return Err(invalid(format!("{path} is larger than 2 MB")));
     }
     if bytes[..bytes.len().min(SNIFF_BYTES)].contains(&0) {
         return Err(invalid(format!("{path} is a binary file")));
     }
-    let content = String::from_utf8(bytes).map_err(|_| invalid(format!("{path} is not valid UTF-8")))?;
-    Ok(TaskFileResult { path: shown, mtime, content: Some(content) })
+    let content =
+        String::from_utf8(bytes).map_err(|_| invalid(format!("{path} is not valid UTF-8")))?;
+    Ok(TaskFileResult {
+        path: shown,
+        mtime,
+        content: Some(content),
+    })
 }
 
 fn resolve(worktree: &Path, home: Option<&Path>, path: &str) -> Result<PathBuf> {
     match path.strip_prefix("~/") {
-        Some(rest) => Ok(home.ok_or_else(|| invalid("HOME is not set".into()))?.join(rest)),
+        Some(rest) => Ok(home
+            .ok_or_else(|| invalid("HOME is not set".into()))?
+            .join(rest)),
         // `join` replaces the base when `path` is absolute.
         None => Ok(worktree.join(path)),
     }
@@ -105,7 +127,10 @@ mod tests {
         let other = tempfile::tempdir().unwrap();
         let file = write(other.path(), "notes.md", b"# hi\n");
         let result = read(worktree.path(), None, file.to_str().unwrap(), None).unwrap();
-        assert_eq!(result.path, fs::canonicalize(&file).unwrap().display().to_string());
+        assert_eq!(
+            result.path,
+            fs::canonicalize(&file).unwrap().display().to_string()
+        );
         assert_eq!(result.content.as_deref(), Some("# hi\n"));
     }
 
@@ -123,7 +148,13 @@ mod tests {
     fn empty_files_have_empty_content() {
         let worktree = tempfile::tempdir().unwrap();
         write(worktree.path(), "empty.txt", b"");
-        assert_eq!(read(worktree.path(), None, "empty.txt", None).unwrap().content.as_deref(), Some(""));
+        assert_eq!(
+            read(worktree.path(), None, "empty.txt", None)
+                .unwrap()
+                .content
+                .as_deref(),
+            Some("")
+        );
     }
 
     #[test]
@@ -131,7 +162,11 @@ mod tests {
         let worktree = tempfile::tempdir().unwrap();
         write(worktree.path(), "bin.dat", &[0x7f, 0x45, 0x00, 0x01]);
         write(worktree.path(), "latin1.txt", &[0x66, 0xe9, 0x0a]);
-        write(worktree.path(), "big.txt", &vec![b'a'; MAX_BYTES as usize + 1]);
+        write(
+            worktree.path(),
+            "big.txt",
+            &vec![b'a'; MAX_BYTES as usize + 1],
+        );
         fs::create_dir(worktree.path().join("dir")).unwrap();
         for path in ["bin.dat", "latin1.txt", "big.txt", "dir"] {
             let err = read(worktree.path(), None, path, None).unwrap_err();
@@ -143,13 +178,23 @@ mod tests {
     #[test]
     fn rejects_device_files() {
         let worktree = tempfile::tempdir().unwrap();
-        assert_eq!(read(worktree.path(), None, "/dev/null", None).unwrap_err().kind, ErrorKind::InvalidParams);
+        assert_eq!(
+            read(worktree.path(), None, "/dev/null", None)
+                .unwrap_err()
+                .kind,
+            ErrorKind::InvalidParams
+        );
     }
 
     #[test]
     fn missing_files_are_not_found() {
         let worktree = tempfile::tempdir().unwrap();
-        assert_eq!(read(worktree.path(), None, "nope.ts", None).unwrap_err().kind, ErrorKind::NotFound);
+        assert_eq!(
+            read(worktree.path(), None, "nope.ts", None)
+                .unwrap_err()
+                .kind,
+            ErrorKind::NotFound
+        );
     }
 
     #[test]
@@ -157,7 +202,12 @@ mod tests {
         let worktree = tempfile::tempdir().unwrap();
         write(worktree.path(), "a.ts", b"x\n");
         let first = read(worktree.path(), None, "a.ts", None).unwrap();
-        assert_eq!(read(worktree.path(), None, "a.ts", Some(first.mtime)).unwrap().content, None);
+        assert_eq!(
+            read(worktree.path(), None, "a.ts", Some(first.mtime))
+                .unwrap()
+                .content,
+            None
+        );
         let stale = read(worktree.path(), None, "a.ts", Some(first.mtime - 1)).unwrap();
         assert_eq!(stale.content.as_deref(), Some("x\n"));
     }

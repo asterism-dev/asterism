@@ -1,6 +1,6 @@
-use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 
 use crate::rpc::Notification;
 
@@ -1014,7 +1014,10 @@ pub struct AgentConfigSetParams {
 #[serde(tag = "method", content = "params")]
 pub enum Event {
     #[serde(rename = "session.status_changed")]
-    SessionStatusChanged { session_id: i64, status: SessionStatus },
+    SessionStatusChanged {
+        session_id: i64,
+        status: SessionStatus,
+    },
     #[serde(rename = "session.output")]
     SessionOutput { session_id: i64, data: String },
     #[serde(rename = "session.changed")]
@@ -1034,17 +1037,26 @@ pub enum Event {
     #[serde(rename = "stores.changed")]
     StoresChanged {},
     #[serde(rename = "pr.changed")]
-    PrChanged { task_id: i64, pr: Option<PullRequest> },
+    PrChanged {
+        task_id: i64,
+        pr: Option<PullRequest>,
+    },
 }
 
 impl Event {
     pub fn to_notification(&self) -> Notification {
         let value = serde_json::to_value(self).unwrap_or(Value::Null);
-        Notification::new(value["method"].as_str().unwrap_or_default(), value["params"].clone())
+        Notification::new(
+            value["method"].as_str().unwrap_or_default(),
+            value["params"].clone(),
+        )
     }
 
     pub fn from_notification(notification: &Notification) -> Option<Self> {
-        serde_json::from_value(json!({"method": notification.method, "params": notification.params})).ok()
+        serde_json::from_value(
+            json!({"method": notification.method, "params": notification.params}),
+        )
+        .ok()
     }
 }
 
@@ -1054,9 +1066,11 @@ mod tests {
 
     #[test]
     fn old_task_create_requests_still_parse() {
-        let p: TaskCreateParams = serde_json::from_value(serde_json::json!({"project_id": 1, "title": "t"})).unwrap();
+        let p: TaskCreateParams =
+            serde_json::from_value(serde_json::json!({"project_id": 1, "title": "t"})).unwrap();
         assert_eq!((p.branch, p.checkout, p.push), (None, None, false));
-        let s: PrSearchParams = serde_json::from_value(serde_json::json!({"project_id": 1})).unwrap();
+        let s: PrSearchParams =
+            serde_json::from_value(serde_json::json!({"project_id": 1})).unwrap();
         assert_eq!((s.query.as_str(), s.state), ("", PrListState::Open));
         assert_eq!(serde_json::to_value(PrListState::Closed).unwrap(), "closed");
     }

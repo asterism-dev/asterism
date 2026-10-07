@@ -16,9 +16,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::paths::Paths;
+use catalog::InstalledFile;
 use process::{Backend, BackendConfig, HostFn};
 use registry::{Registry, Sources};
-use catalog::InstalledFile;
 
 /// How plugin backends are started: their base environment and timing.
 pub struct Runtime {
@@ -38,24 +38,36 @@ pub struct PluginSet {
 impl PluginSet {
     pub fn load(paths: &Paths, builtin_dir: &Path, runtime: &Runtime, host: &HostFn) -> Self {
         let links = registry::load_links(&paths.plugin_links()).unwrap_or_else(|e| {
-            eprintln!("asterismd: ignoring {}: {e}", paths.plugin_links().display());
+            eprintln!(
+                "asterismd: ignoring {}: {e}",
+                paths.plugin_links().display()
+            );
             BTreeMap::new()
         });
-        let installed = catalog::load_installed(&paths.plugin_installed_file()).unwrap_or_else(|e| {
-            eprintln!("asterismd: ignoring {e}");
-            InstalledFile::default()
-        });
+        let installed =
+            catalog::load_installed(&paths.plugin_installed_file()).unwrap_or_else(|e| {
+                eprintln!("asterismd: ignoring {e}");
+                InstalledFile::default()
+            });
         let installed_dirs = installed
             .plugins
             .iter()
             .filter(|(name, entry)| {
                 let ok = manifest::is_version(&entry.version);
                 if !ok {
-                    eprintln!("asterismd: ignoring installed plugin {name}: invalid version {:?}", entry.version);
+                    eprintln!(
+                        "asterismd: ignoring installed plugin {name}: invalid version {:?}",
+                        entry.version
+                    );
                 }
                 ok
             })
-            .map(|(name, entry)| (name.clone(), paths.plugins_installed().join(name).join(&entry.version)))
+            .map(|(name, entry)| {
+                (
+                    name.clone(),
+                    paths.plugins_installed().join(name).join(&entry.version),
+                )
+            })
             .collect();
         let registry = Registry::discover(&Sources {
             builtin_dir: builtin_dir.to_path_buf(),
@@ -65,11 +77,18 @@ impl PluginSet {
         });
         let mut backends = HashMap::new();
         for plugin in registry.plugins().iter().filter(|p| p.is_ok()) {
-            let (Some(manifest), Some(argv)) = (plugin.manifest.as_ref(), plugin.backend_command()) else { continue };
-            let settings = settings::resolved(paths, &plugin.name, &manifest.settings).unwrap_or_else(|e| {
-                eprintln!("asterismd: plugin {}: ignoring settings: {}", plugin.name, e.message);
-                Default::default()
-            });
+            let (Some(manifest), Some(argv)) = (plugin.manifest.as_ref(), plugin.backend_command())
+            else {
+                continue;
+            };
+            let settings = settings::resolved(paths, &plugin.name, &manifest.settings)
+                .unwrap_or_else(|e| {
+                    eprintln!(
+                        "asterismd: plugin {}: ignoring settings: {}",
+                        plugin.name, e.message
+                    );
+                    Default::default()
+                });
             let mut env = runtime.env.clone();
             env.push(("ASTERISM_PLUGIN_BIN".into(), argv[0].clone()));
             let config = BackendConfig {
@@ -82,9 +101,16 @@ impl PluginSet {
                 call_timeout: runtime.call_timeout,
                 idle: runtime.idle,
             };
-            backends.insert(plugin.name.clone(), Backend::new(config, host.clone(), settings));
+            backends.insert(
+                plugin.name.clone(),
+                Backend::new(config, host.clone(), settings),
+            );
         }
-        Self { registry, installed, backends }
+        Self {
+            registry,
+            installed,
+            backends,
+        }
     }
 
     pub fn backend(&self, plugin: &str) -> Option<&Arc<Backend>> {

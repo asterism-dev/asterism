@@ -20,11 +20,15 @@ pub fn check_name(what: &str, name: &str) -> Result<()> {
         && name != "."
         && name != ".."
         && !name.starts_with('-')
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
     if safe {
         Ok(())
     } else {
-        Err(invalid(format!("invalid {what} {name:?}: use letters, digits, '.', '_' or '-'")))
+        Err(invalid(format!(
+            "invalid {what} {name:?}: use letters, digits, '.', '_' or '-'"
+        )))
     }
 }
 
@@ -55,7 +59,10 @@ pub fn owner_repo_from_url(url: &str) -> Option<(String, String)> {
         let mut segments = path.split('/').filter(|s| !s.is_empty());
         let owner = segments.next()?;
         let repo = segments.next()?;
-        return Some((owner.to_string(), repo.strip_suffix(".git").unwrap_or(repo).to_string()));
+        return Some((
+            owner.to_string(),
+            repo.strip_suffix(".git").unwrap_or(repo).to_string(),
+        ));
     }
     let path = path.strip_suffix(".git").unwrap_or(path);
     let mut segments = path.rsplit('/').filter(|s| !s.is_empty());
@@ -70,23 +77,33 @@ pub fn parse_source(source: &str) -> Result<RepoSource> {
         return Err(invalid(format!("invalid source {source:?}")));
     }
     if source.contains("://") || source.contains(':') {
-        let (owner, repo) =
-            owner_repo_from_url(source).ok_or_else(|| invalid(format!("cannot read owner/repo from {source:?}")))?;
+        let (owner, repo) = owner_repo_from_url(source)
+            .ok_or_else(|| invalid(format!("cannot read owner/repo from {source:?}")))?;
         check_name("owner", &owner)?;
         check_name("repository name", &repo)?;
-        let url = if is_github(source) && url_path(source).is_some_and(|p| p.trim_matches('/').split('/').count() > 2) {
+        let url = if is_github(source)
+            && url_path(source).is_some_and(|p| p.trim_matches('/').split('/').count() > 2)
+        {
             format!("https://github.com/{owner}/{repo}.git")
         } else {
             source.to_string()
         };
-        return Ok(RepoSource { owner, repo, url: Some(url) });
+        return Ok(RepoSource {
+            owner,
+            repo,
+            url: Some(url),
+        });
     }
     let (owner, repo) = source
         .split_once('/')
         .ok_or_else(|| invalid(format!("expected owner/repo or a git URL, got {source:?}")))?;
     check_name("owner", owner)?;
     check_name("repository name", repo)?;
-    Ok(RepoSource { owner: owner.to_string(), repo: repo.to_string(), url: None })
+    Ok(RepoSource {
+        owner: owner.to_string(),
+        repo: repo.to_string(),
+        url: None,
+    })
 }
 
 /// Lowercase host of a remote URL (scheme or scp style), without userinfo and port; `None` for local paths.
@@ -113,15 +130,31 @@ mod tests {
     use super::*;
 
     fn src(owner: &str, repo: &str, url: Option<&str>) -> RepoSource {
-        RepoSource { owner: owner.into(), repo: repo.into(), url: url.map(String::from) }
+        RepoSource {
+            owner: owner.into(),
+            repo: repo.into(),
+            url: url.map(String::from),
+        }
     }
 
     #[test]
     fn hosts_are_read_from_every_remote_url_form() {
-        assert_eq!(url_host("git@github.com:acme/api.git").as_deref(), Some("github.com"));
-        assert_eq!(url_host("https://github.com/acme/api").as_deref(), Some("github.com"));
-        assert_eq!(url_host("ssh://git@GitHub.com:22/acme/api.git").as_deref(), Some("github.com"));
-        assert_eq!(url_host("https://user:secret@gitlab.example.org/a/b.git").as_deref(), Some("gitlab.example.org"));
+        assert_eq!(
+            url_host("git@github.com:acme/api.git").as_deref(),
+            Some("github.com")
+        );
+        assert_eq!(
+            url_host("https://github.com/acme/api").as_deref(),
+            Some("github.com")
+        );
+        assert_eq!(
+            url_host("ssh://git@GitHub.com:22/acme/api.git").as_deref(),
+            Some("github.com")
+        );
+        assert_eq!(
+            url_host("https://user:secret@gitlab.example.org/a/b.git").as_deref(),
+            Some("gitlab.example.org")
+        );
         assert_eq!(url_host("/srv/git/api.git"), None);
         assert_eq!(url_host("file:///srv/git/api.git"), None);
         assert_eq!(url_host(""), None);
@@ -129,7 +162,10 @@ mod tests {
 
     #[test]
     fn parses_shorthand_and_urls() {
-        assert_eq!(parse_source(" acme/api ").unwrap(), src("acme", "api", None));
+        assert_eq!(
+            parse_source(" acme/api ").unwrap(),
+            src("acme", "api", None)
+        );
         assert_eq!(
             parse_source("https://github.com/acme/api.git").unwrap(),
             src("acme", "api", Some("https://github.com/acme/api.git"))
@@ -154,8 +190,22 @@ mod tests {
 
     #[test]
     fn rejects_traversal_and_bad_names() {
-        for bad in ["", "acme", "acme/", "/abs/path", "acme/..", "../x", "a/b/c", "acme/-rf", "https://host/only", "acme/a b",
-            "--upload-pack=evil:a/b", "-x:a/b", "git@host:a/b c", "https://github.com/a\tx/b"] {
+        for bad in [
+            "",
+            "acme",
+            "acme/",
+            "/abs/path",
+            "acme/..",
+            "../x",
+            "a/b/c",
+            "acme/-rf",
+            "https://host/only",
+            "acme/a b",
+            "--upload-pack=evil:a/b",
+            "-x:a/b",
+            "git@host:a/b c",
+            "https://github.com/a\tx/b",
+        ] {
             assert!(parse_source(bad).is_err(), "{bad}");
         }
         assert!(check_name("repository name", "ok.name_1-x").is_ok());
@@ -166,11 +216,26 @@ mod tests {
 
     #[test]
     fn owner_and_repo_from_remote_urls() {
-        assert_eq!(owner_repo_from_url("git@github.com:acme/api.git"), Some(("acme".into(), "api".into())));
-        assert_eq!(owner_repo_from_url("https://github.com/acme/api"), Some(("acme".into(), "api".into())));
-        assert_eq!(owner_repo_from_url("https://github.com/acme/api/tree/main"), Some(("acme".into(), "api".into())));
-        assert_eq!(owner_repo_from_url("ssh://git@github.com/acme/api.git"), Some(("acme".into(), "api".into())));
-        assert_eq!(owner_repo_from_url("ssh://git@gitlab.com/group/sub/tool"), Some(("sub".into(), "tool".into())));
+        assert_eq!(
+            owner_repo_from_url("git@github.com:acme/api.git"),
+            Some(("acme".into(), "api".into()))
+        );
+        assert_eq!(
+            owner_repo_from_url("https://github.com/acme/api"),
+            Some(("acme".into(), "api".into()))
+        );
+        assert_eq!(
+            owner_repo_from_url("https://github.com/acme/api/tree/main"),
+            Some(("acme".into(), "api".into()))
+        );
+        assert_eq!(
+            owner_repo_from_url("ssh://git@github.com/acme/api.git"),
+            Some(("acme".into(), "api".into()))
+        );
+        assert_eq!(
+            owner_repo_from_url("ssh://git@gitlab.com/group/sub/tool"),
+            Some(("sub".into(), "tool".into()))
+        );
         assert_eq!(owner_repo_from_url("/local/bare.git"), None);
         assert_eq!(owner_repo_from_url("garbage"), None);
     }

@@ -38,8 +38,15 @@ impl CpuTracker {
             }
             self.current.insert(pid, sample.cpu_ns);
         }
-        let elapsed = self.last.as_ref().map_or(0.0, |(at, _)| at.elapsed().as_nanos() as f64);
-        let percent = if elapsed > 0.0 { cpu_delta as f64 * 100.0 / elapsed } else { 0.0 };
+        let elapsed = self
+            .last
+            .as_ref()
+            .map_or(0.0, |(at, _)| at.elapsed().as_nanos() as f64);
+        let percent = if elapsed > 0.0 {
+            cpu_delta as f64 * 100.0 / elapsed
+        } else {
+            0.0
+        };
         (memory, percent)
     }
 
@@ -54,9 +61,13 @@ fn children(pid: u32) -> Vec<u32> {
     let mut buf = vec![0 as libc::pid_t; 1024];
     let size = (buf.len() * std::mem::size_of::<libc::pid_t>()) as libc::c_int;
     // SAFETY: the buffer is valid for `size` bytes and the call writes at most that many.
-    let count = unsafe { libc::proc_listchildpids(pid as libc::pid_t, buf.as_mut_ptr().cast(), size) };
+    let count =
+        unsafe { libc::proc_listchildpids(pid as libc::pid_t, buf.as_mut_ptr().cast(), size) };
     buf.truncate(count.max(0) as usize);
-    buf.into_iter().filter(|&p| p > 0).map(|p| p as u32).collect()
+    buf.into_iter()
+        .filter(|&p| p > 0)
+        .map(|p| p as u32)
+        .collect()
 }
 
 // Declared here because libc deprecates its copy in favour of the mach2 crate.
@@ -77,7 +88,11 @@ pub fn sample(pid: u32) -> Option<Sample> {
     // SAFETY: both structs are plain data filled in by the kernel.
     let mut info: libc::rusage_info_v2 = unsafe { std::mem::zeroed() };
     let ok = unsafe {
-        libc::proc_pid_rusage(pid as libc::c_int, libc::RUSAGE_INFO_V2, (&mut info as *mut libc::rusage_info_v2).cast())
+        libc::proc_pid_rusage(
+            pid as libc::c_int,
+            libc::RUSAGE_INFO_V2,
+            (&mut info as *mut libc::rusage_info_v2).cast(),
+        )
     };
     if ok != 0 {
         return None;
@@ -86,8 +101,15 @@ pub fn sample(pid: u32) -> Option<Sample> {
     // SAFETY: the kernel fills in the two fields.
     unsafe { mach_timebase_info(&mut timebase) };
     let ticks = info.ri_user_time + info.ri_system_time;
-    let cpu_ns = if timebase.denom == 0 { ticks } else { ticks * timebase.numer as u64 / timebase.denom as u64 };
-    Some(Sample { memory_bytes: info.ri_phys_footprint, cpu_ns })
+    let cpu_ns = if timebase.denom == 0 {
+        ticks
+    } else {
+        ticks * timebase.numer as u64 / timebase.denom as u64
+    };
+    Some(Sample {
+        memory_bytes: info.ri_phys_footprint,
+        cpu_ns,
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -100,7 +122,9 @@ fn stat_fields(pid: u32) -> Option<Vec<String>> {
 
 #[cfg(target_os = "linux")]
 fn children(pid: u32) -> Vec<u32> {
-    let Ok(entries) = std::fs::read_dir("/proc") else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
     entries
         .filter_map(|e| e.ok()?.file_name().to_str()?.parse::<u32>().ok())
         .filter(|&p| stat_fields(p).and_then(|f| f.get(1)?.parse::<u32>().ok()) == Some(pid))
@@ -114,7 +138,12 @@ pub fn sample(pid: u32) -> Option<Sample> {
     let statm = std::fs::read_to_string(format!("/proc/{pid}/statm")).ok()?;
     let resident: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
     // SAFETY: sysconf has no preconditions.
-    let (hz, page) = unsafe { (libc::sysconf(libc::_SC_CLK_TCK), libc::sysconf(libc::_SC_PAGESIZE)) };
+    let (hz, page) = unsafe {
+        (
+            libc::sysconf(libc::_SC_CLK_TCK),
+            libc::sysconf(libc::_SC_PAGESIZE),
+        )
+    };
     Some(Sample {
         memory_bytes: resident * page.max(1) as u64,
         cpu_ns: ticks * 1_000_000_000 / hz.max(1) as u64,
@@ -128,7 +157,10 @@ mod tests {
 
     #[test]
     fn tree_includes_grandchildren_and_sample_reads_memory() {
-        let mut child = Command::new("sh").args(["-c", "sleep 30 & wait"]).spawn().unwrap();
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 30 & wait"])
+            .spawn()
+            .unwrap();
         let pid = child.id();
         let deadline = Instant::now() + std::time::Duration::from_secs(5);
         while tree(pid).len() < 2 && Instant::now() < deadline {
@@ -155,6 +187,9 @@ mod tests {
         }
         assert!(x > 0);
         let (_, percent) = tracker.measure(&me);
-        assert!(percent > 20.0, "busy loop should show CPU use, got {percent}");
+        assert!(
+            percent > 20.0,
+            "busy loop should show CPU use, got {percent}"
+        );
     }
 }

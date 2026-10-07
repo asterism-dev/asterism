@@ -15,7 +15,9 @@ fn fake_server(replies: &'static [&'static str]) -> Client {
             if lines.next_line().await.ok().flatten().is_none() {
                 return;
             }
-            let _ = server_write.write_all(format!("{reply}\n").as_bytes()).await;
+            let _ = server_write
+                .write_all(format!("{reply}\n").as_bytes())
+                .await;
         }
         // Keep the connection open so a hang would show as a timeout, not a close.
         while let Ok(Some(_)) = lines.next_line().await {}
@@ -29,11 +31,18 @@ async fn unknown_error_kinds_and_garbage_responses_fail_the_call() {
         r#"{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"x","data":{"kind":"brand_new_kind"}}}"#,
         r#"{"jsonrpc":"2.0","id":2,"result":5,"error":"bogus"}"#,
     ]);
-    let first = tokio::time::timeout(Duration::from_secs(2), client.call::<_, ()>("a", ())).await.unwrap();
+    let first = tokio::time::timeout(Duration::from_secs(2), client.call::<_, ()>("a", ()))
+        .await
+        .unwrap();
     match first {
         Err(ClientError::Rpc(e)) => assert_eq!(e.kind(), ErrorKind::Unknown),
         other => panic!("expected rpc error, got {other:?}"),
     }
-    let second = tokio::time::timeout(Duration::from_secs(2), client.call::<_, ()>("b", ())).await.unwrap();
-    assert!(matches!(second, Err(ClientError::Protocol(_))), "got {second:?}");
+    let second = tokio::time::timeout(Duration::from_secs(2), client.call::<_, ()>("b", ()))
+        .await
+        .unwrap();
+    assert!(
+        matches!(second, Err(ClientError::Protocol(_))),
+        "got {second:?}"
+    );
 }

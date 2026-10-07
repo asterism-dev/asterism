@@ -31,7 +31,11 @@ fn node_status(node: State<'_, Arc<LocalNode>>) -> NodeStatus {
 }
 
 #[tauri::command]
-async fn node_call(node: State<'_, Arc<LocalNode>>, method: String, params: Value) -> Result<Value, CallError> {
+async fn node_call(
+    node: State<'_, Arc<LocalNode>>,
+    method: String,
+    params: Value,
+) -> Result<Value, CallError> {
     node.call(&method, params).await
 }
 
@@ -41,9 +45,12 @@ async fn session_attach(
     session_id: i64,
     on_output: Channel<String>,
 ) -> Result<SessionAttachResult, CallError> {
-    node.attach(session_id, Box::new(move |data| {
-        let _ = on_output.send(data);
-    }))
+    node.attach(
+        session_id,
+        Box::new(move |data| {
+            let _ = on_output.send(data);
+        }),
+    )
     .await
 }
 
@@ -58,10 +65,16 @@ async fn restart_daemon(node: State<'_, Arc<LocalNode>>) -> Result<(), CallError
 }
 
 #[tauri::command]
-async fn quit(app: AppHandle, node: State<'_, Arc<LocalNode>>, stop_daemon: bool) -> Result<(), ()> {
+async fn quit(
+    app: AppHandle,
+    node: State<'_, Arc<LocalNode>>,
+    stop_daemon: bool,
+) -> Result<(), ()> {
     if stop_daemon {
         // An unreachable daemon is as good as stopped.
-        let _ = node.call(asterism_proto::types::method::SHUTDOWN, Value::Null).await;
+        let _ = node
+            .call(asterism_proto::types::method::SHUTDOWN, Value::Null)
+            .await;
     }
     app.exit(0);
     Ok(())
@@ -89,7 +102,13 @@ fn app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &PredefinedMenuItem::hide_others(app, None)?,
             &PredefinedMenuItem::show_all(app, None)?,
             &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(app, QUIT_MENU_ID, "Quit asterism", true, Some("CmdOrCtrl+Q"))?,
+            &MenuItem::with_id(
+                app,
+                QUIT_MENU_ID,
+                "Quit asterism",
+                true,
+                Some("CmdOrCtrl+Q"),
+            )?,
         ],
     )?;
     menu.remove_at(0)?;
@@ -133,7 +152,15 @@ fn main() {
                 let _ = app.emit("quit-requested", ());
             }
         })
-        .invoke_handler(tauri::generate_handler![node_status, node_call, session_attach, session_detach, restart_daemon, quit, app_pid])
+        .invoke_handler(tauri::generate_handler![
+            node_status,
+            node_call,
+            session_attach,
+            session_detach,
+            restart_daemon,
+            quit,
+            app_pid
+        ])
         .run(tauri::generate_context!());
     if let Err(e) = result {
         eprintln!("asterism: {e}");

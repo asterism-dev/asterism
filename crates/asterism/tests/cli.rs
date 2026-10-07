@@ -15,7 +15,11 @@ fn task_new_autostarts_the_daemon_and_creates_a_worktree() {
     let node = Node::new();
     let created = node.json(&["task", "new", "Fix login"]);
     assert_eq!(created["task"]["branch"], "asterism/1-fix-login");
-    assert!(Path::new(created["task"]["worktree_path"].as_str().unwrap()).join("README.md").exists());
+    assert!(
+        Path::new(created["task"]["worktree_path"].as_str().unwrap())
+            .join("README.md")
+            .exists()
+    );
     assert!(node.home().join("asterismd.sock").exists());
 
     let status = node.json(&["daemon", "status"]);
@@ -26,7 +30,16 @@ fn task_new_autostarts_the_daemon_and_creates_a_worktree() {
 fn session_send_read_wait_kill() {
     let node = Node::new();
     let task = node.json(&["task", "new", "shell"])["task"]["id"].to_string();
-    let session = node.json(&["session", "start", &task, "--", "sh", "-c", "echo ready; cat"])["id"].to_string();
+    let session = node.json(&[
+        "session",
+        "start",
+        &task,
+        "--",
+        "sh",
+        "-c",
+        "echo ready; cat",
+    ])["id"]
+        .to_string();
 
     let idle = node.json(&["wait", &session, "--until", "idle", "--timeout", "10s"]);
     assert_eq!(idle["status"], "idle");
@@ -46,8 +59,15 @@ fn session_send_read_wait_kill() {
 fn wait_timeout_is_an_error() {
     let node = Node::new();
     let task = node.json(&["task", "new", "busy"])["task"]["id"].to_string();
-    let session = node.json(&["session", "start", &task, "--", "sh", "-c", "while true; do echo x; sleep 0.2; done"])
-        ["id"]
+    let session = node.json(&[
+        "session",
+        "start",
+        &task,
+        "--",
+        "sh",
+        "-c",
+        "while true; do echo x; sleep 0.2; done",
+    ])["id"]
         .to_string();
     let out = node.cmd(&["wait", &session, "--until", "idle", "--timeout", "1s"]);
     assert_eq!(out.status.code(), Some(1));
@@ -59,7 +79,10 @@ fn archive_restore_and_delete_from_the_cli() {
     let node = Node::new();
     let created = node.json(&["task", "new", "lifecycle"]);
     let id = created["task"]["id"].to_string();
-    let worktree = created["task"]["worktree_path"].as_str().unwrap().to_string();
+    let worktree = created["task"]["worktree_path"]
+        .as_str()
+        .unwrap()
+        .to_string();
     std::fs::write(Path::new(&worktree).join("wip.txt"), "x").unwrap();
 
     assert_eq!(node.json(&["task", "archive", &id])["archived"], true);
@@ -73,9 +96,14 @@ fn archive_restore_and_delete_from_the_cli() {
 fn hook_reports_status_and_is_silent_outside_sessions() {
     let node = Node::new();
     let task = node.json(&["task", "new", "hooked"])["task"]["id"].to_string();
-    let session = node.json(&["session", "start", &task, "--", "sh", "-c", "sleep 30"])["id"].to_string();
+    let session =
+        node.json(&["session", "start", &task, "--", "sh", "-c", "sleep 30"])["id"].to_string();
 
-    let outside = node.command(&["hook", "stop"]).stdin(Stdio::null()).output().unwrap();
+    let outside = node
+        .command(&["hook", "stop"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
     assert!(outside.status.success());
     assert!(outside.stdout.is_empty() && outside.stderr.is_empty());
 
@@ -87,7 +115,14 @@ fn hook_reports_status_and_is_silent_outside_sessions() {
         .unwrap();
     assert!(inside.success());
 
-    let waiting = node.json(&["wait", &session, "--until", "waiting_input", "--timeout", "5s"]);
+    let waiting = node.json(&[
+        "wait",
+        &session,
+        "--until",
+        "waiting_input",
+        "--timeout",
+        "5s",
+    ]);
     assert_eq!(waiting["status"], "waiting_input");
     node.cmd(&["session", "kill", &session]);
 }
@@ -123,9 +158,16 @@ fn project_flag_accepts_id_or_name() {
 fn json_mode_is_parseable_for_commands_without_a_result() {
     let node = Node::new();
     let task = node.json(&["task", "new", "k"])["task"]["id"].to_string();
-    let session = node.json(&["session", "start", &task, "--", "sh", "-c", "sleep 30"])["id"].to_string();
-    assert_eq!(node.json(&["session", "kill", &session]), serde_json::json!({"ok": true}));
-    assert_eq!(node.json(&["daemon", "stop"]), serde_json::json!({"ok": true}));
+    let session =
+        node.json(&["session", "start", &task, "--", "sh", "-c", "sleep 30"])["id"].to_string();
+    assert_eq!(
+        node.json(&["session", "kill", &session]),
+        serde_json::json!({"ok": true})
+    );
+    assert_eq!(
+        node.json(&["daemon", "stop"]),
+        serde_json::json!({"ok": true})
+    );
 }
 
 #[test]
@@ -139,7 +181,11 @@ fn daemon_stop_does_not_autostart() {
 #[test]
 fn hook_with_invalid_event_exits_zero_silently() {
     let node = Node::new();
-    let out = node.command(&["hook", "bogus-event"]).stdin(Stdio::null()).output().unwrap();
+    let out = node
+        .command(&["hook", "bogus-event"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
     assert!(out.status.success());
     assert!(out.stdout.is_empty() && out.stderr.is_empty());
 }
@@ -148,7 +194,12 @@ fn hook_with_invalid_event_exits_zero_silently() {
 fn hook_with_hung_stdin_returns_promptly() {
     let node = Node::new();
     let started = std::time::Instant::now();
-    let mut child = node.command(&["hook", "stop"]).env("ASTERISM_SESSION", "1").stdin(Stdio::piped()).spawn().unwrap();
+    let mut child = node
+        .command(&["hook", "stop"])
+        .env("ASTERISM_SESSION", "1")
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
     let _held_open = child.stdin.take();
     assert!(child.wait().unwrap().success());
     assert!(started.elapsed() < std::time::Duration::from_secs(3));
@@ -158,7 +209,8 @@ fn hook_with_hung_stdin_returns_promptly() {
 fn claude_hook_payloads_are_normalized_by_the_plugin() {
     let node = Node::new();
     let task = node.json(&["task", "new", "idle prompt"])["task"]["id"].to_string();
-    let session = node.json(&["session", "start", &task, "--", "sh", "-c", "sleep 30"])["id"].to_string();
+    let session =
+        node.json(&["session", "start", &task, "--", "sh", "-c", "sleep 30"])["id"].to_string();
     let hook = |event: &str, payload: &[u8]| {
         let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_asterism-plugin-claude"))
             .args(["hook", event])
@@ -178,7 +230,10 @@ fn claude_hook_payloads_are_normalized_by_the_plugin() {
         node.json(&["session", "list", "--task", &task])[0]["status"] == "working"
     });
     assert!(working);
-    hook("notification", br#"{"session_id":"x","message":"Claude is waiting for your input"}"#);
+    hook(
+        "notification",
+        br#"{"session_id":"x","message":"Claude is waiting for your input"}"#,
+    );
     let idle = node.json(&["wait", &session, "--until", "idle", "--timeout", "5s"]);
     assert_eq!(idle["status"], "idle");
     node.cmd(&["session", "kill", &session]);
@@ -187,11 +242,24 @@ fn claude_hook_payloads_are_normalized_by_the_plugin() {
 #[test]
 fn autostarted_daemon_drops_the_callers_claude_env() {
     let node = Node::new();
-    let created = node.command(&["--json", "task", "new", "env"]).env("CLAUDECODE", "1").output().unwrap();
+    let created = node
+        .command(&["--json", "task", "new", "env"])
+        .env("CLAUDECODE", "1")
+        .output()
+        .unwrap();
     assert!(created.status.success(), "{}", stderr(&created));
-    let task = serde_json::from_slice::<serde_json::Value>(&created.stdout).unwrap()["task"]["id"].to_string();
-    let session =
-        node.json(&["session", "start", &task, "--", "sh", "-c", "echo \"[$CLAUDECODE]\"; sleep 30"])["id"].to_string();
+    let task = serde_json::from_slice::<serde_json::Value>(&created.stdout).unwrap()["task"]["id"]
+        .to_string();
+    let session = node.json(&[
+        "session",
+        "start",
+        &task,
+        "--",
+        "sh",
+        "-c",
+        "echo \"[$CLAUDECODE]\"; sleep 30",
+    ])["id"]
+        .to_string();
     node.json(&["wait", &session, "--until", "idle", "--timeout", "10s"]);
     let read = node.json(&["read", &session, "--lines", "5"]);
     assert!(read["text"].as_str().unwrap().contains("[]"), "{read}");
@@ -205,11 +273,21 @@ fn task_new_takes_a_base_and_project_set_base_changes_the_default() {
     let created = node.json(&["task", "new", "on develop", "--base", "develop"]);
     assert_eq!(created["task"]["base_branch"], "develop");
 
-    assert_eq!(node.json(&["project", "set-base", "develop"])["default_base"], "develop");
-    assert_eq!(node.json(&["task", "new", "by default"])["task"]["base_branch"], "develop");
+    assert_eq!(
+        node.json(&["project", "set-base", "develop"])["default_base"],
+        "develop"
+    );
+    assert_eq!(
+        node.json(&["task", "new", "by default"])["task"]["base_branch"],
+        "develop"
+    );
     assert!(node.json(&["project", "set-base", "auto"])["default_base"].is_null());
 
     let out = node.cmd(&["task", "new", "bad", "--base", "nope"]);
     assert_eq!(out.status.code(), Some(1));
-    assert!(stderr(&out).contains("does not point to a commit"), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("does not point to a commit"),
+        "{}",
+        stderr(&out)
+    );
 }

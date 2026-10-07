@@ -52,7 +52,10 @@ impl Term {
         let mut bytes = [front, back].concat();
         // A cut tail may start inside an escape sequence or a UTF-8 character; resume at a line start.
         if self.truncated {
-            let start = bytes.iter().position(|&b| b == b'\n').map_or(bytes.len(), |i| i + 1);
+            let start = bytes
+                .iter()
+                .position(|&b| b == b'\n')
+                .map_or(bytes.len(), |i| i + 1);
             bytes.drain(..start);
         }
         // Repaints the exact current state even if the cut tail lost the alternate-screen switch.
@@ -81,13 +84,21 @@ fn io_err(e: impl std::fmt::Display) -> io::Error {
 
 fn check_size(rows: u16, cols: u16) -> io::Result<()> {
     if rows == 0 || cols == 0 {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "rows and cols must be at least 1"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "rows and cols must be at least 1",
+        ));
     }
     Ok(())
 }
 
 fn pty_size(rows: u16, cols: u16) -> PtySize {
-    PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }
+    PtySize {
+        rows,
+        cols,
+        pixel_width: 0,
+        pixel_height: 0,
+    }
 }
 
 impl Pty {
@@ -97,7 +108,9 @@ impl Pty {
             .argv
             .split_first()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty argv"))?;
-        let pair = native_pty_system().openpty(pty_size(spec.rows, spec.cols)).map_err(io_err)?;
+        let pair = native_pty_system()
+            .openpty(pty_size(spec.rows, spec.cols))
+            .map_err(io_err)?;
 
         let mut cmd = CommandBuilder::new(program);
         cmd.args(args);
@@ -170,7 +183,9 @@ impl Pty {
 
     pub fn resize(&self, rows: u16, cols: u16) -> io::Result<()> {
         check_size(rows, cols)?;
-        lock(&self.master).resize(pty_size(rows, cols)).map_err(io_err)?;
+        lock(&self.master)
+            .resize(pty_size(rows, cols))
+            .map_err(io_err)?;
         lock(&self.term).parser.set_size(rows, cols);
         Ok(())
     }
@@ -185,9 +200,17 @@ impl Pty {
         parser.set_scrollback(usize::MAX);
         let depth = parser.screen().scrollback();
         // ponytail: vt100 scrolls back one screen at most, so grow the screen per read (depth x cols cells); keep a line log if reads get hot.
-        parser.set_size(rows.saturating_add(u16::try_from(depth).unwrap_or(u16::MAX)), cols);
+        parser.set_size(
+            rows.saturating_add(u16::try_from(depth).unwrap_or(u16::MAX)),
+            cols,
+        );
         parser.set_scrollback(depth);
-        let text = parser.screen().rows(0, cols).take(depth + usize::from(rows)).collect::<Vec<_>>().join("\n");
+        let text = parser
+            .screen()
+            .rows(0, cols)
+            .take(depth + usize::from(rows))
+            .collect::<Vec<_>>()
+            .join("\n");
         parser.set_scrollback(0);
         parser.set_size(rows, cols);
         text
@@ -200,7 +223,14 @@ impl Pty {
     pub fn attach(&self) -> (Snapshot, broadcast::Receiver<Vec<u8>>) {
         let term = lock(&self.term);
         let (rows, cols) = term.parser.screen().size();
-        (Snapshot { screen: term.replay(), rows, cols }, self.output.subscribe())
+        (
+            Snapshot {
+                screen: term.replay(),
+                rows,
+                cols,
+            },
+            self.output.subscribe(),
+        )
     }
 
     pub fn exited(&self) -> watch::Receiver<bool> {
@@ -215,7 +245,10 @@ impl Pty {
     pub fn force_kill(&self) -> io::Result<()> {
         let Some(pid) = self.pid else { return Ok(()) };
         let kill = |target: String| {
-            std::process::Command::new("kill").args(["-KILL", &target]).status().is_ok_and(|s| s.success())
+            std::process::Command::new("kill")
+                .args(["-KILL", &target])
+                .status()
+                .is_ok_and(|s| s.success())
         };
         // The PTY child is a session leader, so its pgid is its pid; fall back to the pid alone.
         if !kill(format!("-{pid}")) {

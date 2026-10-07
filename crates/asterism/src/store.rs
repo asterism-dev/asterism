@@ -87,18 +87,28 @@ impl Store {
             "INSERT OR IGNORE INTO projects (name, path, created_at) VALUES (?1, ?2, unixepoch())",
             params![name, path],
         )?;
-        self.conn.query_row(&format!("SELECT {PROJECT_COLUMNS} FROM projects WHERE path = ?1"), [path], project_row)
+        self.conn.query_row(
+            &format!("SELECT {PROJECT_COLUMNS} FROM projects WHERE path = ?1"),
+            [path],
+            project_row,
+        )
     }
 
     pub fn projects(&self) -> rusqlite::Result<Vec<Project>> {
-        let mut stmt = self.conn.prepare(&format!("SELECT {PROJECT_COLUMNS} FROM projects ORDER BY id"))?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {PROJECT_COLUMNS} FROM projects ORDER BY id"
+        ))?;
         let rows = stmt.query_map([], project_row)?;
         rows.collect()
     }
 
     pub fn project(&self, id: i64) -> rusqlite::Result<Option<Project>> {
         self.conn
-            .query_row(&format!("SELECT {PROJECT_COLUMNS} FROM projects WHERE id = ?1"), [id], project_row)
+            .query_row(
+                &format!("SELECT {PROJECT_COLUMNS} FROM projects WHERE id = ?1"),
+                [id],
+                project_row,
+            )
             .optional()
     }
 
@@ -107,13 +117,18 @@ impl Store {
             "DELETE FROM sessions WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?1)",
             [id],
         )?;
-        self.conn.execute("DELETE FROM tasks WHERE project_id = ?1", [id])?;
-        self.conn.execute("DELETE FROM projects WHERE id = ?1", [id])?;
+        self.conn
+            .execute("DELETE FROM tasks WHERE project_id = ?1", [id])?;
+        self.conn
+            .execute("DELETE FROM projects WHERE id = ?1", [id])?;
         Ok(())
     }
 
     pub fn set_project_default_base(&self, id: i64, base: Option<&str>) -> rusqlite::Result<()> {
-        self.conn.execute("UPDATE projects SET default_base = ?2 WHERE id = ?1", params![id, base])?;
+        self.conn.execute(
+            "UPDATE projects SET default_base = ?2 WHERE id = ?1",
+            params![id, base],
+        )?;
         Ok(())
     }
 
@@ -141,7 +156,10 @@ impl Store {
     }
 
     pub fn set_task_title(&self, id: i64, title: &str) -> rusqlite::Result<()> {
-        self.conn.execute("UPDATE tasks SET title = ?2 WHERE id = ?1", params![id, title])?;
+        self.conn.execute(
+            "UPDATE tasks SET title = ?2 WHERE id = ?1",
+            params![id, title],
+        )?;
         Ok(())
     }
 
@@ -160,7 +178,8 @@ impl Store {
     }
 
     pub fn delete_session(&self, id: i64) -> rusqlite::Result<()> {
-        self.conn.execute("DELETE FROM sessions WHERE id = ?1", [id])?;
+        self.conn
+            .execute("DELETE FROM sessions WHERE id = ?1", [id])?;
         Ok(())
     }
 
@@ -170,32 +189,46 @@ impl Store {
     }
 
     pub fn touch_task(&self, id: i64) -> rusqlite::Result<()> {
-        self.conn.execute("UPDATE tasks SET last_activity_at = unixepoch() WHERE id = ?1", [id])?;
+        self.conn.execute(
+            "UPDATE tasks SET last_activity_at = unixepoch() WHERE id = ?1",
+            [id],
+        )?;
         Ok(())
     }
 
     pub fn set_task_active(&self, id: i64) -> rusqlite::Result<()> {
-        self.conn.execute("UPDATE tasks SET archived = 0 WHERE id = ?1", [id])?;
+        self.conn
+            .execute("UPDATE tasks SET archived = 0 WHERE id = ?1", [id])?;
         Ok(())
     }
 
     pub fn delete_task_sessions(&self, task_id: i64) -> rusqlite::Result<()> {
-        self.conn.execute("DELETE FROM sessions WHERE task_id = ?1", [task_id])?;
+        self.conn
+            .execute("DELETE FROM sessions WHERE task_id = ?1", [task_id])?;
         Ok(())
     }
 
     pub fn set_task_archived(&self, id: i64) -> rusqlite::Result<()> {
-        self.conn.execute("UPDATE tasks SET archived = 1 WHERE id = ?1", [id])?;
+        self.conn
+            .execute("UPDATE tasks SET archived = 1 WHERE id = ?1", [id])?;
         Ok(())
     }
 
     pub fn task(&self, id: i64) -> rusqlite::Result<Option<Task>> {
         self.conn
-            .query_row(&format!("SELECT {TASK_COLUMNS} FROM tasks WHERE id = ?1"), [id], task_row)
+            .query_row(
+                &format!("SELECT {TASK_COLUMNS} FROM tasks WHERE id = ?1"),
+                [id],
+                task_row,
+            )
             .optional()
     }
 
-    pub fn tasks(&self, project_id: Option<i64>, include_archived: bool) -> rusqlite::Result<Vec<Task>> {
+    pub fn tasks(
+        &self,
+        project_id: Option<i64>,
+        include_archived: bool,
+    ) -> rusqlite::Result<Vec<Task>> {
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {TASK_COLUMNS} FROM tasks
              WHERE (?1 IS NULL OR project_id = ?1) AND (?2 OR archived = 0) ORDER BY id"
@@ -218,32 +251,47 @@ impl Store {
     }
 
     pub fn set_session_status(&self, id: i64, status: SessionStatus) -> rusqlite::Result<()> {
-        self.conn
-            .execute("UPDATE sessions SET status = ?2 WHERE id = ?1", params![id, to_text(&status)])?;
+        self.conn.execute(
+            "UPDATE sessions SET status = ?2 WHERE id = ?1",
+            params![id, to_text(&status)],
+        )?;
         Ok(())
     }
 
     pub fn set_session_agent_ref(&self, id: i64, agent_ref: &str) -> rusqlite::Result<()> {
-        self.conn
-            .execute("UPDATE sessions SET agent_ref = ?2 WHERE id = ?1", params![id, agent_ref])?;
+        self.conn.execute(
+            "UPDATE sessions SET agent_ref = ?2 WHERE id = ?1",
+            params![id, agent_ref],
+        )?;
         Ok(())
     }
 
     pub fn set_session_last_text(&self, id: i64, text: &str) -> rusqlite::Result<()> {
-        self.conn.execute("UPDATE sessions SET last_text = ?2 WHERE id = ?1", params![id, text])?;
+        self.conn.execute(
+            "UPDATE sessions SET last_text = ?2 WHERE id = ?1",
+            params![id, text],
+        )?;
         Ok(())
     }
 
     /// `None` if the session does not exist; `Some(None)` if it never stored a final screen.
     pub fn session_last_text(&self, id: i64) -> rusqlite::Result<Option<Option<String>>> {
         self.conn
-            .query_row("SELECT last_text FROM sessions WHERE id = ?1", [id], |row| row.get(0))
+            .query_row(
+                "SELECT last_text FROM sessions WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
             .optional()
     }
 
     pub fn session(&self, id: i64) -> rusqlite::Result<Option<StoredSession>> {
         self.conn
-            .query_row(&format!("SELECT {SESSION_COLUMNS} FROM sessions WHERE id = ?1"), [id], session_row)
+            .query_row(
+                &format!("SELECT {SESSION_COLUMNS} FROM sessions WHERE id = ?1"),
+                [id],
+                session_row,
+            )
             .optional()
     }
 
@@ -266,7 +314,13 @@ fn from_text<T: DeserializeOwned>(column: usize, text: String) -> rusqlite::Resu
 }
 
 fn project_row(row: &Row) -> rusqlite::Result<Project> {
-    Ok(Project { id: row.get(0)?, name: row.get(1)?, path: row.get(2)?, created_at: row.get(3)?, default_base: row.get(4)? })
+    Ok(Project {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        path: row.get(2)?,
+        created_at: row.get(3)?,
+        default_base: row.get(4)?,
+    })
 }
 
 fn task_row(row: &Row) -> rusqlite::Result<Task> {
@@ -282,7 +336,11 @@ fn task_row(row: &Row) -> rusqlite::Result<Task> {
         archived: row.get::<_, i64>(8)? != 0,
         created_at: row.get(9)?,
         last_activity_at: row.get(10)?,
-        issue: match (row.get::<_, Option<String>>(11)?, row.get::<_, Option<String>>(12)?, row.get::<_, Option<String>>(13)?) {
+        issue: match (
+            row.get::<_, Option<String>>(11)?,
+            row.get::<_, Option<String>>(12)?,
+            row.get::<_, Option<String>>(13)?,
+        ) {
             (Some(source), Some(key), Some(url)) => Some(IssueRef { source, key, url }),
             _ => None,
         },
@@ -303,8 +361,8 @@ fn session_row(row: &Row) -> rusqlite::Result<StoredSession> {
 
 #[cfg(test)]
 mod tests {
-    use asterism_proto::types::{SessionKind, SessionStatus};
     use super::*;
+    use asterism_proto::types::{SessionKind, SessionStatus};
 
     #[test]
     fn upgrading_keeps_tasks_and_adds_issue_columns() {
@@ -316,13 +374,22 @@ mod tests {
                 conn.execute_batch(m).unwrap();
             }
             conn.pragma_update(None, "user_version", 2).unwrap();
-            conn.execute("INSERT INTO projects (name, path) VALUES ('p', '/p')", []).unwrap();
-            conn.execute("INSERT INTO tasks (project_id, title, base_branch) VALUES (1, 'old', 'main')", []).unwrap();
+            conn.execute("INSERT INTO projects (name, path) VALUES ('p', '/p')", [])
+                .unwrap();
+            conn.execute(
+                "INSERT INTO tasks (project_id, title, base_branch) VALUES (1, 'old', 'main')",
+                [],
+            )
+            .unwrap();
         }
         let store = Store::open(&path).unwrap();
         let task = store.task(1).unwrap().unwrap();
         assert_eq!((task.title.as_str(), task.issue.clone()), ("old", None));
-        let issue = IssueRef { source: "linear".into(), key: "TRA-1".into(), url: "u".into() };
+        let issue = IssueRef {
+            source: "linear".into(),
+            key: "TRA-1".into(),
+            url: "u".into(),
+        };
         store.set_task_issue(1, &issue).unwrap();
         assert_eq!(store.task(1).unwrap().unwrap().issue, Some(issue));
     }
@@ -340,8 +407,12 @@ mod tests {
     fn tasks_roundtrip_and_filter_archived() {
         let store = Store::open_in_memory().unwrap();
         let p = store.add_project("repo", "/src/repo").unwrap();
-        let id = store.insert_task(p.id, "Fix login", Some("go"), "main").unwrap();
-        store.set_task_location(id, "1-fix-login", "asterism/1-fix-login", "/wt").unwrap();
+        let id = store
+            .insert_task(p.id, "Fix login", Some("go"), "main")
+            .unwrap();
+        store
+            .set_task_location(id, "1-fix-login", "asterism/1-fix-login", "/wt")
+            .unwrap();
         let task = store.task(id).unwrap().unwrap();
         assert_eq!(task.branch, "asterism/1-fix-login");
         assert_eq!(task.prompt.as_deref(), Some("go"));
@@ -357,9 +428,15 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let p = store.add_project("repo", "/src/repo").unwrap();
         let task = store.insert_task(p.id, "t", None, "main").unwrap();
-        let kind = SessionKind::Agent { name: "claude".into() };
-        let id = store.insert_session(task, &kind, SessionStatus::Working).unwrap();
-        store.set_session_status(id, SessionStatus::WaitingInput).unwrap();
+        let kind = SessionKind::Agent {
+            name: "claude".into(),
+        };
+        let id = store
+            .insert_session(task, &kind, SessionStatus::Working)
+            .unwrap();
+        store
+            .set_session_status(id, SessionStatus::WaitingInput)
+            .unwrap();
         store.set_session_agent_ref(id, "abc").unwrap();
 
         let stored = store.session(id).unwrap().unwrap();
@@ -368,7 +445,10 @@ mod tests {
         assert_eq!(stored.agent_ref.as_deref(), Some("abc"));
         assert_eq!(store.session_last_text(id).unwrap(), Some(None));
         store.set_session_last_text(id, "bye").unwrap();
-        assert_eq!(store.session_last_text(id).unwrap(), Some(Some("bye".into())));
+        assert_eq!(
+            store.session_last_text(id).unwrap(),
+            Some(Some("bye".into()))
+        );
         assert_eq!(store.session_last_text(id + 1).unwrap(), None);
         assert_eq!(store.sessions(Some(task)).unwrap().len(), 1);
         assert!(store.sessions(Some(task + 1)).unwrap().is_empty());
@@ -378,11 +458,22 @@ mod tests {
     fn migrates_a_pre_timestamp_database() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(SCHEMA).unwrap();
-        conn.execute("INSERT INTO projects (name, path) VALUES ('repo', '/src/repo')", []).unwrap();
-        conn.execute("INSERT INTO tasks (project_id, title, base_branch) VALUES (1, 't', 'main')", []).unwrap();
+        conn.execute(
+            "INSERT INTO projects (name, path) VALUES ('repo', '/src/repo')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tasks (project_id, title, base_branch) VALUES (1, 't', 'main')",
+            [],
+        )
+        .unwrap();
 
         let store = Store::init(conn).unwrap();
-        let version: usize = store.conn.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        let version: usize = store
+            .conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(version, MIGRATIONS.len());
         let task = store.task(1).unwrap().unwrap();
         assert!(task.created_at > 0);
@@ -396,7 +487,10 @@ mod tests {
         let p = store.add_project("repo", "/src/repo").unwrap();
         assert!(p.created_at > 0);
         let id = store.insert_task(p.id, "t", None, "main").unwrap();
-        store.conn.execute("UPDATE tasks SET last_activity_at = 0 WHERE id = ?1", [id]).unwrap();
+        store
+            .conn
+            .execute("UPDATE tasks SET last_activity_at = 0 WHERE id = ?1", [id])
+            .unwrap();
         store.touch_task(id).unwrap();
         let task = store.task(id).unwrap().unwrap();
         assert!(task.created_at > 0);
@@ -408,8 +502,18 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let p = store.add_project("repo", "/src/repo").unwrap();
         assert_eq!(p.default_base, None);
-        store.set_project_default_base(p.id, Some("origin/develop")).unwrap();
-        assert_eq!(store.project(p.id).unwrap().unwrap().default_base.as_deref(), Some("origin/develop"));
+        store
+            .set_project_default_base(p.id, Some("origin/develop"))
+            .unwrap();
+        assert_eq!(
+            store
+                .project(p.id)
+                .unwrap()
+                .unwrap()
+                .default_base
+                .as_deref(),
+            Some("origin/develop")
+        );
         store.set_project_default_base(p.id, None).unwrap();
         assert_eq!(store.project(p.id).unwrap().unwrap().default_base, None);
     }
@@ -419,7 +523,9 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let p = store.add_project("repo", "/src/repo").unwrap();
         let task = store.insert_task(p.id, "t", None, "main").unwrap();
-        store.insert_session(task, &SessionKind::Shell, SessionStatus::Exited).unwrap();
+        store
+            .insert_session(task, &SessionKind::Shell, SessionStatus::Exited)
+            .unwrap();
         store.remove_project(p.id).unwrap();
         assert!(store.projects().unwrap().is_empty());
         assert!(store.tasks(None, true).unwrap().is_empty());

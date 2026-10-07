@@ -29,11 +29,21 @@ fn not_found(message: String) -> Error {
 }
 
 fn check_name(name: &str) -> Result<()> {
-    if is_slug(name) { Ok(()) } else { Err(invalid(format!("invalid plugin name {name:?}"))) }
+    if is_slug(name) {
+        Ok(())
+    } else {
+        Err(invalid(format!("invalid plugin name {name:?}")))
+    }
 }
 
 pub(crate) fn check_version(version: &str) -> Result<()> {
-    if is_version(version) { Ok(()) } else { Err(invalid(format!("invalid version {version:?} in installed.toml"))) }
+    if is_version(version) {
+        Ok(())
+    } else {
+        Err(invalid(format!(
+            "invalid version {version:?} in installed.toml"
+        )))
+    }
 }
 
 pub fn load(paths: &Paths) -> Result<InstalledFile> {
@@ -48,24 +58,52 @@ pub fn find_entry(paths: &Paths, store: &str, name: &str) -> Result<(StoreConfig
     let file = store_ops::load(paths)?;
     let store = store_ops::find_store(&file, store)?.clone();
     let index = source::read_index(&store_ops::store_dir(paths, &store))?;
-    let entry = index.plugins.into_iter().find(|e| e.name == name).ok_or_else(|| not_found(format!("store {} has no plugin {name}", store.name)))?;
+    let entry = index
+        .plugins
+        .into_iter()
+        .find(|e| e.name == name)
+        .ok_or_else(|| not_found(format!("store {} has no plugin {name}", store.name)))?;
     Ok((store, entry))
 }
 
-pub fn resolve(paths: &Paths, store: &StoreConfig, entry: &IndexEntry, env: &GitEnv) -> Result<Resolved> {
+pub fn resolve(
+    paths: &Paths,
+    store: &StoreConfig,
+    entry: &IndexEntry,
+    env: &GitEnv,
+) -> Result<Resolved> {
     let (dir, git_ref) = match entry.source() {
-        EntrySource::Local { path } => (source::plugin_dir(&store_ops::store_dir(paths, store), path)?, None),
+        EntrySource::Local { path } => (
+            source::plugin_dir(&store_ops::store_dir(paths, store), path)?,
+            None,
+        ),
         EntrySource::Git { url, git_ref, path } => {
             let checkout = source::checkout_git(&paths.plugin_cache(), url, git_ref, env)?;
-            (source::plugin_dir(&checkout, path)?, Some(git_ref.to_string()))
+            (
+                source::plugin_dir(&checkout, path)?,
+                Some(git_ref.to_string()),
+            )
         }
     };
-    let text = std::fs::read_to_string(dir.join("plugin.toml")).map_err(|e| invalid(format!("{}/{}: no plugin.toml: {e}", store.name, entry.name)))?;
-    let manifest = manifest::parse(&text).map_err(|e| invalid(format!("{}/{}: {e}", store.name, entry.name)))?;
+    let text = std::fs::read_to_string(dir.join("plugin.toml")).map_err(|e| {
+        invalid(format!(
+            "{}/{}: no plugin.toml: {e}",
+            store.name, entry.name
+        ))
+    })?;
+    let manifest = manifest::parse(&text)
+        .map_err(|e| invalid(format!("{}/{}: {e}", store.name, entry.name)))?;
     if manifest.name != entry.name {
-        return Err(invalid(format!("store entry {} points at plugin {}", entry.name, manifest.name)));
+        return Err(invalid(format!(
+            "store entry {} points at plugin {}",
+            entry.name, manifest.name
+        )));
     }
-    Ok(Resolved { dir, manifest, git_ref })
+    Ok(Resolved {
+        dir,
+        manifest,
+        git_ref,
+    })
 }
 
 /// Copies into a temp dir first and renames, so a failed copy never leaves a half-installed version.
@@ -73,18 +111,30 @@ pub fn install_files(paths: &Paths, resolved: &Resolved) -> Result<()> {
     load(paths)?;
     let base = paths.plugins_installed().join(&resolved.manifest.name);
     std::fs::create_dir_all(&base)?;
-    let temp = base.join(format!(".tmp-{}-{}", std::process::id(), TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)));
+    let temp = base.join(format!(
+        ".tmp-{}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
     if let Err(e) = source::copy_tree(&resolved.dir, &temp) {
         let _ = std::fs::remove_dir_all(&temp);
         return Err(e);
     }
-    let unchanged = std::fs::read_to_string(temp.join("plugin.toml")).ok().and_then(|t| manifest::parse(&t).ok()).is_some_and(|m| {
-        let wanted = &resolved.manifest;
-        m.name == wanted.name && m.version == wanted.version && same_permissions(&m.permissions, &wanted.permissions) && m.capabilities() == wanted.capabilities()
-    });
+    let unchanged = std::fs::read_to_string(temp.join("plugin.toml"))
+        .ok()
+        .and_then(|t| manifest::parse(&t).ok())
+        .is_some_and(|m| {
+            let wanted = &resolved.manifest;
+            m.name == wanted.name
+                && m.version == wanted.version
+                && same_permissions(&m.permissions, &wanted.permissions)
+                && m.capabilities() == wanted.capabilities()
+        });
     if !unchanged {
         let _ = std::fs::remove_dir_all(&temp);
-        return Err(invalid("the plugin changed while installing; try again".into()));
+        return Err(invalid(
+            "the plugin changed while installing; try again".into(),
+        ));
     }
     let target = base.join(&resolved.manifest.version);
     let _ = std::fs::remove_dir_all(&target);
@@ -94,23 +144,40 @@ pub fn install_files(paths: &Paths, resolved: &Resolved) -> Result<()> {
 
 /// The old version becomes `previous`; the version before that is deleted.
 pub fn record(paths: &Paths, store: &str, resolved: &Resolved) -> Result<InstalledEntry> {
-    let live: Vec<String> = load(paths)?.plugins.get(&resolved.manifest.name).into_iter().flat_map(|e| [Some(e.version.clone()), e.previous.clone()]).flatten().collect();
+    let live: Vec<String> = load(paths)?
+        .plugins
+        .get(&resolved.manifest.name)
+        .into_iter()
+        .flat_map(|e| [Some(e.version.clone()), e.previous.clone()])
+        .flatten()
+        .collect();
     record_entry(paths, store, resolved).inspect_err(|_| {
         let version = &resolved.manifest.version;
         if !live.contains(version) {
-            let _ = std::fs::remove_dir_all(paths.plugins_installed().join(&resolved.manifest.name).join(version));
+            let _ = std::fs::remove_dir_all(
+                paths
+                    .plugins_installed()
+                    .join(&resolved.manifest.name)
+                    .join(version),
+            );
         }
     })
 }
 
 /// Must run under the store lock before `install_files`, so a foreign store never overwrites a live version.
 pub fn ensure_store(paths: &Paths, store: &str, name: &str) -> Result<()> {
-    load(paths)?.plugins.get(name).map_or(Ok(()), |old| same_store(name, old, store))
+    load(paths)?
+        .plugins
+        .get(name)
+        .map_or(Ok(()), |old| same_store(name, old, store))
 }
 
 fn same_store(name: &str, old: &InstalledEntry, store: &str) -> Result<()> {
     if old.store != store {
-        return Err(invalid(format!("{name} is installed from store {}; uninstall it first", old.store)));
+        return Err(invalid(format!(
+            "{name} is installed from store {}; uninstall it first",
+            old.store
+        )));
     }
     Ok(())
 }
@@ -130,10 +197,18 @@ fn record_entry(paths: &Paths, store: &str, resolved: &Resolved) -> Result<Insta
         Some(old) => old.previous.clone(),
         None => None,
     };
-    if let Some(stale) = old.and_then(|o| o.previous).filter(|p| Some(p) != previous.as_ref() && *p != version) {
+    if let Some(stale) = old
+        .and_then(|o| o.previous)
+        .filter(|p| Some(p) != previous.as_ref() && *p != version)
+    {
         let _ = std::fs::remove_dir_all(paths.plugins_installed().join(name).join(stale));
     }
-    let entry = InstalledEntry { version, store: store.to_string(), git_ref: resolved.git_ref.clone(), previous };
+    let entry = InstalledEntry {
+        version,
+        store: store.to_string(),
+        git_ref: resolved.git_ref.clone(),
+        previous,
+    };
     file.plugins.insert(name.clone(), entry.clone());
     save(paths, &file)?;
     Ok(entry)
@@ -142,11 +217,24 @@ fn record_entry(paths: &Paths, store: &str, resolved: &Resolved) -> Result<Insta
 pub fn rollback(paths: &Paths, name: &str) -> Result<InstalledEntry> {
     check_name(name)?;
     let mut file = load(paths)?;
-    let entry = file.plugins.get_mut(name).ok_or_else(|| not_found(format!("plugin {name} is not installed from a store")))?;
-    let previous = entry.previous.clone().ok_or_else(|| invalid(format!("plugin {name} has no previous version")))?;
+    let entry = file
+        .plugins
+        .get_mut(name)
+        .ok_or_else(|| not_found(format!("plugin {name} is not installed from a store")))?;
+    let previous = entry
+        .previous
+        .clone()
+        .ok_or_else(|| invalid(format!("plugin {name} has no previous version")))?;
     check_version(&previous)?;
-    if !paths.plugins_installed().join(name).join(&previous).is_dir() {
-        return Err(invalid(format!("version {previous} of {name} is no longer on disk")));
+    if !paths
+        .plugins_installed()
+        .join(name)
+        .join(&previous)
+        .is_dir()
+    {
+        return Err(invalid(format!(
+            "version {previous} of {name} is no longer on disk"
+        )));
     }
     entry.previous = Some(std::mem::replace(&mut entry.version, previous));
     // The rolled-back-from version may have a different ref; the next refresh recomputes updates from the version.
@@ -161,7 +249,9 @@ pub fn uninstall(paths: &Paths, name: &str) -> Result<()> {
     check_name(name)?;
     let mut file = load(paths)?;
     if file.plugins.remove(name).is_none() {
-        return Err(not_found(format!("plugin {name} is not installed from a store")));
+        return Err(not_found(format!(
+            "plugin {name} is not installed from a store"
+        )));
     }
     file.disabled.remove(name);
     save(paths, &file)?;

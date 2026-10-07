@@ -17,7 +17,9 @@ use tokio::net::UnixStream;
 
 async fn start_daemon() -> (TempDir, PathBuf) {
     let home = tempfile::tempdir().unwrap();
-    let paths = Paths { home: home.path().to_path_buf() };
+    let paths = Paths {
+        home: home.path().to_path_buf(),
+    };
     let socket = paths.socket();
     tokio::spawn(asterism_core::run(paths));
     for _ in 0..100 {
@@ -32,22 +34,55 @@ async fn start_daemon() -> (TempDir, PathBuf) {
 async fn client(socket: &Path) -> Client {
     let client = Client::connect_unix(socket).await.unwrap();
     let _: HelloResult = client
-        .call(method::HELLO, HelloParams { proto_version: PROTO_VERSION, client_kind: ClientKind::Cli })
+        .call(
+            method::HELLO,
+            HelloParams {
+                proto_version: PROTO_VERSION,
+                client_kind: ClientKind::Cli,
+            },
+        )
         .await
         .unwrap();
     client
 }
 
 async fn shell_session(client: &Client, repo: &Path) -> Session {
-    let project: Project =
-        client.call(method::PROJECT_ADD, ProjectAddParams { path: repo.display().to_string() }).await.unwrap();
-    let created: TaskCreateResult = client
-        .call(method::TASK_CREATE, TaskCreateParams { project_id: project.id, title: "rpc".into(), prompt: None, agent: None, base: None, issue: None, ..Default::default() })
+    let project: Project = client
+        .call(
+            method::PROJECT_ADD,
+            ProjectAddParams {
+                path: repo.display().to_string(),
+            },
+        )
         .await
         .unwrap();
-    let kind = SessionKind::Command { argv: vec!["sh".into(), "-c".into(), "echo ready; cat".into()] };
+    let created: TaskCreateResult = client
+        .call(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id: project.id,
+                title: "rpc".into(),
+                prompt: None,
+                agent: None,
+                base: None,
+                issue: None,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let kind = SessionKind::Command {
+        argv: vec!["sh".into(), "-c".into(), "echo ready; cat".into()],
+    };
     client
-        .call(method::SESSION_START, SessionStartParams { task_id: created.task.id, kind, prompt: None })
+        .call(
+            method::SESSION_START,
+            SessionStartParams {
+                task_id: created.task.id,
+                kind,
+                prompt: None,
+            },
+        )
         .await
         .unwrap()
 }
@@ -64,14 +99,26 @@ async fn hello_reports_node_and_rejects_other_protocol_versions() {
     let (_home, socket) = start_daemon().await;
     let client = Client::connect_unix(&socket).await.unwrap();
     let hello: HelloResult = client
-        .call(method::HELLO, HelloParams { proto_version: PROTO_VERSION, client_kind: ClientKind::App })
+        .call(
+            method::HELLO,
+            HelloParams {
+                proto_version: PROTO_VERSION,
+                client_kind: ClientKind::App,
+            },
+        )
         .await
         .unwrap();
     assert_eq!(hello.proto_version, PROTO_VERSION);
     assert!(hello.agents.iter().any(|a| a.name == "claude"));
 
     let err = client
-        .call::<_, HelloResult>(method::HELLO, HelloParams { proto_version: 999, client_kind: ClientKind::App })
+        .call::<_, HelloResult>(
+            method::HELLO,
+            HelloParams {
+                proto_version: 999,
+                client_kind: ClientKind::App,
+            },
+        )
         .await
         .unwrap_err();
     assert_eq!(rpc_kind(err), ErrorKind::IncompatibleVersion);
@@ -87,21 +134,44 @@ async fn attach_streams_output_after_the_snapshot() {
     let session = shell_session(&client, repo.path()).await;
 
     tokio::time::sleep(Duration::from_millis(300)).await;
-    let attached: SessionAttachResult =
-        client.call(method::SESSION_ATTACH, SessionIdParams { session_id: session.id }).await.unwrap();
-    let snapshot = base64::engine::general_purpose::STANDARD.decode(attached.snapshot).unwrap();
+    let attached: SessionAttachResult = client
+        .call(
+            method::SESSION_ATTACH,
+            SessionIdParams {
+                session_id: session.id,
+            },
+        )
+        .await
+        .unwrap();
+    let snapshot = base64::engine::general_purpose::STANDARD
+        .decode(attached.snapshot)
+        .unwrap();
     assert!(String::from_utf8_lossy(&snapshot).contains("ready"));
 
     let _: () = client
-        .call(method::SESSION_SEND, SessionSendParams { session_id: session.id, text: "ping\n".into(), submit: false })
+        .call(
+            method::SESSION_SEND,
+            SessionSendParams {
+                session_id: session.id,
+                text: "ping\n".into(),
+                submit: false,
+            },
+        )
         .await
         .unwrap();
     let mut seen = String::new();
     while !seen.contains("ping") {
-        let event = tokio::time::timeout(Duration::from_secs(5), events.recv()).await.unwrap().unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
         if let Event::SessionOutput { session_id, data } = event {
             assert_eq!(session_id, session.id);
-            seen.push_str(&String::from_utf8_lossy(&base64::engine::general_purpose::STANDARD.decode(data).unwrap()));
+            seen.push_str(&String::from_utf8_lossy(
+                &base64::engine::general_purpose::STANDARD
+                    .decode(data)
+                    .unwrap(),
+            ));
         }
     }
 }
@@ -114,9 +184,19 @@ async fn subscribe_delivers_change_events() {
     let client = client(&socket).await;
     let mut events = client.take_events().unwrap();
     let _: () = client.call(method::SUBSCRIBE, ()).await.unwrap();
-    let _: Project =
-        client.call(method::PROJECT_ADD, ProjectAddParams { path: repo.path().display().to_string() }).await.unwrap();
-    let event = tokio::time::timeout(Duration::from_secs(5), events.recv()).await.unwrap().unwrap();
+    let _: Project = client
+        .call(
+            method::PROJECT_ADD,
+            ProjectAddParams {
+                path: repo.path().display().to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
     assert!(matches!(event, Event::ProjectChanged(_)), "{event:?}");
 }
 
@@ -124,9 +204,17 @@ async fn subscribe_delivers_change_events() {
 async fn bad_requests_get_structured_errors() {
     let (_home, socket) = start_daemon().await;
     let client = client(&socket).await;
-    assert_eq!(rpc_kind(client.call::<_, ()>("nope", ()).await.unwrap_err()), ErrorKind::MethodNotFound);
     assert_eq!(
-        rpc_kind(client.call::<_, ()>(method::SESSION_KILL, serde_json::json!({"wrong": 1})).await.unwrap_err()),
+        rpc_kind(client.call::<_, ()>("nope", ()).await.unwrap_err()),
+        ErrorKind::MethodNotFound
+    );
+    assert_eq!(
+        rpc_kind(
+            client
+                .call::<_, ()>(method::SESSION_KILL, serde_json::json!({"wrong": 1}))
+                .await
+                .unwrap_err()
+        ),
         ErrorKind::InvalidParams
     );
 
@@ -144,18 +232,40 @@ async fn disconnecting_mid_attach_keeps_daemon_and_session_alive() {
     init_repo(repo.path());
     let first = client(&socket).await;
     let session = shell_session(&first, repo.path()).await;
-    let _: SessionAttachResult =
-        first.call(method::SESSION_ATTACH, SessionIdParams { session_id: session.id }).await.unwrap();
+    let _: SessionAttachResult = first
+        .call(
+            method::SESSION_ATTACH,
+            SessionIdParams {
+                session_id: session.id,
+            },
+        )
+        .await
+        .unwrap();
     drop(first);
 
     let second = client(&socket).await;
     let _: () = second
-        .call(method::SESSION_SEND, SessionSendParams { session_id: session.id, text: "still here\n".into(), submit: false })
+        .call(
+            method::SESSION_SEND,
+            SessionSendParams {
+                session_id: session.id,
+                text: "still here\n".into(),
+                submit: false,
+            },
+        )
         .await
         .unwrap();
     for _ in 0..100 {
-        let read: SessionReadResult =
-            second.call(method::SESSION_READ, SessionReadParams { session_id: session.id, lines: 10 }).await.unwrap();
+        let read: SessionReadResult = second
+            .call(
+                method::SESSION_READ,
+                SessionReadParams {
+                    session_id: session.id,
+                    lines: 10,
+                },
+            )
+            .await
+            .unwrap();
         if read.text.contains("still here") {
             return;
         }
@@ -182,7 +292,9 @@ async fn home_is_private_and_second_daemon_refuses() {
     let mode = std::fs::metadata(&home).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o700);
 
-    let err = asterism_core::run(Paths { home: home.clone() }).await.unwrap_err();
+    let err = asterism_core::run(Paths { home: home.clone() })
+        .await
+        .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
     client(&socket).await;
 }
@@ -193,21 +305,50 @@ async fn stalled_attached_client_does_not_block_others() {
     let repo = tempfile::tempdir().unwrap();
     init_repo(repo.path());
     let good = client(&socket).await;
-    let project: Project =
-        good.call(method::PROJECT_ADD, ProjectAddParams { path: repo.path().display().to_string() }).await.unwrap();
-    let created: TaskCreateResult = good
-        .call(method::TASK_CREATE, TaskCreateParams { project_id: project.id, title: "yes".into(), prompt: None, agent: None, base: None, issue: None, ..Default::default() })
+    let project: Project = good
+        .call(
+            method::PROJECT_ADD,
+            ProjectAddParams {
+                path: repo.path().display().to_string(),
+            },
+        )
         .await
         .unwrap();
-    let kind = SessionKind::Command { argv: vec!["yes".into()] };
+    let created: TaskCreateResult = good
+        .call(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id: project.id,
+                title: "yes".into(),
+                prompt: None,
+                agent: None,
+                base: None,
+                issue: None,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let kind = SessionKind::Command {
+        argv: vec!["yes".into()],
+    };
     let session: Session = good
-        .call(method::SESSION_START, SessionStartParams { task_id: created.task.id, kind, prompt: None })
+        .call(
+            method::SESSION_START,
+            SessionStartParams {
+                task_id: created.task.id,
+                kind,
+                prompt: None,
+            },
+        )
         .await
         .unwrap();
 
     let mut raw = UnixStream::connect(&socket).await.unwrap();
     let attach = serde_json::json!({"jsonrpc":"2.0","id":1,"method":method::SESSION_ATTACH,"params":{"session_id":session.id}});
-    raw.write_all(format!("{attach}\n").as_bytes()).await.unwrap();
+    raw.write_all(format!("{attach}\n").as_bytes())
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     let sessions: Vec<Session> = tokio::time::timeout(
@@ -223,7 +364,9 @@ async fn stalled_attached_client_does_not_block_others() {
 #[tokio::test(flavor = "multi_thread")]
 async fn stale_socket_file_is_replaced() {
     let home = tempfile::tempdir().unwrap();
-    let paths = Paths { home: home.path().to_path_buf() };
+    let paths = Paths {
+        home: home.path().to_path_buf(),
+    };
     std::fs::write(paths.socket(), "").unwrap();
     let socket = paths.socket();
     tokio::spawn(asterism_core::run(paths));
@@ -241,7 +384,9 @@ async fn stale_socket_file_is_replaced() {
 #[tokio::test(flavor = "multi_thread")]
 async fn shutdown_stops_the_server() {
     let home = tempfile::tempdir().unwrap();
-    let paths = Paths { home: home.path().to_path_buf() };
+    let paths = Paths {
+        home: home.path().to_path_buf(),
+    };
     let socket = paths.socket();
     let server = tokio::spawn(asterism_core::run(paths));
     for _ in 0..100 {
@@ -252,14 +397,20 @@ async fn shutdown_stops_the_server() {
     }
     let client = client(&socket).await;
     let _: () = client.call(method::SHUTDOWN, ()).await.unwrap();
-    tokio::time::timeout(Duration::from_secs(5), server).await.unwrap().unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
     assert!(!socket.exists());
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn concurrent_daemons_start_exactly_once() {
     let home = tempfile::tempdir().unwrap();
-    let paths = Paths { home: home.path().to_path_buf() };
+    let paths = Paths {
+        home: home.path().to_path_buf(),
+    };
     let socket = paths.socket();
     let mut a = tokio::spawn(asterism_core::run(paths.clone()));
     let mut b = tokio::spawn(asterism_core::run(paths));
@@ -271,7 +422,10 @@ async fn concurrent_daemons_start_exactly_once() {
     })
     .await
     .unwrap();
-    assert_eq!(loser.unwrap().unwrap_err().kind(), std::io::ErrorKind::AddrInUse);
+    assert_eq!(
+        loser.unwrap().unwrap_err().kind(),
+        std::io::ErrorKind::AddrInUse
+    );
     for _ in 0..100 {
         if UnixStream::connect(&socket).await.is_ok() {
             break;
@@ -279,14 +433,24 @@ async fn concurrent_daemons_start_exactly_once() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(!winner.is_finished());
-    let _: () = client(&socket).await.call(method::SHUTDOWN, ()).await.unwrap();
-    tokio::time::timeout(Duration::from_secs(5), winner).await.unwrap().unwrap().unwrap();
+    let _: () = client(&socket)
+        .await
+        .call(method::SHUTDOWN, ())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), winner)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
 }
 
 #[tokio::test]
 async fn held_daemon_lock_refuses_to_start() {
     let home = tempfile::tempdir().unwrap();
-    let paths = Paths { home: home.path().to_path_buf() };
+    let paths = Paths {
+        home: home.path().to_path_buf(),
+    };
     paths.ensure_dirs().unwrap();
     let held = std::fs::File::create(paths.lock()).unwrap();
     held.try_lock().unwrap();
@@ -299,24 +463,44 @@ async fn held_daemon_lock_refuses_to_start() {
 async fn agent_config_and_session_remove_are_routed() {
     let (_home, socket) = start_daemon().await;
     let client = client(&socket).await;
-    let config: AgentConfig =
-        client.call(method::AGENT_CONFIG_GET, AgentParams { agent: "claude".into() }).await.unwrap();
+    let config: AgentConfig = client
+        .call(
+            method::AGENT_CONFIG_GET,
+            AgentParams {
+                agent: "claude".into(),
+            },
+        )
+        .await
+        .unwrap();
     assert_eq!(config, AgentConfig::default());
     let err = client
         .call::<_, ()>(
             method::AGENT_CONFIG_SET,
             AgentConfigSetParams {
                 agent: "claude".into(),
-                config: AgentConfig { mcp: Some(serde_json::json!([])), ..Default::default() },
+                config: AgentConfig {
+                    mcp: Some(serde_json::json!([])),
+                    ..Default::default()
+                },
             },
         )
         .await
         .unwrap_err();
     assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
-    let raw: AgentConfigRaw =
-        client.call(method::AGENT_CONFIG_GET_RAW, AgentParams { agent: "claude".into() }).await.unwrap();
+    let raw: AgentConfigRaw = client
+        .call(
+            method::AGENT_CONFIG_GET_RAW,
+            AgentParams {
+                agent: "claude".into(),
+            },
+        )
+        .await
+        .unwrap();
     assert_eq!(raw, AgentConfigRaw::default());
-    let err = client.call::<_, ()>(method::SESSION_REMOVE, SessionIdParams { session_id: 42 }).await.unwrap_err();
+    let err = client
+        .call::<_, ()>(method::SESSION_REMOVE, SessionIdParams { session_id: 42 })
+        .await
+        .unwrap_err();
     assert_eq!(rpc_kind(err), ErrorKind::NotFound);
 }
 
@@ -324,18 +508,58 @@ async fn agent_config_and_session_remove_are_routed() {
 async fn project_and_path_methods_are_routed() {
     let (_home, socket) = start_daemon().await;
     let client = client(&socket).await;
-    let info: NodeConfigInfo = client.call(method::NODE_CONFIG_GET, serde_json::Value::Null).await.unwrap();
+    let info: NodeConfigInfo = client
+        .call(method::NODE_CONFIG_GET, serde_json::Value::Null)
+        .await
+        .unwrap();
     assert_eq!(info.config.paths, info.defaults);
     let err = client
-        .call::<_, ()>(method::NODE_CONFIG_SET, NodeConfigSetParams { config: NodeConfig { paths: PathSettings { repos: "rel".into(), worktrees: "rel".into() } } })
+        .call::<_, ()>(
+            method::NODE_CONFIG_SET,
+            NodeConfigSetParams {
+                config: NodeConfig {
+                    paths: PathSettings {
+                        repos: "rel".into(),
+                        worktrees: "rel".into(),
+                    },
+                },
+            },
+        )
         .await
         .unwrap_err();
     assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
-    let err = client.call::<_, Project>(method::PROJECT_CLONE, ProjectCloneParams { source: "nope".into(), forge: None }).await.unwrap_err();
+    let err = client
+        .call::<_, Project>(
+            method::PROJECT_CLONE,
+            ProjectCloneParams {
+                source: "nope".into(),
+                forge: None,
+            },
+        )
+        .await
+        .unwrap_err();
     assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
-    let err = client.call::<_, Vec<ForgeRepo>>(method::FORGE_REPOS, ForgeOwnerParams { forge: "github".into(), owner: "-x".into() }).await.unwrap_err();
+    let err = client
+        .call::<_, Vec<ForgeRepo>>(
+            method::FORGE_REPOS,
+            ForgeOwnerParams {
+                forge: "github".into(),
+                owner: "-x".into(),
+            },
+        )
+        .await
+        .unwrap_err();
     assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
-    let err = client.call::<_, ProjectCreateResult>(method::PROJECT_CREATE, ProjectCreateParams { name: "../x".into(), remote: None }).await.unwrap_err();
+    let err = client
+        .call::<_, ProjectCreateResult>(
+            method::PROJECT_CREATE,
+            ProjectCreateParams {
+                name: "../x".into(),
+                remote: None,
+            },
+        )
+        .await
+        .unwrap_err();
     assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
 }
 
@@ -345,13 +569,33 @@ async fn project_branches_and_update_over_rpc() {
     let repo = tempfile::tempdir().unwrap();
     init_repo(repo.path());
     let client = client(&socket).await;
-    let project: Project =
-        client.call(method::PROJECT_ADD, ProjectAddParams { path: repo.path().display().to_string() }).await.unwrap();
-    let branches: ProjectBranches =
-        client.call(method::PROJECT_BRANCHES, ProjectIdParams { project_id: project.id }).await.unwrap();
+    let project: Project = client
+        .call(
+            method::PROJECT_ADD,
+            ProjectAddParams {
+                path: repo.path().display().to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    let branches: ProjectBranches = client
+        .call(
+            method::PROJECT_BRANCHES,
+            ProjectIdParams {
+                project_id: project.id,
+            },
+        )
+        .await
+        .unwrap();
     assert_eq!(branches.default.as_deref(), Some("main"));
     let updated: Project = client
-        .call(method::PROJECT_UPDATE, ProjectUpdateParams { project_id: project.id, default_base: Some("main".into()) })
+        .call(
+            method::PROJECT_UPDATE,
+            ProjectUpdateParams {
+                project_id: project.id,
+                default_base: Some("main".into()),
+            },
+        )
         .await
         .unwrap();
     assert_eq!(updated.default_base.as_deref(), Some("main"));

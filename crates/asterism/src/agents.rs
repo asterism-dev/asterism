@@ -8,7 +8,13 @@ pub fn on_path(binary: &str) -> bool {
 }
 
 /// Expands a static agent's templates; `None` when it cannot resume.
-pub fn static_argv(agent: &AgentDecl, mode: LaunchMode, args: &[String], prompt: Option<&str>, agent_ref: Option<&str>) -> Option<Vec<String>> {
+pub fn static_argv(
+    agent: &AgentDecl,
+    mode: LaunchMode,
+    args: &[String],
+    prompt: Option<&str>,
+    agent_ref: Option<&str>,
+) -> Option<Vec<String>> {
     let mut argv = Vec::new();
     let mut expand = |tokens: &[String]| {
         for token in tokens {
@@ -61,17 +67,35 @@ mod tests {
     #[test]
     fn static_templates_expand_args_prompt_and_resume() {
         let args = ["--model".to_string(), "x".into()];
-        assert_eq!(static_argv(&aider(), LaunchMode::Start, &args, Some("go"), None).unwrap(), ["aider", "--model", "x", "--message", "go"]);
-        assert_eq!(static_argv(&aider(), LaunchMode::Start, &[], None, None).unwrap(), ["aider"]);
-        assert_eq!(static_argv(&aider(), LaunchMode::Resume, &[], None, Some("r1")).unwrap(), ["aider", "--restore", "r1"]);
-        let no_resume = AgentDecl { resume: vec![], ..aider() };
-        assert_eq!(static_argv(&no_resume, LaunchMode::Resume, &[], None, Some("r1")), None);
+        assert_eq!(
+            static_argv(&aider(), LaunchMode::Start, &args, Some("go"), None).unwrap(),
+            ["aider", "--model", "x", "--message", "go"]
+        );
+        assert_eq!(
+            static_argv(&aider(), LaunchMode::Start, &[], None, None).unwrap(),
+            ["aider"]
+        );
+        assert_eq!(
+            static_argv(&aider(), LaunchMode::Resume, &[], None, Some("r1")).unwrap(),
+            ["aider", "--restore", "r1"]
+        );
+        let no_resume = AgentDecl {
+            resume: vec![],
+            ..aider()
+        };
+        assert_eq!(
+            static_argv(&no_resume, LaunchMode::Resume, &[], None, Some("r1")),
+            None
+        );
     }
 
     #[test]
     fn placeholders_are_whole_tokens_only() {
         let prompt = "use {agent_ref} and {binary}";
-        assert_eq!(static_argv(&aider(), LaunchMode::Start, &[], Some(prompt), Some("r1")).unwrap(), ["aider", "--message", prompt]);
+        assert_eq!(
+            static_argv(&aider(), LaunchMode::Start, &[], Some(prompt), Some("r1")).unwrap(),
+            ["aider", "--message", prompt]
+        );
     }
 
     #[test]

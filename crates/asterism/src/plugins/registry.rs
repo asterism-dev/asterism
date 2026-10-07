@@ -47,7 +47,10 @@ impl Plugin {
     }
 
     pub fn capabilities(&self) -> Vec<Capability> {
-        self.manifest.as_ref().map(Manifest::capabilities).unwrap_or_default()
+        self.manifest
+            .as_ref()
+            .map(Manifest::capabilities)
+            .unwrap_or_default()
     }
 }
 
@@ -65,7 +68,12 @@ pub struct Registry {
     plugins: Vec<Arc<Plugin>>,
 }
 
-fn candidate(expected: &str, origin: PluginOrigin, dir: PathBuf, text: io::Result<String>) -> Plugin {
+fn candidate(
+    expected: &str,
+    origin: PluginOrigin,
+    dir: PathBuf,
+    text: io::Result<String>,
+) -> Plugin {
     let parsed = text
         .map_err(|e| format!("cannot read {}: {e}", dir.join("plugin.toml").display()))
         .and_then(|text| manifest::parse(&text));
@@ -77,20 +85,38 @@ fn candidate(expected: &str, origin: PluginOrigin, dir: PathBuf, text: io::Resul
         Ok(m) => (Some(m), Status::Ok),
         Err(reason) => (None, Status::Broken(reason)),
     };
-    Plugin { name: expected.to_string(), origin, dir, manifest, status }
+    Plugin {
+        name: expected.to_string(),
+        origin,
+        dir,
+        manifest,
+        status,
+    }
 }
 
 impl Registry {
     /// Linked plugins come first, then installed, then built-in; the first plugin with a name wins, and the first to claim a capability keeps it.
     pub fn discover(sources: &Sources) -> Self {
         let read = |origin: PluginOrigin| {
-            move |(name, dir): (&String, &PathBuf)| candidate(name, origin, dir.clone(), std::fs::read_to_string(dir.join("plugin.toml")))
+            move |(name, dir): (&String, &PathBuf)| {
+                candidate(
+                    name,
+                    origin,
+                    dir.clone(),
+                    std::fs::read_to_string(dir.join("plugin.toml")),
+                )
+            }
         };
         let linked = sources.links.iter().map(read(PluginOrigin::Linked));
         let installed = sources.installed.iter().map(read(PluginOrigin::Installed));
-        let builtin = BUILTIN
-            .iter()
-            .map(|(name, text)| candidate(name, PluginOrigin::Builtin, sources.builtin_dir.clone(), Ok(text.to_string())));
+        let builtin = BUILTIN.iter().map(|(name, text)| {
+            candidate(
+                name,
+                PluginOrigin::Builtin,
+                sources.builtin_dir.clone(),
+                Ok(text.to_string()),
+            )
+        });
         let mut plugins: Vec<Arc<Plugin>> = Vec::new();
         let mut claimed: Vec<(CapabilityKind, String, String)> = Vec::new();
         for mut plugin in linked.chain(installed).chain(builtin) {
@@ -103,11 +129,21 @@ impl Registry {
             if plugin.is_ok() {
                 let capabilities = plugin.capabilities();
                 let clash = capabilities.iter().find_map(|c| {
-                    claimed.iter().find(|(kind, id, _)| *kind == c.kind && *id == c.id).map(|(_, id, owner)| (id.clone(), owner.clone()))
+                    claimed
+                        .iter()
+                        .find(|(kind, id, _)| *kind == c.kind && *id == c.id)
+                        .map(|(_, id, owner)| (id.clone(), owner.clone()))
                 });
                 match clash {
-                    Some((id, owner)) => plugin.status = Status::Broken(format!("{id:?} is already provided by plugin {owner}")),
-                    None => claimed.extend(capabilities.into_iter().map(|c| (c.kind, c.id, plugin.name.clone()))),
+                    Some((id, owner)) => {
+                        plugin.status =
+                            Status::Broken(format!("{id:?} is already provided by plugin {owner}"))
+                    }
+                    None => claimed.extend(
+                        capabilities
+                            .into_iter()
+                            .map(|c| (c.kind, c.id, plugin.name.clone())),
+                    ),
                 }
             }
             plugins.push(Arc::new(plugin));
@@ -124,23 +160,30 @@ impl Registry {
     }
 
     fn ok(&self) -> impl Iterator<Item = (&Arc<Plugin>, &Manifest)> {
-        self.plugins.iter().filter(|p| p.is_ok()).filter_map(|p| Some((p, p.manifest.as_ref()?)))
+        self.plugins
+            .iter()
+            .filter(|p| p.is_ok())
+            .filter_map(|p| Some((p, p.manifest.as_ref()?)))
     }
 
     pub fn agents(&self) -> impl Iterator<Item = (&Arc<Plugin>, &AgentDecl)> {
-        self.ok().flat_map(|(p, m)| m.provides.agent.iter().map(move |a| (p, a)))
+        self.ok()
+            .flat_map(|(p, m)| m.provides.agent.iter().map(move |a| (p, a)))
     }
 
     pub fn forges(&self) -> impl Iterator<Item = (&Arc<Plugin>, &ForgeDecl)> {
-        self.ok().flat_map(|(p, m)| m.provides.forge.iter().map(move |f| (p, f)))
+        self.ok()
+            .flat_map(|(p, m)| m.provides.forge.iter().map(move |f| (p, f)))
     }
 
     pub fn commands(&self) -> impl Iterator<Item = (&Arc<Plugin>, &CommandDecl)> {
-        self.ok().flat_map(|(p, m)| m.provides.command.iter().map(move |c| (p, c)))
+        self.ok()
+            .flat_map(|(p, m)| m.provides.command.iter().map(move |c| (p, c)))
     }
 
     pub fn task_sources(&self) -> impl Iterator<Item = (&Arc<Plugin>, &TaskSourceDecl)> {
-        self.ok().flat_map(|(p, m)| m.provides.task_source.iter().map(move |t| (p, t)))
+        self.ok()
+            .flat_map(|(p, m)| m.provides.task_source.iter().map(move |t| (p, t)))
     }
 
     pub fn agent(&self, id: &str) -> Option<(&Arc<Plugin>, &AgentDecl)> {
@@ -165,15 +208,21 @@ struct LinksFile {
 
 pub fn load_links(path: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
     match std::fs::read_to_string(path) {
-        Ok(text) => toml::from_str::<LinksFile>(&text).map(|f| f.links).map_err(|e| e.to_string()),
+        Ok(text) => toml::from_str::<LinksFile>(&text)
+            .map(|f| f.links)
+            .map_err(|e| e.to_string()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(BTreeMap::new()),
         Err(e) => Err(e.to_string()),
     }
 }
 
 pub fn save_links(path: &Path, links: &BTreeMap<String, PathBuf>) -> crate::error::Result<()> {
-    let text = toml::to_string(&LinksFile { links: links.clone() })
-        .map_err(|e| crate::error::Error::new(asterism_proto::rpc::ErrorKind::Internal, e.to_string()))?;
+    let text = toml::to_string(&LinksFile {
+        links: links.clone(),
+    })
+    .map_err(|e| {
+        crate::error::Error::new(asterism_proto::rpc::ErrorKind::Internal, e.to_string())
+    })?;
     write_atomic(path, &text)
 }
 
@@ -195,7 +244,10 @@ mod tests {
     fn sources(links: &[(&str, PathBuf)]) -> Sources {
         Sources {
             builtin_dir: PathBuf::from("/opt/asterism/bin"),
-            links: links.iter().map(|(n, p)| (n.to_string(), p.clone())).collect(),
+            links: links
+                .iter()
+                .map(|(n, p)| (n.to_string(), p.clone()))
+                .collect(),
             installed: BTreeMap::new(),
             disabled: std::collections::BTreeSet::new(),
         }
@@ -204,14 +256,27 @@ mod tests {
     #[test]
     fn installed_plugins_sit_between_linked_and_builtin() {
         let root = tempfile::tempdir().unwrap();
-        let installed = plugin_dir(root.path(), "installed", &forge_manifest("github", "github"));
+        let installed = plugin_dir(
+            root.path(),
+            "installed",
+            &forge_manifest("github", "github"),
+        );
         let linked = plugin_dir(root.path(), "linked", &forge_manifest("github", "github"));
         let mut s = sources(&[]);
         s.installed.insert("github".into(), installed.clone());
         let registry = Registry::discover(&s);
-        assert_eq!((registry.get("github").unwrap().origin, registry.get("github").unwrap().dir.clone()), (PluginOrigin::Installed, installed));
+        assert_eq!(
+            (
+                registry.get("github").unwrap().origin,
+                registry.get("github").unwrap().dir.clone()
+            ),
+            (PluginOrigin::Installed, installed)
+        );
         s.links.insert("github".into(), linked);
-        assert_eq!(Registry::discover(&s).get("github").unwrap().origin, PluginOrigin::Linked);
+        assert_eq!(
+            Registry::discover(&s).get("github").unwrap().origin,
+            PluginOrigin::Linked
+        );
     }
 
     #[test]
@@ -227,20 +292,41 @@ mod tests {
     #[test]
     fn missing_installed_dir_is_broken() {
         let mut s = sources(&[]);
-        s.installed.insert("linear".into(), PathBuf::from("/definitely/missing/linear/1.0.0"));
-        assert!(matches!(&Registry::discover(&s).get("linear").unwrap().status, Status::Broken(r) if r.contains("cannot read")));
+        s.installed.insert(
+            "linear".into(),
+            PathBuf::from("/definitely/missing/linear/1.0.0"),
+        );
+        assert!(
+            matches!(&Registry::discover(&s).get("linear").unwrap().status, Status::Broken(r) if r.contains("cannot read"))
+        );
     }
 
     #[test]
     fn builtins_are_discovered() {
         let registry = Registry::discover(&sources(&[]));
-        let names: Vec<_> = registry.plugins().iter().map(|p| (p.name.as_str(), p.is_ok())).collect();
-        assert_eq!(names, [("claude", true), ("github", true), ("linear", true)]);
+        let names: Vec<_> = registry
+            .plugins()
+            .iter()
+            .map(|p| (p.name.as_str(), p.is_ok()))
+            .collect();
+        assert_eq!(
+            names,
+            [("claude", true), ("github", true), ("linear", true)]
+        );
         let (plugin, forge) = registry.forge("github").unwrap();
-        assert_eq!((plugin.name.as_str(), forge.hosts.as_slice()), ("github", &["github.com".to_string()][..]));
+        assert_eq!(
+            (plugin.name.as_str(), forge.hosts.as_slice()),
+            ("github", &["github.com".to_string()][..])
+        );
         assert_eq!(registry.agent("claude").unwrap().1.binary, "claude");
-        assert_eq!(registry.task_source("github-issues").unwrap().0.name, "github");
-        assert_eq!(plugin.backend_command().unwrap(), ["/opt/asterism/bin/./asterism-plugin-github"]);
+        assert_eq!(
+            registry.task_source("github-issues").unwrap().0.name,
+            "github"
+        );
+        assert_eq!(
+            plugin.backend_command().unwrap(),
+            ["/opt/asterism/bin/./asterism-plugin-github"]
+        );
     }
 
     #[test]
@@ -249,7 +335,10 @@ mod tests {
         let dir = plugin_dir(root.path(), "gh-dev", &forge_manifest("github", "github"));
         let registry = Registry::discover(&sources(&[("github", dir.clone())]));
         let github = registry.get("github").unwrap();
-        assert_eq!((github.origin, github.dir.clone()), (PluginOrigin::Linked, dir));
+        assert_eq!(
+            (github.origin, github.dir.clone()),
+            (PluginOrigin::Linked, dir)
+        );
         assert_eq!(registry.plugins().len(), 3);
         assert_eq!(github.backend_command().unwrap(), ["python3", "x.py"]);
     }
@@ -260,16 +349,26 @@ mod tests {
         let dir = plugin_dir(root.path(), "other", &forge_manifest("other", "github"));
         let registry = Registry::discover(&sources(&[("other", dir)]));
         assert!(registry.get("other").unwrap().is_ok());
-        let Status::Broken(reason) = &registry.get("github").unwrap().status else { panic!("github should be broken") };
-        assert!(reason.contains("already provided by plugin other"), "{reason}");
+        let Status::Broken(reason) = &registry.get("github").unwrap().status else {
+            panic!("github should be broken")
+        };
+        assert!(
+            reason.contains("already provided by plugin other"),
+            "{reason}"
+        );
         assert_eq!(registry.forge("github").unwrap().0.name, "other");
     }
 
     #[test]
     fn missing_linked_dir_is_broken() {
-        let registry = Registry::discover(&sources(&[("ghost", PathBuf::from("/definitely/missing/plugin"))]));
+        let registry = Registry::discover(&sources(&[(
+            "ghost",
+            PathBuf::from("/definitely/missing/plugin"),
+        )]));
         let ghost = registry.get("ghost").unwrap();
-        let Status::Broken(reason) = &ghost.status else { panic!("ghost should be broken") };
+        let Status::Broken(reason) = &ghost.status else {
+            panic!("ghost should be broken")
+        };
         assert!(reason.contains("cannot read"), "{reason}");
         assert!(ghost.manifest.is_none() && ghost.capabilities().is_empty());
     }
@@ -279,7 +378,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let dir = plugin_dir(root.path(), "x", &forge_manifest("actual", "x-forge"));
         let registry = Registry::discover(&sources(&[("expected", dir)]));
-        assert!(matches!(&registry.get("expected").unwrap().status, Status::Broken(r) if r.contains("\"actual\"")));
+        assert!(
+            matches!(&registry.get("expected").unwrap().status, Status::Broken(r) if r.contains("\"actual\""))
+        );
     }
 
     #[test]

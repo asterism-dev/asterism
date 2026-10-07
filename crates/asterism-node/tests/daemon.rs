@@ -25,13 +25,18 @@ async fn hello_pid(stream: UnixStream) -> u64 {
     let mut line = String::new();
     BufReader::new(reader).read_line(&mut line).await.unwrap();
     let reply: serde_json::Value = serde_json::from_str(&line).unwrap();
-    reply["result"]["pid"].as_u64().unwrap_or_else(|| panic!("no pid in {line}"))
+    reply["result"]["pid"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("no pid in {line}"))
 }
 
 #[test]
 fn marked_path_is_extracted_from_noisy_shell_output() {
     let out = "Welcome!\n__ASTERISM_PATH__/opt/homebrew/bin:/usr/bin__ASTERISM_PATH__\nbye";
-    assert_eq!(extract_marked(out).as_deref(), Some("/opt/homebrew/bin:/usr/bin"));
+    assert_eq!(
+        extract_marked(out).as_deref(),
+        Some("/opt/homebrew/bin:/usr/bin")
+    );
     assert_eq!(extract_marked("no markers here"), None);
     assert_eq!(extract_marked("__ASTERISM_PATH____ASTERISM_PATH__"), None);
 }
@@ -57,19 +62,30 @@ fn login_shell_path_includes_system_dirs() {
 #[tokio::test]
 async fn spawns_the_daemon_once_and_reuses_it() {
     let home = tempfile::tempdir().unwrap();
-    let paths = Paths { home: home.path().join("h") };
+    let paths = Paths {
+        home: home.path().join("h"),
+    };
     let _stop = StopOnDrop(paths.clone());
     let first = hello_pid(connect_or_spawn(&paths, &daemon_bin(), None).await.unwrap()).await;
     assert!(paths.socket().exists());
     assert!(paths.log().exists());
 
     let second = hello_pid(connect_or_spawn(&paths, &daemon_bin(), None).await.unwrap()).await;
-    assert_eq!(first, second, "second connect should reuse the running daemon");
+    assert_eq!(
+        first, second,
+        "second connect should reuse the running daemon"
+    );
 }
 
 #[tokio::test]
 async fn missing_daemon_binary_is_an_error() {
     let home = tempfile::tempdir().unwrap();
-    let paths = Paths { home: home.path().join("h") };
-    assert!(connect_or_spawn(&paths, std::path::Path::new("/nonexistent/asterismd"), None).await.is_err());
+    let paths = Paths {
+        home: home.path().join("h"),
+    };
+    assert!(
+        connect_or_spawn(&paths, std::path::Path::new("/nonexistent/asterismd"), None)
+            .await
+            .is_err()
+    );
 }
