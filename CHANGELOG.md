@@ -1,3 +1,9 @@
+## v0.8.0 (2026-10-07)
+
+### Feat
+
+- **desktop**: open terminal URLs and files on cmd/ctrl-click (#10)
+
 ## v0.7.0 (2026-10-06)
 
 ### Feat
