@@ -1001,8 +1001,13 @@ impl Daemon {
             }
         }
         if let Some(branch) = explicit {
-            if worktree_root.join(branch_dir(branch)).exists() {
-                return Err(Error::new(ErrorKind::BranchExists, format!("worktree directory `{}` already exists", branch_dir(branch))));
+            let target = worktree_root.join(branch);
+            if target.exists() {
+                return Err(Error::new(ErrorKind::BranchExists, format!("worktree directory `{}` already exists", target.display())));
+            }
+            // Older tasks used flat directories, so a branch like `42-fix/x` could land inside one.
+            if let Some(inside) = target.ancestors().skip(1).take_while(|a| *a != worktree_root).find(|a| a.join(".git").exists()) {
+                return Err(Error::new(ErrorKind::BranchExists, format!("branch `{branch}` would be placed inside the worktree {}", inside.display())));
             }
         }
         let prepared = checkout.map(|b| self.prepare_checkout(&repo, b)).transpose()?;
@@ -1017,7 +1022,7 @@ impl Daemon {
         let title = if derived_title { issue_name.clone().unwrap_or_default() } else { params.title.clone() };
         let id = self.store().insert_task(project.id, &title, params.prompt.as_deref(), &base)?;
         let (slug, branch) = match explicit {
-            Some(b) => (branch_dir(b).to_string(), b.to_string()),
+            Some(b) => (b.to_string(), b.to_string()),
             None => match (&params.issue, issue_name) {
                 (Some(_), Some(name)) => {
                     let name = if name.is_empty() { id.to_string() } else { name };
@@ -1317,6 +1322,7 @@ impl Daemon {
                 warnings.push(e.message);
             }
         }
+        self.tidy_worktree_parents(task.project_id, &repo, worktree);
         if delete_branch && git::branch_exists(&repo, &task.branch) {
             if let Err(e) = git::delete_branch(&repo, &task.branch) {
                 warnings.push(e.message);
@@ -1373,7 +1379,17 @@ impl Daemon {
         if worktree.is_main || worktree.task_id.is_some() {
             return Err(Error::new(ErrorKind::InvalidParams, format!("{path} is the main checkout or belongs to a task")));
         }
-        git::remove_worktree(&repo, Path::new(&worktree.path), true)
+        git::remove_worktree(&repo, Path::new(&worktree.path), true)?;
+        self.tidy_worktree_parents(project_id, &repo, Path::new(&worktree.path));
+        Ok(())
+    }
+
+    fn tidy_worktree_parents(&self, project_id: i64, repo: &Path, worktree: &Path) {
+        if let Ok(Some(project)) = self.store().project(project_id) {
+            if let Ok(root) = self.worktree_root(repo, &project) {
+                remove_empty_parents(worktree, &root);
+            }
+        }
     }
 
     pub fn prune_worktrees(&self, project_id: i64) -> Result<()> {
@@ -1807,8 +1823,13 @@ fn slug_text(text: &str) -> String {
     slug.trim_end_matches('-').to_string()
 }
 
-fn branch_dir(branch: &str) -> &str {
-    branch.rsplit('/').next().unwrap_or(branch)
+/// Removes the directories `branch/with/slashes` left between a removed worktree and `root`, while they are empty.
+fn remove_empty_parents(worktree: &Path, root: &Path) {
+    for dir in worktree.ancestors().skip(1).take_while(|d| *d != root && d.starts_with(root)) {
+        if std::fs::remove_dir(dir).is_err() {
+            break;
+        }
+    }
 }
 
 fn checked_out_elsewhere(branch: &str, e: Error) -> Error {

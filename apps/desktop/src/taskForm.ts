@@ -28,10 +28,6 @@ export function defaultBranch(slug: string, suffix: string): string {
   return `asterism/${slug}-${suffix}`;
 }
 
-export function worktreeDir(branch: string): string {
-  return branch.split('/').pop() ?? branch;
-}
-
 export function filterBranches(branches: string[], query: string): string[] {
   const q = query.trim().toLowerCase();
   return q ? branches.filter((b) => b.toLowerCase().includes(q)) : branches;

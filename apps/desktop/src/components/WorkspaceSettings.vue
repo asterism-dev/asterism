@@ -2,7 +2,6 @@
 import { computed } from 'vue';
 import { FolderGit2 } from '@lucide/vue';
 import { baseChoice } from '../baseBranch';
-import { worktreeDir } from '../taskForm';
 import type { ProjectBranches } from '../types';
 import BranchPicker from './BranchPicker.vue';
 
@@ -18,7 +17,7 @@ const choice = computed(() => baseChoice(props.branches));
 const local = computed(() => props.branches?.local ?? []);
 const remote = computed(() => props.branches?.remote ?? []);
 const path = computed(() => {
-  const dir = worktreeDir(mode.value === 'new' ? branch.value.trim() : checkout.value);
+  const dir = mode.value === 'new' ? branch.value.trim() : checkout.value;
   const root = props.branches?.worktree_root;
   return root ? `${root}/${dir}` : dir;
 });

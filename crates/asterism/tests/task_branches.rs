@@ -49,7 +49,7 @@ async fn explicit_branches_name_the_branch_and_worktree() {
     let created = env.daemon.create_task(wanted.clone()).await.unwrap();
     assert_eq!(created.task.title, "fix-login");
     assert_eq!(created.task.branch, "asterism/fix-login-x8d4t");
-    assert!(created.task.worktree_path.ends_with("/fix-login-x8d4t"), "{}", created.task.worktree_path);
+    assert!(created.task.worktree_path.ends_with("/asterism/fix-login-x8d4t"), "{}", created.task.worktree_path);
     assert_eq!(created.warning, None);
     run_git(env.origin.path(), &["rev-parse", "--verify", "refs/heads/asterism/fix-login-x8d4t"]);
     let again = env.daemon.create_task(wanted).await.unwrap_err();
@@ -82,7 +82,7 @@ async fn checkout_tracks_a_branch_that_only_exists_on_origin() {
     let env = setup();
     let created = env.daemon.create_task(TaskCreateParams { checkout: Some("feature/pr".into()), ..params(&env, "add-search") }).await.unwrap();
     assert_eq!(created.task.branch, "feature/pr");
-    assert!(created.task.worktree_path.ends_with("/pr"), "{}", created.task.worktree_path);
+    assert!(created.task.worktree_path.ends_with("/feature/pr"), "{}", created.task.worktree_path);
     let wt = std::path::Path::new(&created.task.worktree_path);
     assert_eq!(run_git(wt, &["rev-parse", "--abbrev-ref", "@{upstream}"]).trim(), "origin/feature/pr");
 }
@@ -117,7 +117,7 @@ async fn branches_report_the_worktree_root() {
     assert_eq!((branches.local, branches.remote), (vec!["main".to_string()], vec!["origin/feature/pr".to_string(), "origin/main".to_string()]));
     let root = branches.worktree_root.unwrap();
     let created = env.daemon.create_task(TaskCreateParams { branch: Some("asterism/a-11111".into()), ..params(&env, "a") }).await.unwrap();
-    assert_eq!(created.task.worktree_path, format!("{root}/a-11111"));
+    assert_eq!(created.task.worktree_path, format!("{root}/asterism/a-11111"));
 }
 
 #[tokio::test]
@@ -148,4 +148,29 @@ async fn checkout_warns_when_the_local_branch_differs_from_origin() {
     let warning = created.warning.unwrap();
     assert!(warning.contains("differs from origin/feature/pr"), "{warning}");
     assert!(warning.contains("1 behind"), "{warning}");
+}
+
+#[tokio::test]
+async fn worktrees_mirror_the_branch_path_and_deleting_tidies_parents() {
+    let env = setup();
+    run_git(env.repo.path(), &["branch", "other/pr"]);
+    let first = env.daemon.create_task(TaskCreateParams { checkout: Some("feature/pr".into()), ..params(&env, "a") }).await.unwrap();
+    let second = env.daemon.create_task(TaskCreateParams { checkout: Some("other/pr".into()), ..params(&env, "b") }).await.unwrap();
+    assert!(first.task.worktree_path.ends_with("/feature/pr"), "{}", first.task.worktree_path);
+    assert!(second.task.worktree_path.ends_with("/other/pr"), "{}", second.task.worktree_path);
+    let parent = std::path::Path::new(&second.task.worktree_path).parent().unwrap().to_path_buf();
+    env.daemon.delete_task(second.task.id, false).unwrap();
+    assert!(!parent.exists(), "empty {} should be removed", parent.display());
+    assert!(std::path::Path::new(&first.task.worktree_path).exists());
+}
+
+#[tokio::test]
+async fn branches_nested_inside_an_old_flat_worktree_are_rejected() {
+    let env = setup();
+    let flat = env.daemon.create_task(params(&env, "old")).await.unwrap();
+    let dir = std::path::Path::new(&flat.task.worktree_path).file_name().unwrap().to_str().unwrap().to_string();
+    let err = env.daemon.create_task(TaskCreateParams { branch: Some(format!("{dir}/x")), ..params(&env, "t") }).await.unwrap_err();
+    assert_eq!(err.kind, ErrorKind::BranchExists);
+    assert!(err.message.contains("inside the worktree"), "{}", err.message);
+    assert_eq!(task_count(&env), 1);
 }

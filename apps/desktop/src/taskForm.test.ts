@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createRequest, filterBranches, defaultBranch, finalSlug, issueStateClass, liveSlug, prDisabledReason,
-  randomSlug, randomSuffix, worktreeDir, type TaskForm,
+  randomSlug, randomSuffix, type TaskForm,
 } from './taskForm';
 import type { PrHit } from './types';
 
@@ -28,10 +28,8 @@ describe('taskForm', () => {
     expect(randomSuffix(() => 0.999)).toMatch(/^[a-z0-9]{5}$/);
   });
 
-  it('derives branch and worktree directory', () => {
+  it('derives the default branch name', () => {
     expect(defaultBranch('fix-login', 'x8d4t')).toBe('asterism/fix-login-x8d4t');
-    expect(worktreeDir('asterism/fix-login-x8d4t')).toBe('fix-login-x8d4t');
-    expect(worktreeDir('main')).toBe('main');
   });
 
   it('filters branches by a case-insensitive substring', () => {
