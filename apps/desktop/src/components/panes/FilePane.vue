@@ -53,13 +53,15 @@ async function load() {
   }
 }
 
+// dockview detaches hidden tabs before announcing it, so the position is recorded while scrolling instead of on hide.
+function rememberScroll() {
+  if (scroller.value && scroller.value.clientHeight > 0) savedScroll = scroller.value.scrollTop;
+}
+
 function setPolling(visible: boolean) {
   clearInterval(timer);
   timer = undefined;
-  if (!visible) {
-    savedScroll = scroller.value?.scrollTop ?? savedScroll;
-    return;
-  }
+  if (!visible) return;
   void load();
   void nextTick(() => {
     if (jumpPending) scrollToLine();
@@ -82,7 +84,7 @@ onUnmounted(() => {
   <div class="file-pane">
     <header class="path" :title="file.path">{{ file.path }}</header>
     <p v-if="error" class="error">{{ error }}</p>
-    <div v-else ref="scroller" class="scroller">
+    <div v-else ref="scroller" class="scroller" @scroll="rememberScroll">
       <div class="body">
         <div class="gutter"><span v-for="n in lineCount" :key="n">{{ n }}</span></div>
         <div class="code-wrap">
