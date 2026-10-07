@@ -1,6 +1,8 @@
 use std::io::Read;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use asterism_plugin::protocol::BranchPr;
@@ -401,8 +403,7 @@ pub fn get_issue(gh: &Path, project: &Path, key: &str) -> Result<Issue, RpcError
     })
 }
 
-// ponytail: only the 200 most recent PRs are searched; query per branch if old task branches go missing.
-const PR_LIMIT: &str = "200";
+const PR_WORKERS: usize = 5;
 const PR_FIELDS: &str = "headRefName,number,url,title,state,isDraft,reviewDecision,statusCheckRollup,updatedAt,isCrossRepository";
 const FAILED_RUNS: &[&str] = &[
     "FAILURE",
@@ -499,11 +500,48 @@ pub fn pull_requests(
     branches: &[String],
 ) -> Result<Vec<BranchPr>, RpcError> {
     let repo = origin_repo(project)?;
-    let args = [
-        "pr", "list", "-R", &repo, "--state", "all", "--limit", PR_LIMIT, "--json", PR_FIELDS,
-    ];
-    let items: Vec<Value> = parse(&run_with_timeout(gh, &args, ISSUE_TIMEOUT, Some(project))?)?;
-    Ok(pick_prs(&items, branches))
+    let deadline = Instant::now() + ISSUE_TIMEOUT;
+    let next = AtomicUsize::new(0);
+    let items = Mutex::new(Vec::new());
+    let error = Mutex::new(None);
+    std::thread::scope(|scope| {
+        for _ in 0..PR_WORKERS.min(branches.len()) {
+            scope.spawn(|| {
+                while let Some(branch) = branches.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    let args = [
+                        "pr", "list", "-R", &repo, "--head", branch, "--state", "all", "--json",
+                        PR_FIELDS,
+                    ];
+                    let found = run_with_timeout(
+                        gh,
+                        &args,
+                        deadline.saturating_duration_since(Instant::now()),
+                        Some(project),
+                    )
+                    .and_then(|out| parse::<Vec<Value>>(&out));
+                    match found {
+                        Ok(found) => items
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .extend(found),
+                        Err(e) => {
+                            error
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .get_or_insert(e);
+                        }
+                    }
+                }
+            });
+        }
+    });
+    if let Some(e) = error.into_inner().unwrap_or_else(|e| e.into_inner()) {
+        return Err(e);
+    }
+    Ok(pick_prs(
+        &items.into_inner().unwrap_or_else(|e| e.into_inner()),
+        branches,
+    ))
 }
 
 const PR_SEARCH_LIMIT: &str = "50";
@@ -1003,23 +1041,65 @@ echo '[{{"number":12,"title":"Add search","url":"https://github.com/acme/api/pul
     }
 
     #[test]
-    fn pull_requests_are_listed_once_per_repository() {
+    fn pull_requests_are_queried_per_branch_in_parallel() {
         let dir = tempfile::tempdir().unwrap();
         let log = dir.path().join("gh.log");
+        // Each call takes 1 s and answers with a PR for the branch after --head; "none" has no PR.
         let script = format!(
-            "#!/bin/sh\necho \"$@\" >> \"{}\"\necho '[{{\"headRefName\":\"a\",\"number\":9,\"url\":\"u\",\"title\":\"t\",\"state\":\"OPEN\",\"isDraft\":false,\"reviewDecision\":\"\",\"statusCheckRollup\":[],\"updatedAt\":\"2026-10-01T00:00:00Z\"}}]'\n",
-            log.display()
+            r#"#!/bin/sh
+echo "$@" >> "{log}"
+while [ "$1" != "--head" ]; do shift; done
+sleep 1
+[ "$2" = none ] && {{ echo '[]'; exit 0; }}
+echo "[{{\"headRefName\":\"$2\",\"number\":9,\"url\":\"u\",\"title\":\"t\",\"state\":\"OPEN\",\"isDraft\":false,\"reviewDecision\":\"\",\"statusCheckRollup\":[],\"updatedAt\":\"2026-10-01T00:00:00Z\"}}]"
+"#,
+            log = log.display()
         );
         let gh = dir.path().join("gh");
         std::fs::write(&gh, script).unwrap();
         std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
         let repo = repo_with_origin(dir.path(), Some("https://github.com/acme/api.git"));
-        let prs = pull_requests(&gh, &repo, &["a".into()]).unwrap();
+        let branches: Vec<String> = ["a", "b", "c", "d", "none"].map(String::from).into();
+        let started = Instant::now();
+        let prs = pull_requests(&gh, &repo, &branches).unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "took {:?}",
+            started.elapsed()
+        );
+        let found: Vec<_> = prs
+            .iter()
+            .map(|b| (b.branch.as_str(), b.pr.number, b.pr.checks.state))
+            .collect();
         assert_eq!(
-            (prs[0].pr.number, prs[0].pr.review, prs[0].pr.checks.state),
-            (9, ReviewState::None, ChecksState::None)
+            found,
+            [
+                ("a", 9, ChecksState::None),
+                ("b", 9, ChecksState::None),
+                ("c", 9, ChecksState::None),
+                ("d", 9, ChecksState::None)
+            ]
         );
         let logged = std::fs::read_to_string(log).unwrap();
-        assert!(logged.contains("pr list -R acme/api --state all --limit 200 --json headRefName,number,url,title,state,isDraft,reviewDecision,statusCheckRollup,updatedAt,isCrossRepository"), "{logged}");
+        assert_eq!(logged.lines().count(), 5);
+        assert!(logged.contains("pr list -R acme/api --head a --state all --json headRefName,number,url,title,state,isDraft,reviewDecision,statusCheckRollup,updatedAt,isCrossRepository"), "{logged}");
+    }
+
+    #[test]
+    fn a_failing_branch_query_fails_the_poll() {
+        let dir = tempfile::tempdir().unwrap();
+        let gh = dir.path().join("gh");
+        std::fs::write(
+            &gh,
+            "#!/bin/sh
+echo 'API rate limit exceeded' >&2
+exit 1
+",
+        )
+        .unwrap();
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let repo = repo_with_origin(dir.path(), Some("https://github.com/acme/api.git"));
+        let err = pull_requests(&gh, &repo, &["a".into()]).unwrap_err();
+        assert!(err.message.contains("rate limit"), "{}", err.message);
     }
 }
