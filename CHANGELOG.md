@@ -1,3 +1,9 @@
+## v0.8.1 (2026-10-07)
+
+### Fix
+
+- **status**: keep claude working during stop hooks and flag questions (#11)
+
 ## v0.8.0 (2026-10-07)
 
 ### Feat
