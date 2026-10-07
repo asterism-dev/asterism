@@ -1003,7 +1003,9 @@ impl Daemon {
                 return Err(Error::new(ErrorKind::BranchExists, format!("worktree directory `{}` already exists", branch_dir(branch))));
             }
         }
-        let local_checkout = checkout.map(|b| self.prepare_checkout(&repo, b)).transpose()?;
+        let prepared = checkout.map(|b| self.prepare_checkout(&repo, b)).transpose()?;
+        let local_checkout = prepared.as_ref().map(|p| p.0);
+        let diverged = prepared.and_then(|p| p.1);
         let issue_branch = params.issue.as_ref().and_then(|i| i.branch.as_deref()).filter(|b| !b.is_empty());
         if let Some(branch) = issue_branch {
             git::check_branch_name(&repo, branch)?;
@@ -1042,7 +1044,9 @@ impl Daemon {
             return Err(e);
         }
         self.store().set_task_location(id, &slug, &branch, &worktree.to_string_lossy())?;
-        let warning = if params.push && new_branch.is_some() && git::remote_url(&repo, "origin").is_some() {
+        let warning = if diverged.is_some() {
+            diverged
+        } else if params.push && new_branch.is_some() && git::remote_url(&repo, "origin").is_some() {
             git::push_upstream(&worktree, "origin", &branch, &self.options.git_env)
                 .err()
                 .map(|e| format!("Couldn't push `{branch}` to origin: {}", e.message))
@@ -1095,18 +1099,23 @@ impl Daemon {
         Ok(node_settings::worktrees_dir(&self.paths)?.join(owner).join(repo_name))
     }
 
-    /// Fetches `branch` and reports whether it exists locally (true) or only on origin (false).
-    fn prepare_checkout(&self, repo: &Path, branch: &str) -> Result<bool> {
+    /// Fetches `branch`; returns whether it exists locally (true) or only on origin (false), plus a warning when the local branch differs from a freshly fetched origin one.
+    fn prepare_checkout(&self, repo: &Path, branch: &str) -> Result<(bool, Option<String>)> {
         let has_origin = git::remote_url(repo, "origin").is_some();
         let fetched = if has_origin { git::fetch_branch(repo, "origin", branch, &self.options.git_env) } else { Ok(()) };
         if git::branch_exists(repo, branch) {
-            return Ok(true);
+            let remote = format!("origin/{branch}");
+            let warning = (fetched.is_ok() && has_origin && git::remote_branch_exists(repo, "origin", branch))
+                .then(|| (git::unmerged_commits(repo, branch, &remote), git::unmerged_commits(repo, &remote, branch)))
+                .filter(|(behind, ahead)| behind + ahead > 0)
+                .map(|(behind, ahead)| format!("local branch `{branch}` differs from {remote} ({behind} behind, {ahead} ahead)"));
+            return Ok((true, warning));
         }
         let not_found = || Error::new(ErrorKind::NotFound, format!("branch `{branch}` not found locally or on origin"));
         match fetched {
             Err(e) if e.message.contains("couldn't find remote ref") => Err(not_found()),
             Err(e) => Err(e),
-            Ok(()) if has_origin && git::remote_branch_exists(repo, "origin", branch) => Ok(false),
+            Ok(()) if has_origin && git::remote_branch_exists(repo, "origin", branch) => Ok((false, None)),
             Ok(()) => Err(not_found()),
         }
     }

@@ -129,3 +129,21 @@ async fn checkout_rejects_a_branch_deleted_on_origin_despite_a_stale_tracking_re
     assert!(err.message.contains("not found locally or on origin"), "{}", err.message);
     assert_eq!(task_count(&env), 0);
 }
+
+#[tokio::test]
+async fn checkout_warns_when_the_local_branch_differs_from_origin() {
+    let env = setup();
+    run_git(env.repo.path(), &["branch", "feature/pr", "main"]);
+    let current = env.daemon.create_task(TaskCreateParams { checkout: Some("feature/pr".into()), ..params(&env, "a") }).await.unwrap();
+    assert_eq!(current.warning, None);
+    env.daemon.delete_task(current.task.id, false).unwrap();
+
+    let other = tempfile::tempdir().unwrap();
+    run_git(other.path(), &["clone", "-q", &env.origin.path().display().to_string(), "."]);
+    run_git(other.path(), &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "more"]);
+    run_git(other.path(), &["push", "-q", "origin", "HEAD:feature/pr"]);
+    let created = env.daemon.create_task(TaskCreateParams { checkout: Some("feature/pr".into()), ..params(&env, "b") }).await.unwrap();
+    let warning = created.warning.unwrap();
+    assert!(warning.contains("differs from origin/feature/pr"), "{warning}");
+    assert!(warning.contains("1 behind"), "{warning}");
+}
