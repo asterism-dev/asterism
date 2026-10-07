@@ -721,9 +721,9 @@ impl Daemon {
             branches: git::branches(&repo)?,
             default: default_base(&repo, &project),
             automatic: automatic_base(&repo),
-            configured: project.default_base,
+            configured: project.default_base.clone(),
             fetch_error,
-            worktree_root: None,
+            worktree_root: self.worktree_root(&repo, &project).ok().map(|p| p.display().to_string()),
         })
     }
 
@@ -970,6 +970,11 @@ impl Daemon {
         }
         let project = self.store().project(params.project_id)?.ok_or_else(|| not_found("project", params.project_id))?;
         let repo = PathBuf::from(&project.path);
+        let checkout = params.checkout.as_deref().map(str::trim).filter(|b| !b.is_empty());
+        let new_branch = params.branch.as_deref().map(str::trim).filter(|b| !b.is_empty());
+        if checkout.is_some() && (new_branch.is_some() || params.base.is_some()) {
+            return Err(Error::new(ErrorKind::InvalidParams, "checkout cannot be combined with base or branch"));
+        }
         let base = match params.base.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
             Some(base) if git::resolves(&repo, base) => base.to_string(),
             Some(base) => {
@@ -983,6 +988,21 @@ impl Daemon {
         };
         let base = git::pin_base(&repo, &base)?;
         let worktree_root = self.worktree_root(&repo, &project)?;
+        let explicit = checkout.or(new_branch);
+        if let Some(branch) = explicit {
+            git::check_branch_name(&repo, branch)?;
+        }
+        if let Some(branch) = new_branch {
+            if git::branch_exists(&repo, branch) {
+                return Err(Error::new(ErrorKind::BranchExists, format!("branch `{branch}` already exists")));
+            }
+        }
+        if let Some(branch) = explicit {
+            if worktree_root.join(branch_dir(branch)).exists() {
+                return Err(Error::new(ErrorKind::BranchExists, format!("worktree directory `{}` already exists", branch_dir(branch))));
+            }
+        }
+        let local_checkout = checkout.map(|b| self.prepare_checkout(&repo, b)).transpose()?;
         let issue_branch = params.issue.as_ref().and_then(|i| i.branch.as_deref()).filter(|b| !b.is_empty());
         if let Some(branch) = issue_branch {
             git::check_branch_name(&repo, branch)?;
@@ -991,28 +1011,43 @@ impl Daemon {
         let derived_title = params.issue.is_some() && params.title.trim().is_empty();
         let title = if derived_title { issue_name.clone().unwrap_or_default() } else { params.title.clone() };
         let id = self.store().insert_task(project.id, &title, params.prompt.as_deref(), &base)?;
-        let (slug, branch) = match (&params.issue, issue_name) {
-            (Some(_), Some(name)) => {
-                let name = if name.is_empty() { id.to_string() } else { name };
-                let branch = issue_branch.map_or_else(|| format!("asterism/{name}"), String::from);
-                if git::branch_exists(&repo, &branch) || worktree_root.join(&name).exists() {
-                    (format!("{name}-{id}"), format!("{branch}-{id}"))
-                } else {
-                    (name, branch)
+        let (slug, branch) = match explicit {
+            Some(b) => (branch_dir(b).to_string(), b.to_string()),
+            None => match (&params.issue, issue_name) {
+                (Some(_), Some(name)) => {
+                    let name = if name.is_empty() { id.to_string() } else { name };
+                    let branch = issue_branch.map_or_else(|| format!("asterism/{name}"), String::from);
+                    if git::branch_exists(&repo, &branch) || worktree_root.join(&name).exists() {
+                        (format!("{name}-{id}"), format!("{branch}-{id}"))
+                    } else {
+                        (name, branch)
+                    }
                 }
-            }
-            _ => {
-                let slug = slugify(id, &params.title);
-                let branch = format!("asterism/{slug}");
-                (slug, branch)
-            }
+                _ => {
+                    let slug = slugify(id, &params.title);
+                    let branch = format!("asterism/{slug}");
+                    (slug, branch)
+                }
+            },
         };
         let worktree = worktree_root.join(&slug);
-        if let Err(e) = git::add_worktree(&repo, &branch, &worktree, &base) {
+        let added = match (checkout, local_checkout) {
+            (Some(b), Some(true)) => git::add_existing_worktree(&repo, &worktree, b).map_err(|e| checked_out_elsewhere(b, e)),
+            (Some(b), _) => git::add_tracking_worktree(&repo, &worktree, b, "origin").map_err(|e| checked_out_elsewhere(b, e)),
+            (None, _) => git::add_worktree(&repo, &branch, &worktree, &base),
+        };
+        if let Err(e) = added {
             self.store().delete_task(id)?;
             return Err(e);
         }
         self.store().set_task_location(id, &slug, &branch, &worktree.to_string_lossy())?;
+        let warning = if params.push && new_branch.is_some() && git::remote_url(&repo, "origin").is_some() {
+            git::push_upstream(&worktree, "origin", &branch, &self.options.git_env)
+                .err()
+                .map(|e| format!("Couldn't push `{branch}` to origin: {}", e.message))
+        } else {
+            None
+        };
         if derived_title && slug != title {
             self.store().set_task_title(id, &slug)?;
         }
@@ -1030,7 +1065,7 @@ impl Daemon {
             }).await?),
             None => None,
         };
-        Ok(TaskCreateResult { task, session, warning: None })
+        Ok(TaskCreateResult { task, session, warning })
     }
 
     pub fn task(&self, id: i64) -> Result<Task> {
@@ -1057,6 +1092,25 @@ impl Daemon {
         let origin = git::remote_url(repo, "origin");
         let (owner, repo_name) = node_settings::layout_owner_repo(origin.as_deref(), &project.name);
         Ok(node_settings::worktrees_dir(&self.paths)?.join(owner).join(repo_name))
+    }
+
+    /// Fetches `branch` and reports whether it exists locally (true) or only on origin (false).
+    fn prepare_checkout(&self, repo: &Path, branch: &str) -> Result<bool> {
+        let has_origin = git::remote_url(repo, "origin").is_some();
+        let fetched = if has_origin { git::fetch_branch(repo, "origin", branch, &self.options.git_env) } else { Ok(()) };
+        if git::branch_exists(repo, branch) {
+            return Ok(true);
+        }
+        if let Err(e) = fetched {
+            if !e.message.contains("couldn't find remote ref") {
+                return Err(e);
+            }
+        }
+        if has_origin && git::remote_branch_exists(repo, "origin", branch) {
+            Ok(false)
+        } else {
+            Err(Error::new(ErrorKind::NotFound, format!("branch `{branch}` not found locally or on origin")))
+        }
     }
 
     pub async fn search_pull_requests(&self, p: &PrSearchParams) -> Result<PrSearchResult> {
@@ -1742,6 +1796,18 @@ fn slug_text(text: &str) -> String {
         }
     }
     slug.trim_end_matches('-').to_string()
+}
+
+fn branch_dir(branch: &str) -> &str {
+    branch.rsplit('/').next().unwrap_or(branch)
+}
+
+fn checked_out_elsewhere(branch: &str, e: Error) -> Error {
+    if e.message.contains("already checked out") || e.message.contains("already used by worktree") {
+        Error::new(ErrorKind::BranchExists, format!("branch `{branch}` is already checked out in another worktree"))
+    } else {
+        e
+    }
 }
 
 pub fn slugify(id: i64, title: &str) -> String {
