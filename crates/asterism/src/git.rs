@@ -123,6 +123,16 @@ pub fn add_existing_worktree(repo: &Path, path: &Path, branch: &str) -> Result<(
     git(repo, &["worktree", "add", "-q", &path.to_string_lossy(), branch]).map(|_| ())
 }
 
+pub fn remote_branch_exists(repo: &Path, remote: &str, branch: &str) -> bool {
+    git(repo, &["rev-parse", "--verify", "--quiet", &format!("refs/remotes/{remote}/{branch}")]).is_ok()
+}
+
+/// Creates local `branch` tracking `<remote>/<branch>` and checks it out at `path`.
+pub fn add_tracking_worktree(repo: &Path, path: &Path, branch: &str, remote: &str) -> Result<()> {
+    let upstream = format!("{remote}/{branch}");
+    git(repo, &["worktree", "add", "-q", "--track", "-b", branch, &path.to_string_lossy(), &upstream]).map(|_| ())
+}
+
 pub fn diff(worktree: &Path, base: &str) -> Result<String> {
     let merge_base = git(worktree, &["merge-base", base, "HEAD"])?;
     let mut patch = git(worktree, &["diff", "--no-color", "--no-ext-diff", merge_base.trim()])?;
@@ -204,6 +214,15 @@ pub fn clone_url(url: &str, target: &Path, extra: &GitEnv) -> Result<()> {
 
 pub fn fetch(repo: &Path, remote: &str, extra: &GitEnv) -> Result<()> {
     run_with_env(Some(repo), &["fetch", "-q", "--prune", remote], &clone_env(extra)).map(|_| ())
+}
+
+pub fn fetch_branch(repo: &Path, remote: &str, branch: &str, extra: &GitEnv) -> Result<()> {
+    run_with_env(Some(repo), &["fetch", "-q", remote, branch], &clone_env(extra)).map(|_| ())
+}
+
+// ponytail: bounded only by clone_env's low-speed and SSH connect timeouts; add a hard deadline if pushes hang.
+pub fn push_upstream(worktree: &Path, remote: &str, branch: &str, extra: &GitEnv) -> Result<()> {
+    run_with_env(Some(worktree), &["push", "-q", "-u", remote, branch], &clone_env(extra)).map(|_| ())
 }
 
 pub fn init_with_readme(dir: &Path, name: &str, extra: &GitEnv) -> Result<()> {

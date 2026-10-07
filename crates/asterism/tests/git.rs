@@ -63,3 +63,42 @@ fn resolves_rejects_options_and_missing_refs() {
     assert!(!git::resolves(repo.path(), "nope"));
     assert!(!git::resolves(repo.path(), "--all"));
 }
+
+/// A repo whose bare origin has `main` and `feature/pr`; the local remote-tracking ref of `feature/pr` is removed.
+fn repo_with_origin() -> (tempfile::TempDir, tempfile::TempDir) {
+    let origin = tempfile::tempdir().unwrap();
+    run_git(origin.path(), &["init", "-q", "--bare", "-b", "main"]);
+    let repo = tempfile::tempdir().unwrap();
+    init_repo(repo.path());
+    run_git(repo.path(), &["remote", "add", "origin", &origin.path().display().to_string()]);
+    run_git(repo.path(), &["push", "-q", "origin", "main", "main:feature/pr"]);
+    run_git(repo.path(), &["update-ref", "-d", "refs/remotes/origin/feature/pr"]);
+    (origin, repo)
+}
+
+#[test]
+fn origin_only_branches_check_out_with_upstream() {
+    let (_origin, repo) = repo_with_origin();
+    assert!(!git::remote_branch_exists(repo.path(), "origin", "feature/pr"));
+    git::fetch_branch(repo.path(), "origin", "feature/pr", &[]).unwrap();
+    assert!(git::remote_branch_exists(repo.path(), "origin", "feature/pr"));
+    assert!(!git::branch_exists(repo.path(), "feature/pr"));
+    let parent = tempfile::tempdir().unwrap();
+    let wt = parent.path().join("pr");
+    git::add_tracking_worktree(repo.path(), &wt, "feature/pr", "origin").unwrap();
+    assert_eq!(run_git(&wt, &["rev-parse", "--abbrev-ref", "@{upstream}"]).trim(), "origin/feature/pr");
+    assert!(git::fetch_branch(repo.path(), "origin", "missing", &[]).unwrap_err().message.contains("couldn't find remote ref"));
+}
+
+#[test]
+fn push_upstream_publishes_and_tracks_the_branch() {
+    let (origin, repo) = repo_with_origin();
+    let parent = tempfile::tempdir().unwrap();
+    let wt = parent.path().join("x");
+    git::add_worktree(repo.path(), "asterism/x", &wt, "main").unwrap();
+    git::push_upstream(&wt, "origin", "asterism/x", &[]).unwrap();
+    run_git(origin.path(), &["rev-parse", "--verify", "refs/heads/asterism/x"]);
+    assert_eq!(run_git(&wt, &["rev-parse", "--abbrev-ref", "@{upstream}"]).trim(), "origin/asterism/x");
+    run_git(repo.path(), &["remote", "set-url", "origin", "/nonexistent/origin.git"]);
+    assert!(git::push_upstream(&wt, "origin", "asterism/x", &[]).is_err());
+}
