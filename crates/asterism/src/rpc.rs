@@ -291,6 +291,7 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
         method::TASK_SOURCE_GET => to_value(daemon.task_source_get(&params(raw)?).await?),
         method::PR_LIST => to_value(daemon.pr_list(params::<PrListParams>(raw)?.project_id)),
         method::PR_REFRESH => to_value(daemon.refresh_prs(params::<ProjectIdParams>(raw)?.project_id).await?),
+        method::PR_SEARCH => to_value(daemon.search_pull_requests(&params(raw)?).await?),
         method::PROJECT_CLONE => {
             let p = params::<ProjectCloneParams>(raw)?;
             to_value(daemon.clone_project(&p.source, p.forge.as_deref()).await?)

@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
-use asterism_plugin::protocol::{self, BranchPr, PullRequestsParams, CloneParams, CreateRemoteParams, GetIssueParams, LaunchMode, ListReposParams, SearchIssuesParams, TaskSourceCheck, TaskSourceCheckParams, PrepareParams, PrepareResult, ResolveOwnerParams, ResolveOwnerResult};
+use asterism_plugin::protocol::{self, BranchPr, PullRequestsParams, CloneParams, CreateRemoteParams, GetIssueParams, LaunchMode, ListReposParams, SearchIssuesParams, SearchPullRequestsParams, TaskSourceCheck, TaskSourceCheckParams, PrepareParams, PrepareResult, ResolveOwnerParams, ResolveOwnerResult};
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
 use asterism_proto::PROTO_VERSION;
@@ -982,9 +982,7 @@ impl Daemon {
                 .ok_or_else(|| Error::new(ErrorKind::Git, "repository has no commits yet — create an initial commit first"))?,
         };
         let base = git::pin_base(&repo, &base)?;
-        let origin = git::remote_url(&repo, "origin");
-        let (owner, repo_name) = node_settings::layout_owner_repo(origin.as_deref(), &project.name);
-        let worktree_root = node_settings::worktrees_dir(&self.paths)?.join(owner).join(repo_name);
+        let worktree_root = self.worktree_root(&repo, &project)?;
         let issue_branch = params.issue.as_ref().and_then(|i| i.branch.as_deref()).filter(|b| !b.is_empty());
         if let Some(branch) = issue_branch {
             git::check_branch_name(&repo, branch)?;
@@ -1053,6 +1051,25 @@ impl Daemon {
             .map(|(_, f)| ForgeCandidate { id: &f.id, hosts: &f.hosts, pull_requests: f.pull_requests })
             .collect();
         pr_status::forge_for_host(&forges, &host)
+    }
+
+    fn worktree_root(&self, repo: &Path, project: &Project) -> Result<PathBuf> {
+        let origin = git::remote_url(repo, "origin");
+        let (owner, repo_name) = node_settings::layout_owner_repo(origin.as_deref(), &project.name);
+        Ok(node_settings::worktrees_dir(&self.paths)?.join(owner).join(repo_name))
+    }
+
+    pub async fn search_pull_requests(&self, p: &PrSearchParams) -> Result<PrSearchResult> {
+        let project = self.store().project(p.project_id)?.ok_or_else(|| not_found("project", p.project_id))?;
+        let repo = PathBuf::from(&project.path);
+        let forge = self
+            .pr_forge(&repo)
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, "this project's origin is not served by a pull-request forge"))?;
+        let origin = git::remote_url(&repo, "origin");
+        let (owner, name) = node_settings::layout_owner_repo(origin.as_deref(), &project.name);
+        let params = SearchPullRequestsParams { forge: forge.clone(), project_path: project.path.clone(), query: p.query.trim().to_string(), state: p.state };
+        let hits = self.forge_call(&forge, protocol::method::FORGE_SEARCH_PULL_REQUESTS, params, Some(self.call_timeout())).await?;
+        Ok(PrSearchResult { forge, repo: format!("{owner}/{name}"), hits })
     }
 
     pub fn pr_list(&self, project_id: Option<i64>) -> PrList {

@@ -88,6 +88,10 @@ def handle(request):
             error(rid, -32008, "git", data["error"])
             return
         result = [{"branch": b, "pr": data[b]} for b in params["branches"] if b in data]
+    elif method == "forge.search_pull_requests":
+        record("search " + params.get("state", "open") + " " + params.get("query", ""))
+        result = [{"number": 7, "title": "Add search", "url": "https://echo.test/pr/7", "author": "octo",
+                   "head_branch": "feature/search", "draft": False, "from_fork": False}]
     elif method == "echo.sleep":
         time.sleep(params.get("ms", 0) / 1000)
         result = params

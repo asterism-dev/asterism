@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use asterism_core::daemon::{Daemon, DaemonOptions};
 use asterism_core::paths::Paths;
+use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -132,4 +133,26 @@ async fn deleting_a_task_drops_its_pr() {
     env.daemon.delete_task(a.id, true).unwrap();
     assert_eq!(drain(&mut rx), vec![(a.id, None)]);
     assert!(env.daemon.pr_list(None).prs.is_empty());
+}
+
+#[tokio::test]
+async fn pull_requests_are_searched_through_the_origin_forge() {
+    let env = setup(Some("https://echo.test/acme/api.git"));
+    let project = env.daemon.add_project(&env.repo.path().display().to_string()).unwrap();
+    let params = PrSearchParams { project_id: project.id, query: " search ".into(), state: PrListState::Closed };
+    let found = env.daemon.search_pull_requests(&params).await.unwrap();
+    assert_eq!((found.forge.as_str(), found.repo.as_str()), ("echo-forge", "acme/api"));
+    assert_eq!(found.hits[0].head_branch, "feature/search");
+    assert!(std::fs::read_to_string(&env.log).unwrap().contains("search closed search"));
+}
+
+#[tokio::test]
+async fn pr_search_needs_a_pull_request_forge() {
+    for origin in [None, Some("https://gitlab.com/acme/api.git")] {
+        let env = setup(origin);
+        let project = env.daemon.add_project(&env.repo.path().display().to_string()).unwrap();
+        let params = PrSearchParams { project_id: project.id, query: String::new(), state: PrListState::Open };
+        let err = env.daemon.search_pull_requests(&params).await.unwrap_err();
+        assert_eq!(err.kind, ErrorKind::NotFound, "{origin:?}");
+    }
 }
