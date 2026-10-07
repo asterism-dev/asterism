@@ -1,15 +1,19 @@
 <script setup lang="ts">
 import { Channel } from '@tauri-apps/api/core';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { api, decodeBase64, errorMessage, RpcError } from '../api';
+import { openFile } from '../dock/main';
+import { findFileLinks } from '../fileLinks';
 import { appShortcut } from '../shortcuts';
 import { isConnected, refresh, state, toast } from '../store';
 
-const props = defineProps<{ sessionId: number; live: boolean }>();
+const props = defineProps<{ sessionId: number; taskId: number; live: boolean }>();
 
 const RESIZE_DEBOUNCE_MS = 50;
 const FINAL_SCREEN_LINES = 2000;
@@ -91,6 +95,23 @@ onMounted(() => {
   fit = new FitAddon();
   term.loadAddon(fit);
   term.open(el.value);
+  // Modifier-click keeps plain clicks free for focus, selection and TUI mouse input.
+  term.loadAddon(new WebLinksAddon((e, uri) => {
+    if (e.metaKey || e.ctrlKey) openUrl(uri).catch((err) => toast(errorMessage(err)));
+  }));
+  // ponytail: string index = cell column, so wide characters before a path shift its underline; map via the buffer's cells if that shows up.
+  term.registerLinkProvider({
+    provideLinks(y, callback) {
+      const text = term?.buffer.active.getLine(y - 1)?.translateToString(true) ?? '';
+      callback(findFileLinks(text).map((link) => ({
+        range: { start: { x: link.start + 1, y }, end: { x: link.end, y } },
+        text: link.path,
+        activate: (e: MouseEvent) => {
+          if (e.metaKey || e.ctrlKey) void openFile(props.taskId, link.path, link.line);
+        },
+      })));
+    },
+  });
   // Linux app shortcuts are Ctrl+Shift chords xterm would otherwise consume.
   term.attachCustomKeyEventHandler((e) => appShortcut(e) === null);
   try {

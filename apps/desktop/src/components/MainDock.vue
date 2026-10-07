@@ -13,10 +13,11 @@ import PaneTab from './PaneTab.vue';
 import SessionPane from './SessionPane.vue';
 import ActivityPane from './panes/ActivityPane.vue';
 import DiffPane from './panes/DiffPane.vue';
+import FilePane from './panes/FilePane.vue';
 
 const props = defineProps<{ task: Task }>();
 // dockview types panel components as prop-less; ours take its `params` prop.
-const components = { session: SessionPane, diff: DiffPane, activity: ActivityPane } as unknown as Record<string, VueComponent>;
+const components = { session: SessionPane, diff: DiffPane, activity: ActivityPane, file: FilePane } as unknown as Record<string, VueComponent>;
 const tabComponents = { pane: PaneTab } as unknown as Record<string, VueComponent>;
 const groupActions = GroupActions as unknown as VueComponent;
 const sessionIds = computed(() => taskSessions(state, props.task.id).map((s) => s.id));
@@ -36,7 +37,7 @@ function addPanel(api: DockviewApi, sessionId: number) {
 function sync() {
   const api = dock;
   if (!api) return;
-  const { remove, add } = reconcile(api.panels.map((p) => p.id), sessionIds.value);
+  const { remove, add } = reconcile(api.panels.map((p) => p.id), sessionIds.value, props.task.id);
   for (const id of remove) {
     const panel = api.getPanel(id);
     if (panel) api.removePanel(panel);

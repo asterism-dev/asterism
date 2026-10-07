@@ -8,6 +8,7 @@ pub mod agents;
 pub mod config;
 pub mod daemon;
 pub mod error;
+pub mod files;
 pub mod git;
 pub mod node_settings;
 pub mod paths;

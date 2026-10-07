@@ -15,6 +15,7 @@ pub mod method {
     pub const TASK_CREATE: &str = "task.create";
     pub const TASK_ARCHIVE: &str = "task.archive";
     pub const TASK_DIFF: &str = "task.diff";
+    pub const TASK_FILE: &str = "task.file";
     pub const TASK_RESTORE: &str = "task.restore";
     pub const TASK_DELETE_CHECK: &str = "task.delete_check";
     pub const TASK_DELETE: &str = "task.delete";
@@ -779,6 +780,23 @@ pub struct TaskDeleteResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskDiffResult {
     pub patch: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskFileParams {
+    pub task_id: i64,
+    pub path: String,
+    /// The caller's last seen mtime; when it still matches, `content` is omitted.
+    pub known_mtime: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskFileResult {
+    /// Worktree-relative when inside the worktree, else absolute with `HOME` as `~`.
+    pub path: String,
+    /// Modification time in milliseconds since the epoch.
+    pub mtime: i64,
+    pub content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

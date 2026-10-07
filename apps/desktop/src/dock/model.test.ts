@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  SIDEBAR, floatKey, keptSizes, parseSidebar, parseWorkspace, placementPosition, reconcile, sessionIdOf, sessionPanelId, staleKeys,
+  SIDEBAR, filePanelId, fileTaskOf, floatKey, keptSizes, parseSidebar, parseWorkspace, placementPosition, reconcile, sessionIdOf, sessionPanelId, staleKeys,
   toggleAction, workspaceKey,
 } from './model';
 
@@ -13,8 +13,19 @@ describe('layout model', () => {
   });
 
   it('keeps tool panes, drops panels of gone sessions and adds new sessions in order', () => {
-    expect(reconcile(['session-1', 'diff', 'session-2', 'stray', 'activity'], [2, 3, 4])).toEqual({ remove: ['session-1', 'stray'], add: [3, 4] });
-    expect(reconcile([], [])).toEqual({ remove: [], add: [] });
+    expect(reconcile(['session-1', 'diff', 'session-2', 'stray', 'activity'], [2, 3, 4], 1)).toEqual({ remove: ['session-1', 'stray'], add: [3, 4] });
+    expect(reconcile([], [], 1)).toEqual({ remove: [], add: [] });
+  });
+
+  it('keeps file panes of the current task and drops those of others', () => {
+    expect(reconcile(['file:1:src/a.ts', 'file:2:b.ts', 'session-3'], [3], 1)).toEqual({ remove: ['file:2:b.ts'], add: [] });
+  });
+
+  it('round-trips file panel ids, including paths with colons', () => {
+    expect(filePanelId(7, '~/x:y.md')).toBe('file:7:~/x:y.md');
+    expect(fileTaskOf('file:7:~/x:y.md')).toBe(7);
+    expect(fileTaskOf('session-7')).toBeNull();
+    expect(fileTaskOf('diff')).toBeNull();
   });
 
   it('toggles closed → open, background → activate, front → close', () => {

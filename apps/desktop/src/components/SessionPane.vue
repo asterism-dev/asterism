@@ -18,6 +18,7 @@ onUnmounted(() => subscription.dispose());
       v-if="session && visible"
       :key="`${session.id}-${session.status === 'exited'}`"
       :session-id="session.id"
+      :task-id="session.task_id"
       :live="session.status !== 'exited'"
     />
   </div>

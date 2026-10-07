@@ -16,6 +16,7 @@ use crate::agent_settings;
 use crate::agents;
 use crate::config::{self, Config};
 use crate::error::{Error, Result};
+use crate::files;
 use crate::git::GitEnv;
 use crate::paths::Paths;
 use crate::plugins::manifest::{self, AgentDecl, LaunchKind, Manifest};
@@ -1316,6 +1317,12 @@ impl Daemon {
         }
         let project = self.store().project(task.project_id).ok().flatten();
         project.and_then(|p| default_base(repo, &p)).unwrap_or_else(|| task.base_branch.clone())
+    }
+
+    pub fn file(&self, params: TaskFileParams) -> Result<TaskFileResult> {
+        let task = self.task(params.task_id)?;
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        files::read(Path::new(&task.worktree_path), home.as_deref(), &params.path, params.known_mtime)
     }
 
     pub fn agent_infos(&self) -> Vec<AgentInfo> {

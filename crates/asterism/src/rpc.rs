@@ -337,6 +337,11 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             blocking(move || to_value(daemon.delete_task(p.task_id, p.delete_branch)?)).await
         }
         method::TASK_DIFF => to_value(daemon.diff(params::<TaskIdParams>(raw)?.task_id)?),
+        method::TASK_FILE => {
+            let daemon = daemon.clone();
+            let params = params::<TaskFileParams>(raw)?;
+            blocking(move || to_value(daemon.file(params)?)).await
+        }
         method::SESSION_LIST => to_value(daemon.sessions(params::<SessionListParams>(raw)?.task_id)?),
         method::SESSION_START => to_value(daemon.start_session(params(raw)?).await?),
         method::SESSION_KILL => {

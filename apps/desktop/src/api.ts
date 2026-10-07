@@ -1,7 +1,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type {
   AgentConfig, AgentConfigRaw, AgentInfo, CapabilityKind, PluginDetails, PluginInfo, SearchHit, StoreInfo, StoreList, PluginSettings, SettingValue, ForgeInfo, ForgeRepo, ForgeStatus, NodeConfig, NodeConfigInfo, NodeStats, NodeStatus, PrList, Project, ProjectBranches, ProjectCreateResult, RemoteTarget, Session, SessionAttachResult, SessionKind,
-  SessionReadResult, IssueDetails, IssueHit, Task, TaskCreateResult, TaskIssue, TaskSourceInfo, TaskDeleteCheck, TaskDeleteResult, TaskDiffResult, Worktree, WorktreeSize,
+  SessionReadResult, IssueDetails, IssueHit, Task, TaskCreateResult, TaskIssue, TaskSourceInfo, TaskDeleteCheck, TaskDeleteResult, TaskDiffResult, TaskFileResult, Worktree, WorktreeSize,
 } from './types';
 
 export class RpcError extends Error {
@@ -94,6 +94,8 @@ export const api = {
   removeWorktree: (projectId: number, path: string) => call<void>('project.worktree_remove', { project_id: projectId, path }),
   pruneWorktrees: (projectId: number) => call<void>('project.worktree_prune', { project_id: projectId }),
   diff: (taskId: number) => call<TaskDiffResult>('task.diff', { task_id: taskId }),
+  file: (taskId: number, path: string, knownMtime: number | null = null) =>
+    call<TaskFileResult>('task.file', { task_id: taskId, path, known_mtime: knownMtime }),
   sessions: () => call<Session[]>('session.list'),
   startSession: (taskId: number, kind: SessionKind) => call<Session>('session.start', { task_id: taskId, kind }),
   killSession: (sessionId: number) => call<null>('session.kill', { session_id: sessionId }),

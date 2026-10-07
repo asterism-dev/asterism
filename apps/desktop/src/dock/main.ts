@@ -1,7 +1,9 @@
 import type { DockviewApi, DockviewGroupPanel } from 'dockview-vue';
 import { ref, shallowRef } from 'vue';
+import { api, errorMessage } from '../api';
+import { toast } from '../store';
 import {
-  LEGACY_KEYS, TEMPLATE_KEY, floatKey, keptSizes, sessionIdOf, staleKeys, toggleAction, workspaceKey,
+  LEGACY_KEYS, TEMPLATE_KEY, filePanelId, fileTaskOf, floatKey, keptSizes, sessionIdOf, staleKeys, toggleAction, workspaceKey,
   type GroupSize, type PaneState, type Placement, type ToolPane,
 } from './model';
 import { keys, read, remove, write } from './storage';
@@ -43,6 +45,36 @@ export function addTool(api: DockviewApi, pane: ToolPane, options: { background?
     const anchor = grid.find(hasSession) ?? grid[0];
     api.addPanel({ ...base, initialWidth: 420, ...(anchor && { position: { referenceGroup: anchor, direction: 'right' } }) });
   }
+}
+
+/** Opens a file pane for `path`, or brings an open one to the front at `line`; unreadable files only toast. */
+export async function openFile(taskId: number, path: string, line?: number) {
+  const dock = mainApi.value;
+  if (!dock) return;
+  let shown: string;
+  try {
+    // ponytail: the pane reads the file again; hand the content over if large files feel slow to open.
+    shown = (await api.file(taskId, path)).path;
+  } catch (e) {
+    toast(errorMessage(e));
+    return;
+  }
+  const params = { taskId, path: shown, line };
+  const existing = dock.getPanel(filePanelId(taskId, shown));
+  if (existing) {
+    existing.api.setActive();
+    existing.api.updateParameters(params);
+    return;
+  }
+  const base = { id: filePanelId(taskId, shown), component: 'file', tabComponent: 'pane', title: shown.slice(shown.lastIndexOf('/') + 1), params };
+  const sibling = dock.panels.find((p) => fileTaskOf(p.id) !== null);
+  if (sibling) {
+    dock.addPanel({ ...base, position: { referenceGroup: sibling.group.id, direction: 'within' } });
+    return;
+  }
+  const grid = gridGroups(dock);
+  const anchor = grid.find(hasSession) ?? grid[0];
+  dock.addPanel({ ...base, initialWidth: 560, ...(anchor && { position: { referenceGroup: anchor, direction: 'right' } }) });
 }
 
 /** Moves every floating panel back into the grid, as tabs of its first group. */
