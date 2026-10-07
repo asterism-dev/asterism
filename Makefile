@@ -27,5 +27,6 @@ test:
 	cd $(DESKTOP) && npm test
 
 lint:
-	cd $(DESKTOP) && npm run sidecars && npm run typecheck
+	cd $(DESKTOP) && npm run sidecars && npm run typecheck && npm run lint && npm run format:check
+	cargo fmt --all --check
 	cargo clippy --workspace --all-targets -- -D warnings
