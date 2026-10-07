@@ -858,3 +858,25 @@ async fn restore_refuses_an_occupied_worktree_path() {
     assert!(err.message.contains(&task.worktree_path), "{}", err.message);
     assert!(env.daemon.task(task.id).unwrap().archived);
 }
+
+#[test]
+fn hello_reports_the_configured_node_name() {
+    let home = tempfile::tempdir().unwrap();
+    let daemon = Daemon::with_options(
+        Paths {
+            home: home.path().to_path_buf(),
+        },
+        asterism_core::daemon::DaemonOptions {
+            node_name: Some("test-node".into()),
+            ..common::daemon_options()
+        },
+    )
+    .unwrap();
+    let hello = daemon
+        .hello(HelloParams {
+            proto_version: asterism_proto::PROTO_VERSION,
+            client_kind: ClientKind::Cli,
+        })
+        .unwrap();
+    assert_eq!(hello.hostname, "test-node");
+}

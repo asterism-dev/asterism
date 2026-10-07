@@ -3,13 +3,15 @@ DESKTOP := apps/desktop
 DEV_HOME ?= $(HOME)/.asterism-dev
 # Give a second dev instance its own port and home, e.g. make dev DEV_PORT=1430 DEV_HOME=~/.asterism-dev2
 DEV_PORT ?= 1420
+# Shown instead of the hostname, e.g. make dev DEV_NAME=demo for screenshots
+DEV_NAME ?=
 APP := target/release/bundle/macos/asterism.app
 
-.PHONY: dev dev-stop build open test lint
+.PHONY: dev dev-stop build open test lint docs
 
 dev:
 	@# tauri dev compiles the app while beforeDevCommand still builds the sidecars, so build them first.
-	cd $(DESKTOP) && npm run sidecars && ASTERISM_HOME=$(DEV_HOME) ASTERISM_DEV_PORT=$(DEV_PORT) npm run tauri dev -- \
+	cd $(DESKTOP) && npm run sidecars && ASTERISM_HOME=$(DEV_HOME) ASTERISM_DEV_PORT=$(DEV_PORT) ASTERISM_NODE_NAME=$(DEV_NAME) npm run tauri dev -- \
 		--config '{"build":{"devUrl":"http://localhost:$(DEV_PORT)"}}'
 
 dev-stop:
@@ -30,3 +32,6 @@ lint:
 	cd $(DESKTOP) && npm run sidecars && npm run typecheck && npm run lint && npm run format:check
 	cargo fmt --all --check
 	cargo clippy --workspace --all-targets -- -D warnings
+
+docs:
+	uvx zensical==0.0.68 serve
