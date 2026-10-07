@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { ask } from '@tauri-apps/plugin-dialog';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
-import { ArrowDownUp, ChevronDown, ChevronRight, Plus, Settings, SquarePlus } from '@lucide/vue';
+import {
+  ArrowDownUp,
+  BookOpen,
+  ChevronDown,
+  ChevronRight,
+  Plus,
+  Settings,
+  SquarePlus,
+} from '@lucide/vue';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
 import {
@@ -31,7 +39,7 @@ import { startSession } from '../sessionActions';
 import { archiveTask, deleteTask } from '../taskActions';
 import PrBadge from './PrBadge.vue';
 import StatusIndicator from './StatusIndicator.vue';
-import { installUpdate, updateLabel, updater } from '../updater';
+import { DOCS_URL, installUpdate, updateLabel, updater } from '../updater';
 import type { Project, Task } from '../types';
 
 const connected = computed(() => isConnected(state.node));
@@ -298,16 +306,21 @@ function taskMenu(e: MouseEvent, t: Task) {
         >{{ state.pluginUpdates }}</span
       >
     </button>
-    <div v-if="updater.current" class="version-row">
-      <span class="muted">v{{ updater.current }}</span>
-      <button
-        v-if="updater.available"
-        class="update-button"
-        :disabled="updater.installing"
-        @click="installUpdate()"
-      >
-        {{ updateLabel() }}
+    <div class="version-row">
+      <button class="docs-link" title="Open documentation" @click="openUrl(DOCS_URL).catch(report)">
+        <BookOpen :size="13" />Docs
       </button>
+      <div class="version-info">
+        <button
+          v-if="updater.available"
+          class="update-button"
+          :disabled="updater.installing"
+          @click="installUpdate()"
+        >
+          {{ updateLabel() }}
+        </button>
+        <span v-if="updater.current" class="muted">v{{ updater.current }}</span>
+      </div>
     </div>
   </aside>
 </template>
@@ -443,6 +456,22 @@ function taskMenu(e: MouseEvent, t: Task) {
   gap: 8px;
   padding: 2px 12px 8px;
   font-size: 12px;
+}
+.version-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.docs-link {
+  gap: 4px;
+  padding: 1px 4px;
+  border: none;
+  background: none;
+  color: var(--muted);
+}
+.docs-link:hover {
+  color: var(--text);
+  background: var(--select);
 }
 .update-button {
   padding: 1px 8px;

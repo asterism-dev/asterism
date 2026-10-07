@@ -6,6 +6,7 @@ import { errorMessage } from './api';
 import { toast } from './store';
 
 export const RELEASES_URL = 'https://github.com/asterism-dev/asterism/releases';
+export const DOCS_URL = 'https://asterism-dev.github.io/asterism/';
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 export const updater = reactive({
