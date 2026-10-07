@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
-import { SquareTerminal, X } from '@lucide/vue';
+import { X } from '@lucide/vue';
 import { api, errorMessage } from '../api';
 import { baseChoice } from '../baseBranch';
 import { leaveSettings } from '../settingsGuard';
@@ -21,7 +21,6 @@ const projectId = ref(props.projectId);
 const title = ref('');
 const prompt = ref('');
 const agent = ref(agents.value[0]?.name ?? '');
-const shellOnly = ref(!agents.value.length);
 const tab = ref<'conversation' | 'workspace'>('conversation');
 const kind = ref<'issue' | 'pr'>('issue');
 const issue = ref<TaskIssue | null>(null);
@@ -145,7 +144,7 @@ async function submit() {
     if (!(await leaveSettings())) return;
     const created = await api.createTask(createRequest({
       projectId: projectId.value, title: title.value, placeholder, prompt: prompt.value,
-      agent: shellOnly.value ? '' : agent.value, mode: mode.value, base: base.value, branch: branch.value,
+      agent: agent.value, mode: mode.value, base: base.value, branch: branch.value,
       checkout: checkout.value, push: push.value, issue: kind.value === 'issue' ? issue.value : null,
     }));
     addTask(state, created.task);
@@ -186,15 +185,12 @@ async function submit() {
       </div>
 
       <div v-show="tab === 'conversation'" class="conversation">
-        <div class="agent-row">
-          <select v-model="agent" :disabled="shellOnly" aria-label="Agent">
-            <option v-for="a in agents" :key="a.name" :value="a.name">{{ a.display_name || a.name }}</option>
-          </select>
-          <button type="button" class="icon terminal" :class="{ active: shellOnly }" :aria-pressed="shellOnly" :disabled="!agents.length"
-            title="Shell only — no agent" @click="shellOnly = !shellOnly"><SquareTerminal :size="16" /></button>
-        </div>
-        <textarea v-model="prompt" rows="4" :disabled="shellOnly"
-          :placeholder="shellOnly ? 'Shell only — no agent is started' : 'Describe what the agent should do…'" />
+        <select v-model="agent" aria-label="Agent">
+          <option v-for="a in agents" :key="a.name" :value="a.name">{{ a.display_name || a.name }}</option>
+          <option value="">Shell (no agent)</option>
+        </select>
+        <textarea v-model="prompt" rows="4" :disabled="!agent"
+          :placeholder="agent ? 'Describe what the agent should do…' : 'Shell only — no agent is started'" />
       </div>
 
       <WorkspaceSettings v-show="tab === 'workspace'" v-model:mode="mode" v-model:base="base" v-model:branch="branch"
@@ -220,9 +216,6 @@ header h2 { margin: 0; font-size: 14px; display: flex; align-items: center; gap:
 .tabs button { border: none; background: none; color: var(--muted); }
 .tabs button.active { color: inherit; background: var(--select); }
 .conversation { display: flex; flex-direction: column; gap: 8px; }
-.agent-row { display: flex; gap: 6px; }
-.terminal { border: 1px solid var(--border); border-radius: 6px; }
-.terminal.active { background: var(--select); border-color: var(--accent); }
 .primary { background: #1f8f4e; border-color: #1f8f4e; color: #fff; display: inline-flex; align-items: center; gap: 4px; }
 .primary:hover:not(:disabled) { background: #187a42; }
 .primary:disabled { opacity: 0.6; }
