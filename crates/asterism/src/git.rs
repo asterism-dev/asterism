@@ -242,8 +242,9 @@ pub fn fetch_branch(repo: &Path, remote: &str, branch: &str, extra: &GitEnv) -> 
 }
 
 // ponytail: bounded only by clone_env's low-speed and SSH connect timeouts; add a hard deadline if pushes hang.
+/// Publishes a just-created branch; pre-push hooks are skipped because a fresh worktree lacks their dependencies.
 pub fn push_upstream(worktree: &Path, remote: &str, branch: &str, extra: &GitEnv) -> Result<()> {
-    run_with_env(Some(worktree), &["push", "-q", "-u", remote, branch], &clone_env(extra)).map(|_| ())
+    run_with_env(Some(worktree), &["push", "-q", "--no-verify", "-u", remote, branch], &clone_env(extra)).map(|_| ())
 }
 
 pub fn init_with_readme(dir: &Path, name: &str, extra: &GitEnv) -> Result<()> {

@@ -114,3 +114,17 @@ fn branches_split_into_local_and_one_remote() {
     assert_eq!(git::local_branches(repo.path()).unwrap(), ["feature/local", "main"]);
     assert_eq!(git::remote_branches(repo.path(), "origin").unwrap(), ["origin/feature/pr", "origin/main"]);
 }
+
+#[test]
+fn push_upstream_skips_pre_push_hooks() {
+    use std::os::unix::fs::PermissionsExt;
+    let (origin, repo) = repo_with_origin();
+    let hook = repo.path().join(".git/hooks/pre-push");
+    std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let wt = parent.path().join("h");
+    git::add_worktree(repo.path(), "asterism/h", &wt, "main").unwrap();
+    git::push_upstream(&wt, "origin", "asterism/h", &[]).unwrap();
+    run_git(origin.path(), &["rev-parse", "--verify", "refs/heads/asterism/h"]);
+}
