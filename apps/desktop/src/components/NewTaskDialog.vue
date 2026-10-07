@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { X } from '@lucide/vue';
 import { api, errorMessage } from '../api';
 import { baseChoice } from '../baseBranch';
@@ -138,7 +138,21 @@ function onEsc() {
   if (!picker.value?.closePanel()) emit('close');
 }
 
-onMounted(() => titleInput.value?.focus());
+// On window, not the form: WebKit doesn't focus clicked buttons, so focus often sits on body.
+function onKey(e: KeyboardEvent) {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    submit();
+  } else if (e.key === 'Escape') {
+    onEsc();
+  }
+}
+
+onMounted(() => {
+  titleInput.value?.focus();
+  window.addEventListener('keydown', onKey);
+});
+onUnmounted(() => window.removeEventListener('keydown', onKey));
 
 async function submit() {
   if (busy.value || loadingBranches.value || !canCreate.value) return;
@@ -171,8 +185,8 @@ async function submit() {
 </script>
 
 <template>
-  <div class="modal-backdrop" @click.self="emit('close')" @keydown.esc="onEsc">
-    <form class="modal create-task" @submit.prevent="submit" @keydown.meta.enter.prevent="submit" @keydown.ctrl.enter.prevent="submit">
+  <div class="modal-backdrop" @click.self="emit('close')">
+    <form class="modal create-task" @submit.prevent="submit">
       <header>
         <h2>Create Task in
           <select v-model="projectId" class="project" aria-label="Project">
