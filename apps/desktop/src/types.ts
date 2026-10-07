@@ -1,22 +1,40 @@
 export type SessionStatus = 'working' | 'idle' | 'waiting_input' | 'exited';
-export type SessionKind = { type: 'agent'; name: string } | { type: 'shell' } | { type: 'command'; argv: string[] };
+export type SessionKind =
+  { type: 'agent'; name: string } | { type: 'shell' } | { type: 'command'; argv: string[] };
 
-export interface EnvSettings { remove: string[]; set: Record<string, string> }
+export interface EnvSettings {
+  remove: string[];
+  set: Record<string, string>;
+}
 export interface AgentConfig {
   args: string[];
   env: EnvSettings;
   mcp: Record<string, unknown> | null;
   hooks: Record<string, unknown> | null;
 }
-export interface AgentConfigRaw { args: string[]; env: EnvSettings; mcp_text: string | null; hooks_text: string | null }
+export interface AgentConfigRaw {
+  args: string[];
+  env: EnvSettings;
+  mcp_text: string | null;
+  hooks_text: string | null;
+}
 
-export interface Project { id: number; name: string; path: string; created_at: number; default_base: string | null }
+export interface Project {
+  id: number;
+  name: string;
+  path: string;
+  created_at: number;
+  default_base: string | null;
+}
 export interface ProjectBranches {
   branches: string[];
   default: string | null;
   automatic: string | null;
   configured: string | null;
   fetch_error: string | null;
+  worktree_root: string | null;
+  local: string[];
+  remote: string[];
 }
 export interface Task {
   id: number;
@@ -32,13 +50,53 @@ export interface Task {
   created_at: number;
   last_activity_at: number;
 }
-export interface IssueRef { source: string; key: string; url: string }
-export interface TaskIssue { source: string; key: string; title: string; url: string; branch: string | null }
-export interface IssueHit { key: string; title: string; url: string; state: string; assignee: string | null; updated_at: string | null }
-export interface IssueDetails { source: string; key: string; title: string; url: string; description: string; name: string; branch: string; prompt: string }
-export interface TaskSourceInfo { id: string; display_name: string; plugin: string; available: boolean; reason: string | null }
-export interface Session { id: number; task_id: number; kind: SessionKind; status: SessionStatus }
-export interface AgentInfo { name: string; available: boolean }
+export interface IssueRef {
+  source: string;
+  key: string;
+  url: string;
+}
+export interface TaskIssue {
+  source: string;
+  key: string;
+  title: string;
+  url: string;
+  branch: string | null;
+}
+export interface IssueHit {
+  key: string;
+  title: string;
+  url: string;
+  state: string;
+  assignee: string | null;
+  updated_at: string | null;
+}
+export interface IssueDetails {
+  source: string;
+  key: string;
+  title: string;
+  url: string;
+  description: string;
+  name: string;
+  branch: string;
+  prompt: string;
+}
+export interface TaskSourceInfo {
+  id: string;
+  display_name: string;
+  plugin: string;
+  available: boolean;
+  reason: string | null;
+}
+export interface Session {
+  id: number;
+  task_id: number;
+  kind: SessionKind;
+  status: SessionStatus;
+}
+export interface AgentInfo {
+  name: string;
+  available: boolean;
+}
 export interface HelloResult {
   proto_version: number;
   daemon_version: string;
@@ -52,16 +110,35 @@ export interface HelloResult {
 export type NodeStatus =
   | { state: 'connecting' }
   | { state: 'connected'; hello: HelloResult }
-  | { state: 'update_available'; hello: HelloResult; bundled_version: string; bundled_build: string }
+  | {
+      state: 'update_available';
+      hello: HelloResult;
+      bundled_version: string;
+      bundled_build: string;
+    }
   | { state: 'incompatible'; message: string }
   | { state: 'disconnected'; reason: string };
 
 export type PrState = 'open' | 'draft' | 'merged' | 'closed';
 export type ReviewState = 'approved' | 'changes_requested' | 'review_required' | 'none';
 export type ChecksState = 'pending' | 'success' | 'failure' | 'none';
-export interface PullRequest { number: number; url: string; title: string; state: PrState; review: ReviewState; checks: { state: ChecksState; failing: string[] } }
-export interface TaskPr { task_id: number; branch: string; pr: PullRequest }
-export interface PrList { prs: TaskPr[]; errors: { project_id: number; message: string }[] }
+export interface PullRequest {
+  number: number;
+  url: string;
+  title: string;
+  state: PrState;
+  review: ReviewState;
+  checks: { state: ChecksState; failing: string[] };
+}
+export interface TaskPr {
+  task_id: number;
+  branch: string;
+  pr: PullRequest;
+}
+export interface PrList {
+  prs: TaskPr[];
+  errors: { project_id: number; message: string }[];
+}
 
 export type NodeEvent =
   | { method: 'session.status_changed'; params: { session_id: number; status: SessionStatus } }
@@ -75,37 +152,135 @@ export type NodeEvent =
   | { method: 'stores.changed'; params: Record<string, never> }
   | { method: 'pr.changed'; params: { task_id: number; pr: PullRequest | null } };
 
-export interface TaskDeleteCheck { dirty: boolean; branch: string; branch_exists: boolean; unmerged_commits: number }
-export interface TaskDeleteResult { warning: string | null }
-export interface Worktree {
-  path: string; head: string; branch: string | null; is_main: boolean; locked: boolean; prunable: boolean;
-  task_id: number | null; base_branch: string | null;
+export interface TaskDeleteCheck {
+  dirty: boolean;
+  branch: string;
+  branch_exists: boolean;
+  unmerged_commits: number;
 }
-export interface WorktreeSize { path: string; bytes: number }
-export interface TaskCreateResult { task: Task; session: Session | null }
-export interface TaskDiffResult { patch: string }
-export interface TaskFileResult { path: string; mtime: number; content: string | null }
-export interface SessionAttachResult { snapshot: string; rows: number; cols: number }
-export interface SessionReadResult { text: string }
+export interface TaskDeleteResult {
+  warning: string | null;
+}
+export interface Worktree {
+  path: string;
+  head: string;
+  branch: string | null;
+  is_main: boolean;
+  locked: boolean;
+  prunable: boolean;
+  task_id: number | null;
+  base_branch: string | null;
+}
+export interface WorktreeSize {
+  path: string;
+  bytes: number;
+}
+export interface TaskCreateResult {
+  task: Task;
+  session: Session | null;
+  warning: string | null;
+}
+export type PrListState = 'open' | 'closed';
+export interface PrHit {
+  number: number;
+  title: string;
+  url: string;
+  author: string;
+  head_branch: string;
+  draft: boolean;
+  from_fork: boolean;
+}
+export interface PrSearchResult {
+  forge: string;
+  repo: string;
+  hits: PrHit[];
+}
+export type TaskCreateRequest = {
+  project_id: number;
+  title: string;
+  prompt: string | null;
+  agent: string | null;
+  base: string | null;
+  issue: TaskIssue | null;
+  branch: string | null;
+  checkout: string | null;
+  push: boolean;
+};
+export interface TaskDiffResult {
+  patch: string;
+}
+export interface TaskFileResult {
+  path: string;
+  mtime: number;
+  content: string | null;
+}
+export interface SessionAttachResult {
+  snapshot: string;
+  rows: number;
+  cols: number;
+}
+export interface SessionReadResult {
+  text: string;
+}
 
-export interface PathSettings { repos: string; worktrees: string }
-export interface NodeConfig { paths: PathSettings }
-export interface NodeConfigInfo { config: NodeConfig; defaults: PathSettings }
-export interface ForgeInfo { id: string; display_name: string; hosts: string[]; plugin: string }
-export interface ForgeStatus { available: boolean; authenticated: boolean; account: string | null; owners: string[]; error: string | null }
-export interface ForgeRepo { owner: string; name: string; description: string | null; private: boolean }
+export interface PathSettings {
+  repos: string;
+  worktrees: string;
+}
+export interface NodeConfig {
+  paths: PathSettings;
+}
+export interface NodeConfigInfo {
+  config: NodeConfig;
+  defaults: PathSettings;
+}
+export interface ForgeInfo {
+  id: string;
+  display_name: string;
+  hosts: string[];
+  plugin: string;
+}
+export interface ForgeStatus {
+  available: boolean;
+  authenticated: boolean;
+  account: string | null;
+  owners: string[];
+  error: string | null;
+}
+export interface ForgeRepo {
+  owner: string;
+  name: string;
+  description: string | null;
+  private: boolean;
+}
 export type Visibility = 'public' | 'private' | 'internal';
-export interface RemoteTarget { forge: string; owner: string; visibility: Visibility }
-export interface ProcStats { memory_bytes: number; cpu_percent: number }
+export interface RemoteTarget {
+  forge: string;
+  owner: string;
+  visibility: Visibility;
+}
+export interface ProcStats {
+  memory_bytes: number;
+  cpu_percent: number;
+}
 export interface NodeStats {
   daemon: ProcStats;
   sessions: { session_id: number; stats: ProcStats }[];
   processes: { pid: number; stats: ProcStats }[];
 }
-export interface ProjectCreateResult { project: Project; remote_error: string | null }
+export interface ProjectCreateResult {
+  project: Project;
+  remote_error: string | null;
+}
 
 export type AgentSettingKind = 'args' | 'mcp' | 'hooks';
-export interface AgentInfo { name: string; available: boolean; display_name: string; settings: AgentSettingKind[]; plugin: string }
+export interface AgentInfo {
+  name: string;
+  available: boolean;
+  display_name: string;
+  settings: AgentSettingKind[];
+  plugin: string;
+}
 export type PluginState =
   | { state: 'ok' }
   | { state: 'needs_setup'; missing: string[] }
@@ -113,17 +288,69 @@ export type PluginState =
   | { state: 'failing'; reason: string }
   | { state: 'disabled' };
 export type CapabilityKind = 'forge' | 'agent' | 'command' | 'task_source';
-export interface Capability { kind: CapabilityKind; id: string; description: string }
-export interface PluginInfo {
-  name: string; version: string | null; description: string; origin: 'builtin' | 'linked' | 'installed'; path: string;
-  capabilities: Capability[]; permissions: string[]; state: PluginState; backend: string[] | null;
-  store: string | null; update_available: boolean; previous_version: string | null;
+export interface Capability {
+  kind: CapabilityKind;
+  id: string;
+  description: string;
 }
-export interface StoreInfo { name: string; source: string; official: boolean; last_refreshed: number | null; last_error: string | null; plugin_count: number }
-export interface StoreList { auto_update: boolean; stores: StoreInfo[]; error: string | null }
-export interface SearchHit { store: string; name: string; description: string; tags: string[]; installed_version: string | null; update_available: boolean; linked: boolean }
-export interface PluginDetails { store: string; name: string; version: string; description: string; permissions: string[]; capabilities: Capability[]; readme: string | null }
+export interface PluginInfo {
+  name: string;
+  version: string | null;
+  description: string;
+  origin: 'builtin' | 'linked' | 'installed';
+  path: string;
+  capabilities: Capability[];
+  permissions: string[];
+  state: PluginState;
+  backend: string[] | null;
+  store: string | null;
+  update_available: boolean;
+  previous_version: string | null;
+}
+export interface StoreInfo {
+  name: string;
+  source: string;
+  official: boolean;
+  last_refreshed: number | null;
+  last_error: string | null;
+  plugin_count: number;
+}
+export interface StoreList {
+  auto_update: boolean;
+  stores: StoreInfo[];
+  error: string | null;
+}
+export interface SearchHit {
+  store: string;
+  name: string;
+  description: string;
+  tags: string[];
+  installed_version: string | null;
+  update_available: boolean;
+  linked: boolean;
+}
+export interface PluginDetails {
+  store: string;
+  name: string;
+  version: string;
+  description: string;
+  permissions: string[];
+  capabilities: Capability[];
+  readme: string | null;
+}
 export type SettingType = 'string' | 'secret' | 'bool' | 'number' | 'enum';
-export interface SettingSpec { key: string; title: string; type: SettingType; required: boolean; description: string | null; default: unknown; options?: string[] }
+export interface SettingSpec {
+  key: string;
+  title: string;
+  type: SettingType;
+  required: boolean;
+  description: string | null;
+  default: unknown;
+  options?: string[];
+}
 export type SettingValue = string | number | boolean;
-export interface PluginSettings { schema: SettingSpec[]; values: Record<string, SettingValue>; secrets_set: string[] }
+export interface PluginSettings {
+  schema: SettingSpec[];
+  values: Record<string, SettingValue>;
+  secrets_set: string[];
+}

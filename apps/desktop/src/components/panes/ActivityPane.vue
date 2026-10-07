@@ -6,7 +6,9 @@ import ActivityView from '../ActivityView.vue';
 const props = defineProps<{ params: { api: DockviewPanelApi } }>();
 // dockview keeps background tabs mounted; unmounting the view stops its polling.
 const visible = ref(props.params.api.isVisible);
-const subscription = props.params.api.onDidVisibilityChange((e) => { visible.value = e.isVisible; });
+const subscription = props.params.api.onDidVisibilityChange((e) => {
+  visible.value = e.isVisible;
+});
 onUnmounted(() => subscription.dispose());
 </script>
 

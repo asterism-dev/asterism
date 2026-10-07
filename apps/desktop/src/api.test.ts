@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const invoke = vi.fn();
-vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...a), Channel: class {} }));
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: (...a: unknown[]) => invoke(...a),
+  Channel: class {},
+}));
 
 const { api } = await import('./api');
 
@@ -13,7 +16,9 @@ const names = () => invoke.mock.calls.map((c) => c[0]);
 beforeEach(() => {
   pending = [];
   invoke.mockReset();
-  invoke.mockImplementation(() => new Promise((resolve, reject) => pending.push({ resolve, reject })));
+  invoke.mockImplementation(
+    () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+  );
 });
 
 describe('attach/detach ordering', () => {
@@ -47,7 +52,8 @@ describe('attach/detach ordering', () => {
 });
 
 describe('send ordering', () => {
-  const texts = () => invoke.mock.calls.map((c) => (c[1] as { params: { text: string } }).params.text);
+  const texts = () =>
+    invoke.mock.calls.map((c) => (c[1] as { params: { text: string } }).params.text);
 
   it('keeps one send in flight and coalesces text typed meanwhile', async () => {
     const a = api.send(3, 'a');

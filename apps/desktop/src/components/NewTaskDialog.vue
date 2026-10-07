@@ -1,38 +1,68 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { api, errorMessage, RpcError } from '../api';
+import { X } from '@lucide/vue';
+import { api, errorMessage } from '../api';
 import { baseChoice } from '../baseBranch';
 import { leaveSettings } from '../settingsGuard';
-import { addSession, addTask, state } from '../store';
-import { createTitle, issueToCreate, searchParams, sourceOptions } from '../taskSources';
-import type { IssueDetails, IssueHit, ProjectBranches, TaskSourceInfo } from '../types';
+import { addSession, addTask, state, toast } from '../store';
+import {
+  createRequest,
+  defaultBranch,
+  finalSlug,
+  liveSlug,
+  randomSlug,
+  randomSuffix,
+} from '../taskForm';
+import { issueToCreate } from '../taskSources';
+import type { IssueDetails, PrHit, ProjectBranches, TaskIssue, TaskSourceInfo } from '../types';
+import BasedOnPicker from './BasedOnPicker.vue';
+import WorkspaceSettings from './WorkspaceSettings.vue';
 
 const props = defineProps<{ projectId: number }>();
 const emit = defineEmits<{ close: [] }>();
 
+const placeholder = randomSlug();
+const suffix = randomSuffix();
 const agents = computed(() => state.agents.filter((a) => a.available));
 const projectId = ref(props.projectId);
 const title = ref('');
 const prompt = ref('');
 const agent = ref(agents.value[0]?.name ?? '');
+const session = ref<'agent' | 'shell'>(agents.value.length ? 'agent' : 'shell');
+const tab = ref<'conversation' | 'workspace'>('conversation');
+const kind = ref<'issue' | 'pr'>('issue');
+const issue = ref<TaskIssue | null>(null);
+const prBranch = ref<string | null>(null);
+const prefilled = ref(false);
+const promptPrefilled = ref(false);
+const mode = ref<'new' | 'checkout'>('new');
+const base = ref('');
+const branch = ref(defaultBranch(placeholder, suffix));
+const branchTouched = ref(false);
+const checkout = ref('');
+const push = ref(true);
 const error = ref<string | null>(null);
 const busy = ref(false);
 const titleInput = ref<HTMLInputElement>();
+const picker = ref<InstanceType<typeof BasedOnPicker>>();
 
 const branches = ref<ProjectBranches | null>(null);
 const loadingBranches = ref(false);
-const base = ref('');
-const choice = computed(() => baseChoice(branches.value));
+const sources = ref<TaskSourceInfo[]>([]);
+const canCreate = computed(() =>
+  mode.value === 'checkout' ? !!checkout.value : baseChoice(branches.value).canCreate,
+);
 
 async function loadBranches() {
   const id = projectId.value;
-  branches.value = null;
   loadingBranches.value = true;
   try {
     const result = await api.projectBranches(id);
     if (id !== projectId.value) return;
     branches.value = result;
-    base.value = baseChoice(result).selected;
+    // A refresh keeps the chosen base while it still exists.
+    if (![...result.local, ...result.remote].includes(base.value))
+      base.value = baseChoice(result).selected;
   } catch (e) {
     if (id === projectId.value) error.value = errorMessage(e);
   } finally {
@@ -40,72 +70,86 @@ async function loadBranches() {
   }
 }
 
-watch(projectId, loadBranches, { immediate: true });
-
-const sources = ref<TaskSourceInfo[]>([]);
-const options = computed(() => sourceOptions(sources.value));
-const source = ref('');
-const query = ref('');
-const hits = ref<IssueHit[]>([]);
-const searchError = ref<{ message: string; plugin: string | null; setup: boolean } | null>(null);
-const searching = ref(false);
-const details = ref<IssueDetails | null>(null);
-let searchSeq = 0;
-let pickSeq = 0;
-let sourcesSeq = 0;
-let debounce: ReturnType<typeof setTimeout> | undefined;
-
-async function loadSources() {
-  const seq = ++sourcesSeq;
-  let loaded: TaskSourceInfo[];
-  try {
-    loaded = await api.taskSources(projectId.value);
-  } catch {
-    loaded = [];
-  }
-  if (seq !== sourcesSeq) return;
-  sources.value = loaded;
-  if (source.value && !options.value.some((o) => o.id === source.value && !o.disabled)) source.value = '';
+function loadProject() {
+  const id = projectId.value;
+  branches.value = null;
+  base.value = '';
+  api.taskSources(id).then(
+    (s) => {
+      if (id === projectId.value) sources.value = s;
+    },
+    () => {
+      if (id === projectId.value) sources.value = [];
+    },
+  );
+  loadBranches();
 }
-
-function searchFailure(e: unknown) {
-  const plugin = options.value.find((o) => o.id === source.value)?.plugin ?? null;
-  return { message: errorMessage(e), plugin, setup: e instanceof RpcError && e.kind === 'needs_setup' };
-}
-
-async function search() {
-  if (!source.value) return;
-  const seq = ++searchSeq;
-  searching.value = true;
-  const { query: q, assigned_to_me } = searchParams(query.value);
-  try {
-    const result = await api.searchIssues(projectId.value, source.value, q, assigned_to_me);
-    if (seq === searchSeq) { hits.value = result; searchError.value = null; }
-  } catch (e) {
-    if (seq !== searchSeq) return;
-    hits.value = [];
-    searchError.value = searchFailure(e);
-  } finally {
-    if (seq === searchSeq) searching.value = false;
-  }
-}
-
-async function pick(hit: IssueHit) {
-  const seq = ++pickSeq;
-  try {
-    const d = await api.getIssue(projectId.value, source.value, hit.key);
-    if (seq !== pickSeq) return;
-    details.value = d;
-    title.value = d.name;
-    prompt.value = d.prompt;
+watch(
+  projectId,
+  () => {
     error.value = null;
-    searchError.value = null;
-  } catch (e) {
-    if (seq !== pickSeq) return;
-    const failure = searchFailure(e);
-    if (failure.setup) searchError.value = failure;
-    else error.value = failure.message;
+    issue.value = null;
+    prBranch.value = null;
+    mode.value = 'new';
+    checkout.value = '';
+    clearPrefill();
+    loadProject();
+  },
+  { immediate: true },
+);
+
+function onTitle(e: Event) {
+  const el = e.target as HTMLInputElement;
+  const raw = el.value;
+  const slug = liveSlug(raw);
+  const pos = Math.min(
+    Math.max(slug.length - (raw.length - (el.selectionStart ?? raw.length)), 0),
+    slug.length,
+  );
+  title.value = slug;
+  el.value = slug;
+  el.setSelectionRange(pos, pos);
+}
+watch(title, (t) => {
+  if (!branchTouched.value) branch.value = defaultBranch(finalSlug(t) || placeholder, suffix);
+});
+
+function clearPrefill() {
+  // Title and prompt came from the pick; keep them only for that pick.
+  if (prefilled.value) {
+    title.value = '';
+    if (promptPrefilled.value) prompt.value = '';
+    branchTouched.value = false;
+    branch.value = defaultBranch(placeholder, suffix);
   }
+  prefilled.value = false;
+  promptPrefilled.value = false;
+}
+
+function onIssue(d: IssueDetails | null) {
+  clearPrefill();
+  issue.value = d ? issueToCreate(d) : null;
+  if (!d) return;
+  title.value = finalSlug(d.name);
+  prompt.value = d.prompt;
+  promptPrefilled.value = true;
+  if (d.branch) {
+    branch.value = d.branch;
+    branchTouched.value = true;
+  }
+  prefilled.value = true;
+  error.value = null;
+}
+
+function onPr(hit: PrHit | null) {
+  clearPrefill();
+  prBranch.value = hit?.head_branch ?? null;
+  mode.value = hit ? 'checkout' : 'new';
+  checkout.value = hit?.head_branch ?? '';
+  if (!hit) return;
+  title.value = finalSlug(hit.title);
+  prefilled.value = true;
+  error.value = null;
 }
 
 function openSettings(plugin: string) {
@@ -114,63 +158,57 @@ function openSettings(plugin: string) {
   emit('close');
 }
 
-function clearPicked() {
-  // Title and prompt came from the picked issue; keep them only for that issue.
-  if (details.value) {
-    title.value = '';
-    prompt.value = '';
-  }
-  details.value = null;
+function onEsc() {
+  if (!picker.value?.closePanel()) emit('close');
 }
 
-watch(projectId, () => {
-  searchSeq++;
-  pickSeq++;
-  clearPicked();
-  hits.value = [];
-  searchError.value = null;
-  loadSources().then(search);
-});
-watch(source, () => {
-  clearTimeout(debounce);
-  pickSeq++;
-  clearPicked();
-  hits.value = [];
-  searchError.value = null;
-  search();
-});
-watch(query, () => { clearTimeout(debounce); debounce = setTimeout(search, 250); });
+// On window, not the form: WebKit doesn't focus clicked buttons, so focus often sits on body.
+function onKey(e: KeyboardEvent) {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    submit();
+  } else if (e.key === 'Escape') {
+    onEsc();
+  }
+}
+
 onMounted(() => {
   titleInput.value?.focus();
-  loadSources();
+  window.addEventListener('keydown', onKey);
 });
-onUnmounted(() => clearTimeout(debounce));
+onUnmounted(() => window.removeEventListener('keydown', onKey));
 
 async function submit() {
-  if (source.value && details.value?.source !== source.value) {
-    error.value = 'Pick an issue.';
-    return;
-  }
-  if (!details.value && !title.value.trim()) {
-    error.value = 'Give the task a title.';
+  if (busy.value || loadingBranches.value || !canCreate.value) return;
+  if (mode.value === 'checkout' && !checkout.value) {
+    error.value = 'Choose a branch to check out.';
+    tab.value = 'workspace';
     return;
   }
   busy.value = true;
   try {
     if (!(await leaveSettings())) return;
-    const created = await api.createTask({
-      project_id: projectId.value,
-      title: createTitle(title.value, details.value),
-      prompt: (agent.value && prompt.value.trim()) || null,
-      agent: agent.value || null,
-      base: base.value || null,
-      issue: details.value && source.value ? issueToCreate(details.value) : null,
-    });
+    const created = await api.createTask(
+      createRequest({
+        projectId: projectId.value,
+        title: title.value,
+        placeholder,
+        prompt: prompt.value,
+        agent: session.value === 'agent' ? agent.value : '',
+        mode: mode.value,
+        base: base.value,
+        branch: branch.value,
+        checkout: checkout.value,
+        push: push.value,
+        issue: kind.value === 'issue' ? issue.value : null,
+      }),
+    );
     addTask(state, created.task);
     state.projectPage = null;
     state.selectedTaskId = created.task.id;
     delete state.collapsed[projectId.value];
     if (created.session) addSession(state, created.session);
+    if (created.warning) toast(created.warning);
     emit('close');
   } catch (e) {
     error.value = errorMessage(e);
@@ -181,69 +219,194 @@ async function submit() {
 </script>
 
 <template>
-  <div class="modal-backdrop" @click.self="emit('close')" @keydown.esc="emit('close')">
-    <form class="modal" @submit.prevent="submit">
-      <h2>New task</h2>
-      <label>Project
-        <select v-model="projectId">
-          <option v-for="p in state.projects" :key="p.id" :value="p.id">{{ p.name }}</option>
-        </select>
-      </label>
-      <label>Base branch
-        <select v-model="base" :disabled="loadingBranches || !choice.canCreate">
-          <option v-if="loadingBranches" value="">Fetching…</option>
-          <option v-for="b in choice.options" :key="b" :value="b">{{ b }}</option>
-        </select>
-      </label>
-      <p v-if="choice.hint" class="muted">{{ choice.hint }}</p>
-      <div v-if="sources.length" class="segmented" role="group" aria-label="Source">
-        <button v-for="o in options" :key="o.id" type="button" :disabled="o.disabled" :title="o.hint ?? ''"
-          :aria-pressed="source === o.id" :class="{ active: source === o.id }" @click="source = o.id">{{ o.label }}</button>
+  <div class="modal-backdrop" @click.self="emit('close')">
+    <form class="modal create-task" @submit.prevent="submit">
+      <header>
+        <h2>
+          Create Task in
+          <select v-model="projectId" class="project" aria-label="Project">
+            <option v-for="p in state.projects" :key="p.id" :value="p.id">{{ p.name }}</option>
+          </select>
+        </h2>
+        <button type="button" class="icon" aria-label="Close" @click="emit('close')">
+          <X :size="16" />
+        </button>
+      </header>
+
+      <input
+        ref="titleInput"
+        :value="title"
+        class="title"
+        :placeholder="placeholder"
+        aria-label="Task name"
+        spellcheck="false"
+        @input="onTitle"
+      />
+
+      <BasedOnPicker
+        ref="picker"
+        v-model:kind="kind"
+        :project-id="projectId"
+        :sources="sources"
+        @issue="onIssue"
+        @pr="onPr"
+        @open-settings="openSettings"
+      />
+
+      <div class="tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="tab === 'conversation'"
+          :class="{ active: tab === 'conversation' }"
+          @click="tab = 'conversation'"
+        >
+          Initial Conversation
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="tab === 'workspace'"
+          :class="{ active: tab === 'workspace' }"
+          @click="tab = 'workspace'"
+        >
+          Workspace Settings
+        </button>
       </div>
-      <template v-if="source">
-        <label>Search <input v-model="query" @keydown.enter.prevent placeholder="Empty shows your open issues" /></label>
-        <p v-if="searchError" class="error">
-          {{ searchError.message }}
-          <button v-if="searchError.setup && searchError.plugin" type="button" @click="openSettings(searchError.plugin)">Open settings</button>
-        </p>
-        <ul v-else class="issue-list">
-          <li v-for="h in hits" :key="h.key" :class="{ selected: details?.key === h.key }">
-            <button type="button" class="issue-row" @click="pick(h)">
-              <span class="mono">{{ h.key }}</span> <span class="name">{{ h.title }}</span>
-              <span class="muted">{{ h.state }}<template v-if="h.assignee"> · {{ h.assignee }}</template></span>
-            </button>
-          </li>
-          <li v-if="!hits.length && !searching" class="muted">No issues.</li>
-        </ul>
-        <p v-if="details?.branch" class="muted">Branch <span class="mono">{{ details.branch }}</span></p>
-      </template>
-      <label>Title <input ref="titleInput" v-model="title" placeholder="Fix the login redirect" /></label>
-      <label>Prompt <textarea
-        v-model="prompt"
-        rows="5"
-        :disabled="!agent"
-        :placeholder="agent ? 'Optional — sent to the agent on start' : 'Choose an agent to send a prompt'"
-      /></label>
-      <label>Agent
-        <select v-model="agent">
-          <option v-for="a in agents" :key="a.name" :value="a.name">{{ a.display_name || a.name }}</option>
-          <option value="">No agent (empty worktree)</option>
-        </select>
-      </label>
+
+      <div v-show="tab === 'conversation'" class="conversation">
+        <div class="segmented small" role="group" aria-label="Session">
+          <button
+            type="button"
+            :disabled="!agents.length"
+            :class="{ active: session === 'agent' }"
+            :aria-pressed="session === 'agent'"
+            @click="session = 'agent'"
+          >
+            Agent
+          </button>
+          <button
+            type="button"
+            :class="{ active: session === 'shell' }"
+            :aria-pressed="session === 'shell'"
+            @click="session = 'shell'"
+          >
+            Shell
+          </button>
+        </div>
+        <template v-if="session === 'agent'">
+          <select v-model="agent" aria-label="Agent">
+            <option v-for="a in agents" :key="a.name" :value="a.name">
+              {{ a.display_name || a.name }}
+            </option>
+          </select>
+          <textarea v-model="prompt" rows="4" placeholder="Describe what the agent should do…" />
+        </template>
+        <p v-else class="muted">Opens a shell in the worktree — no agent is started.</p>
+      </div>
+
+      <WorkspaceSettings
+        v-show="tab === 'workspace'"
+        v-model:mode="mode"
+        v-model:base="base"
+        v-model:branch="branch"
+        v-model:checkout="checkout"
+        v-model:push="push"
+        :branches="branches"
+        :loading="loadingBranches"
+        :pr-branch="prBranch"
+        @touch-branch="branchTouched = true"
+        @refresh="loadBranches"
+      />
+
       <p v-if="error" class="error">{{ error }}</p>
-      <div class="actions">
-        <button type="button" @click="emit('close')">Cancel</button>
-        <button type="submit" :disabled="busy || loadingBranches || !choice.canCreate">Create</button>
-      </div>
+      <footer class="actions">
+        <button type="submit" class="primary" :disabled="busy || loadingBranches || !canCreate">
+          Create <kbd>⌘</kbd><kbd>↵</kbd>
+        </button>
+      </footer>
     </form>
   </div>
 </template>
 
 <style scoped>
-.issue-list { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
-.issue-list li { display: flex; }
-.issue-row { all: unset; box-sizing: border-box; flex: 1; display: flex; gap: 8px; align-items: baseline; padding: 4px 8px; cursor: pointer; min-width: 0; }
-.issue-row:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: -2px; }
-.issue-list li .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.issue-list li:hover, .issue-list li.selected { background: var(--select); }
+.create-task {
+  width: 520px;
+}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+header h2 {
+  margin: 0;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.project {
+  width: auto;
+  border: none;
+  font-weight: 600;
+  padding: 0 4px;
+}
+.icon {
+  border: none;
+  background: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px;
+}
+.title {
+  font-size: 18px;
+  border: none;
+  padding: 6px 4px;
+}
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+.tabs button {
+  border: none;
+  background: none;
+  color: var(--muted);
+}
+.tabs button.active {
+  color: inherit;
+  background: var(--select);
+}
+.conversation {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.conversation .segmented {
+  align-self: flex-start;
+}
+.segmented.small button {
+  border: none;
+  padding: 2px 8px;
+}
+.primary {
+  background: #1f8f4e;
+  border-color: #1f8f4e;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.primary:hover:not(:disabled) {
+  background: #187a42;
+}
+.primary:disabled {
+  opacity: 0.6;
+}
+kbd {
+  font: inherit;
+  font-size: 11px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.2);
+}
 </style>

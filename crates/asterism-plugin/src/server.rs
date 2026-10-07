@@ -31,19 +31,25 @@ pub struct Host {
 }
 
 impl Host {
-    pub async fn call<P: Serialize, R: DeserializeOwned>(&self, method: &str, params: P) -> Result<R, RpcError> {
+    pub async fn call<P: Serialize, R: DeserializeOwned>(
+        &self,
+        method: &str,
+        params: P,
+    ) -> Result<R, RpcError> {
         let params = crate::to_value(params)?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         lock(&self.pending).insert(id, tx);
-        let line = serde_json::to_string(&Request::new(id, &format!("{HOST_PREFIX}{method}"), params))
-            .map_err(|e| RpcError::new(ErrorKind::Internal, e.to_string()))?;
+        let line =
+            serde_json::to_string(&Request::new(id, &format!("{HOST_PREFIX}{method}"), params))
+                .map_err(|e| RpcError::new(ErrorKind::Internal, e.to_string()))?;
         if self.out.send(line).is_err() {
             lock(&self.pending).remove(&id);
             return Err(closed());
         }
         let value = rx.await.map_err(|_| closed())??;
-        serde_json::from_value(value).map_err(|e| RpcError::new(ErrorKind::Internal, format!("unexpected host reply: {e}")))
+        serde_json::from_value(value)
+            .map_err(|e| RpcError::new(ErrorKind::Internal, format!("unexpected host reply: {e}")))
     }
 }
 
@@ -72,14 +78,22 @@ where
             }
         }
     });
-    let host = Host { out: out.clone(), pending: Pending::default(), next_id: Arc::new(AtomicU64::new(1)) };
+    let host = Host {
+        out: out.clone(),
+        pending: Pending::default(),
+        next_id: Arc::new(AtomicU64::new(1)),
+    };
     let handler = Arc::new(handler);
     let mut lines = BufReader::new(reader).lines();
     while let Some(line) = lines.next_line().await? {
-        let Ok(message) = serde_json::from_str::<Value>(&line) else { continue };
+        let Ok(message) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
         if message.get("method").is_some() {
             // Notifications have no id and fail to parse as a request; plugins ignore them.
-            let Ok(request) = serde_json::from_value::<Request>(message) else { continue };
+            let Ok(request) = serde_json::from_value::<Request>(message) else {
+                continue;
+            };
             let (handler, host, out) = (handler.clone(), host.clone(), out.clone());
             tokio::spawn(async move {
                 let id = request.id;

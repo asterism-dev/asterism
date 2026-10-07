@@ -3,7 +3,15 @@ import { baseChoice, staleDefault } from './baseBranch';
 import type { ProjectBranches } from './types';
 
 const branches = (over: Partial<ProjectBranches> = {}): ProjectBranches => ({
-  branches: ['main', 'origin/main'], default: 'origin/main', automatic: 'origin/main', configured: null, fetch_error: null, ...over,
+  branches: ['main', 'origin/main'],
+  default: 'origin/main',
+  automatic: 'origin/main',
+  configured: null,
+  fetch_error: null,
+  worktree_root: null,
+  local: [],
+  remote: [],
+  ...over,
 });
 
 describe('baseChoice', () => {
@@ -11,7 +19,12 @@ describe('baseChoice', () => {
     expect(baseChoice(null)).toEqual({ options: [], selected: '', hint: null, canCreate: false });
   });
   it('preselects the default', () => {
-    expect(baseChoice(branches())).toEqual({ options: ['main', 'origin/main'], selected: 'origin/main', hint: null, canCreate: true });
+    expect(baseChoice(branches())).toEqual({
+      options: ['main', 'origin/main'],
+      selected: 'origin/main',
+      hint: null,
+      canCreate: true,
+    });
   });
   it('blocks creation in an empty repository', () => {
     const c = baseChoice(branches({ branches: [], default: null, automatic: null }));

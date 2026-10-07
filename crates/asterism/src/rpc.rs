@@ -86,7 +86,10 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: UnixStream) {
             }
         }
     });
-    let conn = Arc::new(Conn { out, forwarders: Mutex::new(HashMap::new()) });
+    let conn = Arc::new(Conn {
+        out,
+        forwarders: Mutex::new(HashMap::new()),
+    });
     // Dropping the set on disconnect aborts in-flight requests such as an unbounded `wait`.
     let mut requests = JoinSet::new();
     let mut lines = BufReader::new(reader).lines();
@@ -102,7 +105,11 @@ async fn handle_line(daemon: Arc<Daemon>, conn: Arc<Conn>, line: String) {
     let request = match serde_json::from_str::<Request>(&line) {
         Ok(request) => request,
         Err(e) => {
-            conn.send(&Response::err(0, RpcError::new(ErrorKind::ParseError, e.to_string()))).await;
+            conn.send(&Response::err(
+                0,
+                RpcError::new(ErrorKind::ParseError, e.to_string()),
+            ))
+            .await;
             return;
         }
     };
@@ -122,7 +129,11 @@ async fn handle_line(daemon: Arc<Daemon>, conn: Arc<Conn>, line: String) {
 async fn attach(daemon: &Daemon, conn: &Conn, id: u64, raw: Value) {
     let result = params::<SessionIdParams>(raw).and_then(|p| {
         let (snapshot, rx) = daemon.attach(p.session_id)?;
-        let result = SessionAttachResult { snapshot: BASE64.encode(&snapshot.screen), rows: snapshot.rows, cols: snapshot.cols };
+        let result = SessionAttachResult {
+            snapshot: BASE64.encode(&snapshot.screen),
+            rows: snapshot.rows,
+            cols: snapshot.cols,
+        };
         Ok((p.session_id, to_value(result)?, rx))
     });
     match result {
@@ -158,7 +169,10 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
             Ok(Value::Null)
         }
         method::SESSION_DETACH => {
-            conn.stop_forwarder(&format!("attach:{}", params::<SessionIdParams>(raw)?.session_id));
+            conn.stop_forwarder(&format!(
+                "attach:{}",
+                params::<SessionIdParams>(raw)?.session_id
+            ));
             Ok(Value::Null)
         }
         other => dispatch_method(daemon, other, raw).await,
@@ -170,42 +184,64 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
     match method_name {
         method::HELLO => to_value(daemon.hello(params(raw)?)?),
         method::PROJECT_LIST => to_value(daemon.projects()?),
-        method::PROJECT_ADD => to_value(daemon.add_project(&params::<ProjectAddParams>(raw)?.path)?),
+        method::PROJECT_ADD => {
+            to_value(daemon.add_project(&params::<ProjectAddParams>(raw)?.path)?)
+        }
         method::PROJECT_REMOVE => {
             daemon.remove_project(params::<ProjectIdParams>(raw)?.project_id)?;
             Ok(Value::Null)
         }
         method::STORE_LIST => to_value(daemon.store_list()),
-        method::STORE_ADD => to_value(daemon.store_add(&params::<StoreAddParams>(raw)?.source).await?),
+        method::STORE_ADD => to_value(
+            daemon
+                .store_add(&params::<StoreAddParams>(raw)?.source)
+                .await?,
+        ),
         method::STORE_REMOVE => {
             let p: StoreRemoveParams = params(raw)?;
             daemon.store_remove(&p.name, p.uninstall_plugins).await?;
             Ok(Value::Null)
         }
         method::STORE_REFRESH => {
-            daemon.refresh_stores(params::<StoreRefreshParams>(raw)?.name.as_deref()).await?;
+            daemon
+                .refresh_stores(params::<StoreRefreshParams>(raw)?.name.as_deref())
+                .await?;
             Ok(Value::Null)
         }
         method::STORE_SET_AUTO_UPDATE => {
-            daemon.set_auto_update(params::<AutoUpdateParams>(raw)?.enabled).await?;
+            daemon
+                .set_auto_update(params::<AutoUpdateParams>(raw)?.enabled)
+                .await?;
             Ok(Value::Null)
         }
-        method::PLUGIN_SEARCH => to_value(daemon.plugin_search(&params::<PluginSearchParams>(raw)?)?),
+        method::PLUGIN_SEARCH => {
+            to_value(daemon.plugin_search(&params::<PluginSearchParams>(raw)?)?)
+        }
         method::PLUGIN_DETAILS => {
             let p: PluginRefParams = params(raw)?;
             to_value(daemon.plugin_details(&p.store, &p.name).await?)
         }
         method::PLUGIN_INSTALL => {
             let p: PluginInstallParams = params(raw)?;
-            to_value(daemon.plugin_install(&p.store, &p.name, p.accept_permissions).await?)
+            to_value(
+                daemon
+                    .plugin_install(&p.store, &p.name, p.accept_permissions)
+                    .await?,
+            )
         }
         method::PLUGIN_UPDATE => {
             let p: PluginUpdateParams = params(raw)?;
             to_value(daemon.plugin_update(&p.name, p.accept_permissions).await?)
         }
-        method::PLUGIN_ROLLBACK => to_value(daemon.plugin_rollback(&params::<PluginNameParams>(raw)?.name).await?),
+        method::PLUGIN_ROLLBACK => to_value(
+            daemon
+                .plugin_rollback(&params::<PluginNameParams>(raw)?.name)
+                .await?,
+        ),
         method::PLUGIN_UNINSTALL => {
-            daemon.plugin_uninstall(&params::<PluginNameParams>(raw)?.name).await?;
+            daemon
+                .plugin_uninstall(&params::<PluginNameParams>(raw)?.name)
+                .await?;
             Ok(Value::Null)
         }
         method::PLUGIN_SET_ENABLED => {
@@ -214,16 +250,26 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             Ok(Value::Null)
         }
         method::PLUGIN_LIST => to_value(daemon.plugin_list()?),
-        method::PLUGIN_LINK => to_value(daemon.plugin_link(&params::<PluginPathParams>(raw)?.path).await?),
+        method::PLUGIN_LINK => to_value(
+            daemon
+                .plugin_link(&params::<PluginPathParams>(raw)?.path)
+                .await?,
+        ),
         method::PLUGIN_UNLINK => {
-            daemon.plugin_unlink(&params::<PluginNameParams>(raw)?.name).await?;
+            daemon
+                .plugin_unlink(&params::<PluginNameParams>(raw)?.name)
+                .await?;
             Ok(Value::Null)
         }
         method::PLUGIN_RELOAD => {
-            daemon.reload_plugins(params::<PluginReloadParams>(raw)?.name.as_deref()).await?;
+            daemon
+                .reload_plugins(params::<PluginReloadParams>(raw)?.name.as_deref())
+                .await?;
             Ok(Value::Null)
         }
-        method::PLUGIN_SETTINGS => to_value(daemon.plugin_settings(&params::<PluginNameParams>(raw)?.name)?),
+        method::PLUGIN_SETTINGS => {
+            to_value(daemon.plugin_settings(&params::<PluginNameParams>(raw)?.name)?)
+        }
         method::PLUGIN_SET_SETTINGS => {
             let p: PluginSetSettingsParams = params(raw)?;
             daemon.set_plugin_settings(&p.name, &p.values).await?;
@@ -281,29 +327,48 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
         }
         method::PROJECT_UPDATE => to_value(daemon.update_project(params(raw)?)?),
         method::FORGE_LIST => to_value(daemon.forges()),
-        method::FORGE_STATUS => to_value(daemon.forge_status(&params::<ForgeParams>(raw)?.forge).await?),
+        method::FORGE_STATUS => to_value(
+            daemon
+                .forge_status(&params::<ForgeParams>(raw)?.forge)
+                .await?,
+        ),
         method::FORGE_REPOS => {
             let p: ForgeOwnerParams = params(raw)?;
             to_value(daemon.forge_repos(&p.forge, &p.owner).await?)
         }
-        method::TASK_SOURCE_LIST => to_value(daemon.task_sources(params::<TaskSourceListParams>(raw)?.project_id).await?),
+        method::TASK_SOURCE_LIST => to_value(
+            daemon
+                .task_sources(params::<TaskSourceListParams>(raw)?.project_id)
+                .await?,
+        ),
         method::TASK_SOURCE_SEARCH => to_value(daemon.task_source_search(&params(raw)?).await?),
         method::TASK_SOURCE_GET => to_value(daemon.task_source_get(&params(raw)?).await?),
         method::PR_LIST => to_value(daemon.pr_list(params::<PrListParams>(raw)?.project_id)),
-        method::PR_REFRESH => to_value(daemon.refresh_prs(params::<ProjectIdParams>(raw)?.project_id).await?),
+        method::PR_REFRESH => to_value(
+            daemon
+                .refresh_prs(params::<ProjectIdParams>(raw)?.project_id)
+                .await?,
+        ),
+        method::PR_SEARCH => to_value(daemon.search_pull_requests(&params(raw)?).await?),
         method::PROJECT_CLONE => {
             let p = params::<ProjectCloneParams>(raw)?;
             to_value(daemon.clone_project(&p.source, p.forge.as_deref()).await?)
         }
-        method::PROJECT_CREATE => to_value(daemon.create_project(&params::<ProjectCreateParams>(raw)?).await?),
+        method::PROJECT_CREATE => to_value(
+            daemon
+                .create_project(&params::<ProjectCreateParams>(raw)?)
+                .await?,
+        ),
         method::AGENT_LIST => to_value(daemon.agent_infos()),
         method::AGENT_CONFIG_GET => {
             let daemon = daemon.clone();
-            blocking(move || to_value(daemon.agent_config(&params::<AgentParams>(raw)?.agent)?)).await
+            blocking(move || to_value(daemon.agent_config(&params::<AgentParams>(raw)?.agent)?))
+                .await
         }
         method::AGENT_CONFIG_GET_RAW => {
             let daemon = daemon.clone();
-            blocking(move || to_value(daemon.agent_config_raw(&params::<AgentParams>(raw)?.agent)?)).await
+            blocking(move || to_value(daemon.agent_config_raw(&params::<AgentParams>(raw)?.agent)?))
+                .await
         }
         method::AGENT_CONFIG_SET => {
             let daemon = daemon.clone();
@@ -315,12 +380,16 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             .await
         }
         method::SESSION_REMOVE => {
-            daemon.remove_session(params::<SessionIdParams>(raw)?.session_id).await?;
+            daemon
+                .remove_session(params::<SessionIdParams>(raw)?.session_id)
+                .await?;
             Ok(Value::Null)
         }
         method::TASK_LIST => to_value(daemon.tasks(params(raw)?)?),
         method::TASK_CREATE => to_value(daemon.create_task(params(raw)?).await?),
-        method::TASK_ARCHIVE => to_value(daemon.archive_task(params::<TaskArchiveParams>(raw)?.task_id)?),
+        method::TASK_ARCHIVE => {
+            to_value(daemon.archive_task(params::<TaskArchiveParams>(raw)?.task_id)?)
+        }
         method::TASK_RESTORE => {
             let daemon = daemon.clone();
             let task_id = params::<TaskIdParams>(raw)?.task_id;
@@ -342,7 +411,9 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             let params = params::<TaskFileParams>(raw)?;
             blocking(move || to_value(daemon.file(params)?)).await
         }
-        method::SESSION_LIST => to_value(daemon.sessions(params::<SessionListParams>(raw)?.task_id)?),
+        method::SESSION_LIST => {
+            to_value(daemon.sessions(params::<SessionListParams>(raw)?.task_id)?)
+        }
         method::SESSION_START => to_value(daemon.start_session(params(raw)?).await?),
         method::SESSION_KILL => {
             daemon.kill_session(params::<SessionIdParams>(raw)?.session_id)?;
@@ -357,28 +428,51 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             Ok(Value::Null)
         }
         method::SESSION_READ => to_value(daemon.read(params(raw)?)?),
-        method::SESSION_WAIT => to_value(SessionWaitResult { status: daemon.wait(params(raw)?).await? }),
+        method::SESSION_WAIT => to_value(SessionWaitResult {
+            status: daemon.wait(params(raw)?).await?,
+        }),
         method::SESSION_HOOK => {
             daemon.hook(params(raw)?)?;
             Ok(Value::Null)
         }
-        other => Err(Error::new(ErrorKind::MethodNotFound, format!("unknown method {other}"))),
+        other => Err(Error::new(
+            ErrorKind::MethodNotFound,
+            format!("unknown method {other}"),
+        )),
     }
 }
 
-const HOST_DENIED: &[&str] = &[method::SHUTDOWN, method::SUBSCRIBE, method::SESSION_ATTACH, method::SESSION_DETACH];
+const HOST_DENIED: &[&str] = &[
+    method::SHUTDOWN,
+    method::SUBSCRIBE,
+    method::SESSION_ATTACH,
+    method::SESSION_DETACH,
+];
 
 pub fn host_fn(daemon: Weak<Daemon>) -> HostFn {
     Arc::new(move |_plugin: String, method_name: String, params: Value| {
         let daemon = daemon.clone();
         Box::pin(async move {
-            if method_name.starts_with("plugin.") || method_name.starts_with("store.") || method_name.starts_with("task_source.") || method_name.starts_with("pr.") || HOST_DENIED.contains(&method_name.as_str()) {
-                return Err(RpcError::new(ErrorKind::MethodNotFound, format!("{method_name} is not available to plugins")));
+            if method_name.starts_with("plugin.")
+                || method_name.starts_with("store.")
+                || method_name.starts_with("task_source.")
+                || method_name.starts_with("pr.")
+                || HOST_DENIED.contains(&method_name.as_str())
+            {
+                return Err(RpcError::new(
+                    ErrorKind::MethodNotFound,
+                    format!("{method_name} is not available to plugins"),
+                ));
             }
             let Some(daemon) = daemon.upgrade() else {
-                return Err(RpcError::new(ErrorKind::Internal, "the daemon is shutting down"));
+                return Err(RpcError::new(
+                    ErrorKind::Internal,
+                    "the daemon is shutting down",
+                ));
             };
-            dispatch_method(&daemon, &method_name, params).await.map_err(Into::into)
+            dispatch_method(&daemon, &method_name, params)
+                .await
+                .map_err(Into::into)
         })
     })
 }
@@ -400,7 +494,11 @@ async fn forward_events(mut rx: broadcast::Receiver<Event>, out: mpsc::Sender<St
     }
 }
 
-async fn forward_output(session_id: i64, mut rx: broadcast::Receiver<Vec<u8>>, out: mpsc::Sender<String>) {
+async fn forward_output(
+    session_id: i64,
+    mut rx: broadcast::Receiver<Vec<u8>>,
+    out: mpsc::Sender<String>,
+) {
     loop {
         let mut frame = match rx.recv().await {
             Ok(chunk) => chunk,
@@ -414,8 +512,13 @@ async fn forward_output(session_id: i64, mut rx: broadcast::Receiver<Vec<u8>>, o
                 Err(_) => break,
             }
         }
-        let event = Event::SessionOutput { session_id, data: BASE64.encode(&frame) };
-        let Ok(line) = serde_json::to_string(&event.to_notification()) else { continue };
+        let event = Event::SessionOutput {
+            session_id,
+            data: BASE64.encode(&frame),
+        };
+        let Ok(line) = serde_json::to_string(&event.to_notification()) else {
+            continue;
+        };
         if out.send(line).await.is_err() {
             break;
         }
@@ -423,7 +526,11 @@ async fn forward_output(session_id: i64, mut rx: broadcast::Receiver<Vec<u8>>, o
 }
 
 fn params<T: DeserializeOwned>(value: Value) -> Result<T> {
-    let value = if value.is_null() { Value::Object(Default::default()) } else { value };
+    let value = if value.is_null() {
+        Value::Object(Default::default())
+    } else {
+        value
+    };
     serde_json::from_value(value).map_err(|e| Error::new(ErrorKind::InvalidParams, e.to_string()))
 }
 

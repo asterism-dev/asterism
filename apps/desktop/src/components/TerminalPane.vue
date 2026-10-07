@@ -36,7 +36,10 @@ function syncSize() {
   if (!props.live || !attached || term.rows === 0 || term.cols === 0) return;
   const { rows, cols } = term;
   clearTimeout(resizeTimer);
-  resizeTimer = window.setTimeout(() => api.resize(props.sessionId, rows, cols).catch(() => {}), RESIZE_DEBOUNCE_MS);
+  resizeTimer = window.setTimeout(
+    () => api.resize(props.sessionId, rows, cols).catch(() => {}),
+    RESIZE_DEBOUNCE_MS,
+  );
 }
 
 async function attach() {
@@ -68,7 +71,8 @@ async function attach() {
   } catch (e) {
     if (disposed || mine !== generation) return;
     // The session ended while detached; the refreshed status swaps this pane for its exited view.
-    if (e instanceof RpcError && e.kind === 'not_found') refresh().catch((err) => toast(errorMessage(err)));
+    if (e instanceof RpcError && e.kind === 'not_found')
+      refresh().catch((err) => toast(errorMessage(err)));
     else toast(errorMessage(e));
   }
 }
@@ -96,20 +100,24 @@ onMounted(() => {
   term.loadAddon(fit);
   term.open(el.value);
   // Modifier-click keeps plain clicks free for focus, selection and TUI mouse input.
-  term.loadAddon(new WebLinksAddon((e, uri) => {
-    if (e.metaKey || e.ctrlKey) openUrl(uri).catch((err) => toast(errorMessage(err)));
-  }));
+  term.loadAddon(
+    new WebLinksAddon((e, uri) => {
+      if (e.metaKey || e.ctrlKey) openUrl(uri).catch((err) => toast(errorMessage(err)));
+    }),
+  );
   // ponytail: string index = cell column, so wide characters before a path shift its underline; map via the buffer's cells if that shows up.
   term.registerLinkProvider({
     provideLinks(y, callback) {
       const text = term?.buffer.active.getLine(y - 1)?.translateToString(true) ?? '';
-      callback(findFileLinks(text).map((link) => ({
-        range: { start: { x: link.start + 1, y }, end: { x: link.end, y } },
-        text: link.path,
-        activate: (e: MouseEvent) => {
-          if (e.metaKey || e.ctrlKey) void openFile(props.taskId, link.path, link.line);
-        },
-      })));
+      callback(
+        findFileLinks(text).map((link) => ({
+          range: { start: { x: link.start + 1, y }, end: { x: link.end, y } },
+          text: link.path,
+          activate: (e: MouseEvent) => {
+            if (e.metaKey || e.ctrlKey) void openFile(props.taskId, link.path, link.line);
+          },
+        })),
+      );
     },
   });
   // Linux app shortcuts are Ctrl+Shift chords xterm would otherwise consume.
@@ -160,5 +168,10 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.terminal { position: absolute; inset: 0; padding: 6px; background: #111217; }
+.terminal {
+  position: absolute;
+  inset: 0;
+  padding: 6px;
+  background: #111217;
+}
 </style>

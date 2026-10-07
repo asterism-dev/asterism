@@ -3,11 +3,29 @@ import { filterTasks, formatSize, taskState, worktreeActions } from './projectPa
 import type { Session, Task, Worktree } from './types';
 
 const task = (id: number, archived = false): Task => ({
-  id, project_id: 1, title: `t${id}`, slug: `${id}`, branch: `b${id}`, base_branch: 'main', worktree_path: `/wt/${id}`,
-  prompt: null, issue: null, archived, created_at: 0, last_activity_at: 0,
+  id,
+  project_id: 1,
+  title: `t${id}`,
+  slug: `${id}`,
+  branch: `b${id}`,
+  base_branch: 'main',
+  worktree_path: `/wt/${id}`,
+  prompt: null,
+  issue: null,
+  archived,
+  created_at: 0,
+  last_activity_at: 0,
 });
 const wt = (over: Partial<Worktree>): Worktree => ({
-  path: '/wt', head: 'abc', branch: 'b', is_main: false, locked: false, prunable: false, task_id: null, base_branch: null, ...over,
+  path: '/wt',
+  head: 'abc',
+  branch: 'b',
+  is_main: false,
+  locked: false,
+  prunable: false,
+  task_id: null,
+  base_branch: null,
+  ...over,
 });
 
 describe('project page', () => {

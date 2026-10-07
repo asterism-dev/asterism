@@ -23,7 +23,10 @@ fn sample_task() -> Task {
 fn server_messages_decode_by_shape() {
     let resp: ServerMessage =
         serde_json::from_value(json!({"jsonrpc": "2.0", "id": 7, "result": {"ok": true}})).unwrap();
-    assert_eq!(resp, ServerMessage::Response(Response::ok(7, json!({"ok": true}))));
+    assert_eq!(
+        resp,
+        ServerMessage::Response(Response::ok(7, json!({"ok": true})))
+    );
 
     let note: ServerMessage = serde_json::from_value(json!({
         "jsonrpc": "2.0",
@@ -31,33 +34,53 @@ fn server_messages_decode_by_shape() {
         "params": {"session_id": 3, "status": "idle"}
     }))
     .unwrap();
-    let ServerMessage::Notification(n) = note else { panic!("expected a notification") };
+    let ServerMessage::Notification(n) = note else {
+        panic!("expected a notification")
+    };
     assert_eq!(
         Event::from_notification(&n),
-        Some(Event::SessionStatusChanged { session_id: 3, status: SessionStatus::Idle })
+        Some(Event::SessionStatusChanged {
+            session_id: 3,
+            status: SessionStatus::Idle
+        })
     );
 }
 
 #[test]
 fn events_roundtrip_through_notifications() {
     let events = [
-        Event::SessionOutput { session_id: 1, data: "aGk=".into() },
+        Event::SessionOutput {
+            session_id: 1,
+            data: "aGk=".into(),
+        },
         Event::TaskChanged(sample_task()),
         Event::ProjectRemoved { project_id: 4 },
     ];
     for event in events {
-        assert_eq!(Event::from_notification(&event.to_notification()), Some(event.clone()));
+        assert_eq!(
+            Event::from_notification(&event.to_notification()),
+            Some(event.clone())
+        );
     }
 }
 
 #[test]
 fn session_kind_is_tagged_by_type() {
     assert_eq!(
-        serde_json::to_value(SessionKind::Agent { name: "claude".into() }).unwrap(),
+        serde_json::to_value(SessionKind::Agent {
+            name: "claude".into()
+        })
+        .unwrap(),
         json!({"type": "agent", "name": "claude"})
     );
-    assert_eq!(serde_json::to_value(SessionKind::Shell).unwrap(), json!({"type": "shell"}));
-    assert_eq!(serde_json::to_value(SessionStatus::WaitingInput).unwrap(), json!("waiting_input"));
+    assert_eq!(
+        serde_json::to_value(SessionKind::Shell).unwrap(),
+        json!({"type": "shell"})
+    );
+    assert_eq!(
+        serde_json::to_value(SessionStatus::WaitingInput).unwrap(),
+        json!("waiting_input")
+    );
 }
 
 #[test]
@@ -117,10 +140,19 @@ fn project_and_path_types_roundtrip() {
     assert_eq!(create.remote.unwrap().visibility, Visibility::Internal);
 
     let info = NodeConfigInfo {
-        config: NodeConfig { paths: PathSettings { repos: "~/r".into(), worktrees: "~/w".into() } },
-        defaults: PathSettings { repos: "/h/repos".into(), worktrees: "/h/worktrees".into() },
+        config: NodeConfig {
+            paths: PathSettings {
+                repos: "~/r".into(),
+                worktrees: "~/w".into(),
+            },
+        },
+        defaults: PathSettings {
+            repos: "/h/repos".into(),
+            worktrees: "/h/worktrees".into(),
+        },
     };
-    let back: NodeConfigInfo = serde_json::from_value(serde_json::to_value(&info).unwrap()).unwrap();
+    let back: NodeConfigInfo =
+        serde_json::from_value(serde_json::to_value(&info).unwrap()).unwrap();
     assert_eq!(back, info);
 
     let status: ForgeStatus = serde_json::from_value(json!({
@@ -142,29 +174,45 @@ fn plugin_types_roundtrip() {
         description: "GitHub".into(),
         origin: PluginOrigin::Builtin,
         path: "/bin".into(),
-        capabilities: vec![Capability { kind: CapabilityKind::Forge, id: "github".into(), description: String::new() }],
+        capabilities: vec![Capability {
+            kind: CapabilityKind::Forge,
+            id: "github".into(),
+            description: String::new(),
+        }],
         permissions: vec!["network".into()],
-        state: PluginState::NeedsSetup { missing: vec!["Token".into()] },
+        state: PluginState::NeedsSetup {
+            missing: vec!["Token".into()],
+        },
         backend: Some(vec!["/bin/asterism-plugin-github".into()]),
         store: None,
         update_available: false,
         previous_version: None,
     };
     let value = serde_json::to_value(&info).unwrap();
-    assert_eq!(value["state"], json!({"state": "needs_setup", "missing": ["Token"]}));
+    assert_eq!(
+        value["state"],
+        json!({"state": "needs_setup", "missing": ["Token"]})
+    );
     assert_eq!(value["capabilities"][0]["kind"], "forge");
     assert_eq!(serde_json::from_value::<PluginInfo>(value).unwrap(), info);
 
-    let spec: SettingSpec = serde_json::from_value(json!({"key": "api_key", "title": "API key", "type": "secret", "required": true})).unwrap();
+    let spec: SettingSpec = serde_json::from_value(
+        json!({"key": "api_key", "title": "API key", "type": "secret", "required": true}),
+    )
+    .unwrap();
     assert_eq!(spec.kind, SettingType::Secret);
     assert!(spec.options.is_empty() && spec.default.is_none());
 
     let event = Event::PluginsChanged {};
     assert_eq!(event.to_notification().method, "plugins.changed");
-    assert_eq!(Event::from_notification(&event.to_notification()), Some(event));
+    assert_eq!(
+        Event::from_notification(&event.to_notification()),
+        Some(event)
+    );
 
     // Plain JSON-RPC errors from third-party plugins carry no `data`.
-    let bare: RpcError = serde_json::from_value(json!({"code": -32000, "message": "boom"})).unwrap();
+    let bare: RpcError =
+        serde_json::from_value(json!({"code": -32000, "message": "boom"})).unwrap();
     assert_eq!(bare.kind(), ErrorKind::Unknown);
     assert_eq!(ErrorKind::PluginError.code(), -32009);
 }
@@ -187,10 +235,17 @@ fn store_types_roundtrip() {
         }],
         error: None,
     };
-    assert_eq!(serde_json::from_value::<StoreList>(serde_json::to_value(&list).unwrap()).unwrap(), list);
+    assert_eq!(
+        serde_json::from_value::<StoreList>(serde_json::to_value(&list).unwrap()).unwrap(),
+        list
+    );
 
-    let search: PluginSearchParams = serde_json::from_value(json!({"capability": "task_source"})).unwrap();
-    assert_eq!((search.query, search.capability, search.store), (None, Some(CapabilityKind::TaskSource), None));
+    let search: PluginSearchParams =
+        serde_json::from_value(json!({"capability": "task_source"})).unwrap();
+    assert_eq!(
+        (search.query, search.capability, search.store),
+        (None, Some(CapabilityKind::TaskSource), None)
+    );
     let update: PluginUpdateParams = serde_json::from_value(json!({"name": "gitlab"})).unwrap();
     assert_eq!(update.accept_permissions, None);
     let remove: StoreRemoveParams = serde_json::from_value(json!({"name": "acme"})).unwrap();
@@ -202,7 +257,10 @@ fn store_types_roundtrip() {
         "capabilities": [], "permissions": [], "state": {"state": "disabled"}, "backend": null
     }))
     .unwrap();
-    assert_eq!((info.origin, info.state, info.store, info.update_available), (PluginOrigin::Installed, PluginState::Disabled, None, false));
+    assert_eq!(
+        (info.origin, info.state, info.store, info.update_available),
+        (PluginOrigin::Installed, PluginState::Disabled, None, false)
+    );
 
     let event = Event::StoresChanged {};
     assert_eq!(event.to_notification().method, "stores.changed");
@@ -220,8 +278,15 @@ fn needs_setup_has_its_own_code() {
 #[test]
 fn tasks_carry_an_optional_issue() {
     let mut task = sample_task();
-    assert_eq!(serde_json::to_value(&task).unwrap()["issue"], serde_json::Value::Null);
-    task.issue = Some(IssueRef { source: "linear".into(), key: "TRA-1".into(), url: "https://linear.app/x/issue/TRA-1".into() });
+    assert_eq!(
+        serde_json::to_value(&task).unwrap()["issue"],
+        serde_json::Value::Null
+    );
+    task.issue = Some(IssueRef {
+        source: "linear".into(),
+        key: "TRA-1".into(),
+        url: "https://linear.app/x/issue/TRA-1".into(),
+    });
     let back: Task = serde_json::from_value(serde_json::to_value(&task).unwrap()).unwrap();
     assert_eq!(back, task);
     let mut old = serde_json::to_value(sample_task()).unwrap();
@@ -231,7 +296,8 @@ fn tasks_carry_an_optional_issue() {
 
 #[test]
 fn task_create_accepts_an_issue_and_defaults_it() {
-    let p: TaskCreateParams = serde_json::from_value(json!({"project_id": 1, "title": "x"})).unwrap();
+    let p: TaskCreateParams =
+        serde_json::from_value(json!({"project_id": 1, "title": "x"})).unwrap();
     assert_eq!(p.issue, None);
     let p: TaskCreateParams = serde_json::from_value(json!({
         "project_id": 1, "title": "", "issue": {"source": "github-issues", "key": "#4", "title": "T", "url": "u"}
@@ -242,11 +308,14 @@ fn task_create_accepts_an_issue_and_defaults_it() {
 
 #[test]
 fn task_source_params_default_query_and_assignment() {
-    let p: TaskSourceSearchParams = serde_json::from_value(json!({"project_id": 1, "source": "linear"})).unwrap();
+    let p: TaskSourceSearchParams =
+        serde_json::from_value(json!({"project_id": 1, "source": "linear"})).unwrap();
     assert_eq!((p.query.as_str(), p.assigned_to_me), ("", false));
     let l: TaskSourceListParams = serde_json::from_value(json!({})).unwrap();
     assert_eq!(l.project_id, None);
-    let hit: IssueHit = serde_json::from_value(json!({"key": "#1", "title": "t", "url": "u", "state": "open"})).unwrap();
+    let hit: IssueHit =
+        serde_json::from_value(json!({"key": "#1", "title": "t", "url": "u", "state": "open"}))
+            .unwrap();
     assert_eq!((hit.assignee, hit.updated_at), (None, None));
 }
 
@@ -258,10 +327,20 @@ fn pull_requests_use_snake_case_states() {
         title: "Fix login".into(),
         state: PrState::Draft,
         review: ReviewState::ChangesRequested,
-        checks: PrChecks { state: ChecksState::Failure, failing: vec!["lint".into()] },
+        checks: PrChecks {
+            state: ChecksState::Failure,
+            failing: vec!["lint".into()],
+        },
     };
     let v = serde_json::to_value(&pr).unwrap();
-    assert_eq!((v["state"].as_str(), v["review"].as_str(), v["checks"]["state"].as_str()), (Some("draft"), Some("changes_requested"), Some("failure")));
+    assert_eq!(
+        (
+            v["state"].as_str(),
+            v["review"].as_str(),
+            v["checks"]["state"].as_str()
+        ),
+        (Some("draft"), Some("changes_requested"), Some("failure"))
+    );
     assert_eq!(serde_json::from_value::<PullRequest>(v).unwrap(), pr);
     let none: PrChecks = serde_json::from_value(json!({"state": "none"})).unwrap();
     assert!(none.failing.is_empty());
@@ -269,12 +348,18 @@ fn pull_requests_use_snake_case_states() {
 
 #[test]
 fn pr_changed_events_round_trip_with_and_without_a_pr() {
-    let cleared = Event::PrChanged { task_id: 3, pr: None };
+    let cleared = Event::PrChanged {
+        task_id: 3,
+        pr: None,
+    };
     let n = cleared.to_notification();
     assert_eq!(n.method, "pr.changed");
     assert_eq!(n.params, json!({"task_id": 3, "pr": null}));
     assert_eq!(Event::from_notification(&n), Some(cleared));
-    let list: PrList = serde_json::from_value(json!({"prs": [], "errors": [{"project_id": 1, "message": "gh: not logged in"}]})).unwrap();
+    let list: PrList = serde_json::from_value(
+        json!({"prs": [], "errors": [{"project_id": 1, "message": "gh: not logged in"}]}),
+    )
+    .unwrap();
     assert_eq!(list.errors[0].project_id, 1);
     let p: PrListParams = serde_json::from_value(json!({})).unwrap();
     assert_eq!(p.project_id, None);

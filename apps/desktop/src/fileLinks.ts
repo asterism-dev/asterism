@@ -1,4 +1,9 @@
-export interface FileLink { start: number; end: number; path: string; line?: number }
+export interface FileLink {
+  start: number;
+  end: number;
+  path: string;
+  line?: number;
+}
 
 // Group 1 is the boundary before a token; requiring one keeps tokens inside URLs (`https://…`) out.
 const TOKEN = /(^|[\s(["'`])((?:~\/|\.{1,2}\/|\/)?[\w.@+-]+(?:\/[\w.@+-]+)*)(?::(\d+)(?::\d+)?)?/g;

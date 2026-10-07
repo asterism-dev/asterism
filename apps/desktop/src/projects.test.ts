@@ -1,13 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { filterTasks, relativeTime, repoNameError, sortProjects, sortTasks, sourceOwnerRepo, targetPath, visibilityChoices } from './projects';
+import {
+  filterTasks,
+  relativeTime,
+  repoNameError,
+  sortProjects,
+  sortTasks,
+  sourceOwnerRepo,
+  targetPath,
+  visibilityChoices,
+} from './projects';
 import type { ForgeStatus, Project, Task } from './types';
 
-const status: ForgeStatus = { available: true, authenticated: true, account: 'me', owners: ['acme'], error: null };
+const status: ForgeStatus = {
+  available: true,
+  authenticated: true,
+  account: 'me',
+  owners: ['acme'],
+  error: null,
+};
 
 describe('project helpers', () => {
   it('validates repository names like the daemon', () => {
     expect(repoNameError('ok.name_1-x')).toBeNull();
-    for (const bad of ['', '.', '..', '-x', 'a/b', 'a b', 'ä']) expect(repoNameError(bad)).not.toBeNull();
+    for (const bad of ['', '.', '..', '-x', 'a/b', 'a b', 'ä'])
+      expect(repoNameError(bad)).not.toBeNull();
   });
 
   it('rejects sources with invalid characters early', () => {
@@ -20,14 +36,23 @@ describe('project helpers', () => {
   it('reads owner and repo from shorthand and URLs', () => {
     expect(sourceOwnerRepo('acme/api')).toEqual({ owner: 'acme', repo: 'api' });
     expect(sourceOwnerRepo('git@github.com:acme/api.git')).toEqual({ owner: 'acme', repo: 'api' });
-    expect(sourceOwnerRepo('https://gitlab.com/group/sub/tool/')).toEqual({ owner: 'sub', repo: 'tool' });
+    expect(sourceOwnerRepo('https://gitlab.com/group/sub/tool/')).toEqual({
+      owner: 'sub',
+      repo: 'tool',
+    });
     expect(sourceOwnerRepo('acme')).toBeNull();
     expect(sourceOwnerRepo('acme/..')).toBeNull();
   });
 
   it('takes first two segments for GitHub URLs', () => {
-    expect(sourceOwnerRepo('https://github.com/acme/api/tree/main')).toEqual({ owner: 'acme', repo: 'api' });
-    expect(sourceOwnerRepo('ssh://git@github.com/acme/api.git')).toEqual({ owner: 'acme', repo: 'api' });
+    expect(sourceOwnerRepo('https://github.com/acme/api/tree/main')).toEqual({
+      owner: 'acme',
+      repo: 'api',
+    });
+    expect(sourceOwnerRepo('ssh://git@github.com/acme/api.git')).toEqual({
+      owner: 'acme',
+      repo: 'api',
+    });
   });
 
   it('previews target paths', () => {
@@ -43,20 +68,53 @@ describe('project helpers', () => {
   });
 
   it('handles null login in visibility choices', () => {
-    const noLogin: ForgeStatus = { available: true, authenticated: false, account: null, owners: ['acme'], error: null };
+    const noLogin: ForgeStatus = {
+      available: true,
+      authenticated: false,
+      account: null,
+      owners: ['acme'],
+      error: null,
+    };
     expect(visibilityChoices('acme', noLogin)).toEqual(['private', 'public', 'internal']);
     expect(visibilityChoices('other', noLogin)).toEqual(['private', 'public']);
   });
 });
 
-const proj = (id: number, name: string, created_at: number): Project => ({ id, name, path: `/p/${id}`, created_at, default_base: null });
-const tsk = (id: number, project_id: number, title: string, created_at: number, last_activity_at: number): Task => ({
-  id, project_id, title, slug: `${id}`, branch: `b${id}`, base_branch: 'main', worktree_path: `/wt/${id}`, prompt: null,
-  issue: null, archived: false, created_at, last_activity_at,
+const proj = (id: number, name: string, created_at: number): Project => ({
+  id,
+  name,
+  path: `/p/${id}`,
+  created_at,
+  default_base: null,
+});
+const tsk = (
+  id: number,
+  project_id: number,
+  title: string,
+  created_at: number,
+  last_activity_at: number,
+): Task => ({
+  id,
+  project_id,
+  title,
+  slug: `${id}`,
+  branch: `b${id}`,
+  base_branch: 'main',
+  worktree_path: `/wt/${id}`,
+  prompt: null,
+  issue: null,
+  archived: false,
+  created_at,
+  last_activity_at,
 });
 
 describe('sorting', () => {
-  const tasks = [tsk(1, 1, 'beta', 100, 500), tsk(2, 1, 'Alpha', 200, 300), tsk(3, 2, 'task 10', 300, 400), tsk(4, 2, 'task 9', 300, 100)];
+  const tasks = [
+    tsk(1, 1, 'beta', 100, 500),
+    tsk(2, 1, 'Alpha', 200, 300),
+    tsk(3, 2, 'task 10', 300, 400),
+    tsk(4, 2, 'task 9', 300, 100),
+  ];
   const projects = [proj(1, 'zeta', 10), proj(2, 'Api', 20), proj(3, 'empty', 30)];
   const ids = (items: { id: number }[]) => items.map((i) => i.id);
 
@@ -74,7 +132,11 @@ describe('sorting', () => {
 });
 
 describe('filterTasks', () => {
-  const tasks = [tsk(1, 1, 'Fix login', 0, 0), { ...tsk(2, 1, 'Docs', 0, 0), branch: 'asterism/LOGIN-copy' }, tsk(3, 2, 'Other', 0, 0)];
+  const tasks = [
+    tsk(1, 1, 'Fix login', 0, 0),
+    { ...tsk(2, 1, 'Docs', 0, 0), branch: 'asterism/LOGIN-copy' },
+    tsk(3, 2, 'Other', 0, 0),
+  ];
   const ids = (items: Task[] | null) => items?.map((t) => t.id) ?? null;
 
   it('keeps all tasks without a query or when the project name matches', () => {

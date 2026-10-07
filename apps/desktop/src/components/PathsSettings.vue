@@ -30,7 +30,11 @@ async function load() {
 
 async function choose(key: keyof PathSettings) {
   error.value = null;
-  const picked = await open({ directory: true, multiple: false, defaultPath: form.value[key] || undefined });
+  const picked = await open({
+    directory: true,
+    multiple: false,
+    defaultPath: form.value[key] || undefined,
+  });
   if (typeof picked === 'string') form.value[key] = picked;
 }
 
@@ -61,13 +65,20 @@ const fields: { key: keyof PathSettings; label: string }[] = [
       <div class="settings-row">
         <input v-model="form[f.key]" spellcheck="false" />
         <button @click="choose(f.key).catch((e) => (error = errorMessage(e)))">Choose…</button>
-        <button :disabled="form[f.key] === defaults[f.key]" @click="form[f.key] = defaults[f.key]">Default</button>
+        <button :disabled="form[f.key] === defaults[f.key]" @click="form[f.key] = defaults[f.key]">
+          Default
+        </button>
       </div>
     </section>
-    <p class="muted">Repositories are placed in &lt;owner&gt;/&lt;repo&gt;; worktrees in &lt;owner&gt;/&lt;repo&gt;/&lt;task&gt;.</p>
+    <p class="muted">
+      Repositories are placed in &lt;owner&gt;/&lt;repo&gt;; worktrees in
+      &lt;owner&gt;/&lt;repo&gt;/&lt;task&gt;.
+    </p>
     <div class="save-bar">
       <button :class="{ primary: dirty }" :disabled="saving || !dirty" @click="save">Save</button>
-      <span class="muted">Applies to new repositories and tasks; existing worktrees stay where they are.</span>
+      <span class="muted"
+        >Applies to new repositories and tasks; existing worktrees stay where they are.</span
+      >
     </div>
     <p v-if="error" class="error">{{ error }}</p>
     <button v-if="error && !saved" @click="load">Retry</button>

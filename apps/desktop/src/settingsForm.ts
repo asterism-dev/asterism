@@ -1,20 +1,44 @@
 import type { AgentConfig, AgentInfo } from './types';
 
-export interface EnvRow { key: string; value: string }
-export interface AgentForm { args: string[]; set: EnvRow[]; remove: string[]; mcpText: string; hooksText: string }
-export interface FormErrors { env?: string; mcp?: string; hooks?: string; save?: string }
+export interface EnvRow {
+  key: string;
+  value: string;
+}
+export interface AgentForm {
+  args: string[];
+  set: EnvRow[];
+  remove: string[];
+  mcpText: string;
+  hooksText: string;
+}
+export interface FormErrors {
+  env?: string;
+  mcp?: string;
+  hooks?: string;
+  save?: string;
+}
 
 export const BASE_AGENTS = ['shell', 'command'];
-export const MCP_EXAMPLE = '{\n  "mcpServers": {\n    "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] }\n  }\n}';
-export const HOOKS_EXAMPLE = '{\n  "hooks": {\n    "Stop": [{ "hooks": [{ "type": "command", "command": "say done" }] }]\n  }\n}';
+export const MCP_EXAMPLE =
+  '{\n  "mcpServers": {\n    "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] }\n  }\n}';
+export const HOOKS_EXAMPLE =
+  '{\n  "hooks": {\n    "Stop": [{ "hooks": [{ "type": "command", "command": "say done" }] }]\n  }\n}';
 
 type Parsed = { value: Record<string, unknown> | null } | { error: string };
 
-export interface AgentSections { args: boolean; mcp: boolean; hooks: boolean }
+export interface AgentSections {
+  args: boolean;
+  mcp: boolean;
+  hooks: boolean;
+}
 
 export function agentSections(info: AgentInfo | undefined): AgentSections {
   const supported = info?.settings ?? [];
-  return { args: supported.includes('args'), mcp: supported.includes('mcp'), hooks: supported.includes('hooks') };
+  return {
+    args: supported.includes('args'),
+    mcp: supported.includes('mcp'),
+    hooks: supported.includes('hooks'),
+  };
 }
 
 export function emptyForm(): AgentForm {
@@ -49,7 +73,10 @@ function parseObject(text: string, label: string): Parsed {
 }
 
 /** Browser-side checks only; the daemon validates the shapes and is authoritative. */
-export function fromForm(form: AgentForm, sections: AgentSections): { config: AgentConfig } | { errors: FormErrors } {
+export function fromForm(
+  form: AgentForm,
+  sections: AgentSections,
+): { config: AgentConfig } | { errors: FormErrors } {
   const errors: FormErrors = {};
   // No prototype, so names like "constructor" or "__proto__" are plain keys.
   const set: Record<string, string> = Object.create(null);

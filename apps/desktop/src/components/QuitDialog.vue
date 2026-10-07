@@ -31,13 +31,21 @@ async function quit(stopDaemon: boolean) {
     <div class="modal" role="dialog" aria-modal="true" aria-label="Quit asterism">
       <strong>Stop the daemon too?</strong>
       <p class="muted">
-        {{ running === 1 ? '1 session is' : `${running} sessions are` }} still running. Keep the daemon running to continue them
-        later, or stop it and end them.
+        {{ running === 1 ? '1 session is' : `${running} sessions are` }} still running. Keep the
+        daemon running to continue them later, or stop it and end them.
       </p>
       <div class="actions">
         <button type="button" :disabled="busy" @click="close">Cancel</button>
         <button type="button" :disabled="busy" @click="quit(true)">Stop daemon</button>
-        <button ref="keepButton" type="button" class="primary" :disabled="busy" @click="quit(false)">Keep running</button>
+        <button
+          ref="keepButton"
+          type="button"
+          class="primary"
+          :disabled="busy"
+          @click="quit(false)"
+        >
+          Keep running
+        </button>
       </div>
     </div>
   </div>

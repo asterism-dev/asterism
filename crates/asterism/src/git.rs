@@ -7,11 +7,20 @@ use crate::error::{Error, Result};
 
 // ponytail: git runs synchronously on the calling (async) worker; move to spawn_blocking if big repos stall other requests.
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output()?;
+    // Callers match on git's English messages.
+    let out = Command::new("git")
+        .env("LC_ALL", "C")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
-        Err(Error::new(ErrorKind::Git, String::from_utf8_lossy(&out.stderr).trim()))
+        Err(Error::new(
+            ErrorKind::Git,
+            String::from_utf8_lossy(&out.stderr).trim(),
+        ))
     }
 }
 
@@ -21,7 +30,11 @@ pub fn toplevel(path: &Path) -> Result<PathBuf> {
         .map_err(|e| {
             Error::new(
                 ErrorKind::NotARepo,
-                format!("{} is not inside a git repository: {}", path.display(), e.message),
+                format!(
+                    "{} is not inside a git repository: {}",
+                    path.display(),
+                    e.message
+                ),
             )
         })
 }
@@ -37,7 +50,21 @@ pub fn base_ref(repo: &Path) -> Result<String> {
 
 pub fn add_worktree(repo: &Path, branch: &str, path: &Path, base: &str) -> Result<()> {
     let path = path.to_string_lossy();
-    git(repo, &["worktree", "add", "-q", "--no-track", "-b", branch, &path, base]).map(|_| ()).map_err(|e| {
+    git(
+        repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--no-track",
+            "-b",
+            branch,
+            &path,
+            base,
+        ],
+    )
+    .map(|_| ())
+    .map_err(|e| {
         if e.message.contains("already exists") {
             Error::new(ErrorKind::BranchExists, e.message)
         } else {
@@ -62,49 +89,126 @@ pub fn remove_worktree(repo: &Path, worktree: &Path, force: bool) -> Result<()> 
 
 /// Rejects names git would refuse or expand (`@{-1}`) and names that read as options.
 pub fn check_branch_name(repo: &Path, name: &str) -> Result<()> {
-    if name.starts_with('-') || name.contains("@{") || git(repo, &["check-ref-format", "--branch", name]).is_err() {
-        return Err(Error::new(ErrorKind::InvalidParams, format!("invalid branch name {name:?}")));
+    if name.starts_with('-')
+        || name.contains("@{")
+        || git(repo, &["check-ref-format", "--branch", name]).is_err()
+    {
+        return Err(Error::new(
+            ErrorKind::InvalidParams,
+            format!("invalid branch name {name:?}"),
+        ));
     }
     Ok(())
 }
 
 pub fn branch_exists(repo: &Path, branch: &str) -> bool {
-    git(repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).is_ok()
+    git(
+        repo,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+    .is_ok()
 }
 
 pub fn resolves(repo: &Path, rev: &str) -> bool {
     // A leading dash would be parsed as an option by git.
-    !rev.starts_with('-') && git(repo, &["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")]).is_ok()
+    !rev.starts_with('-')
+        && git(
+            repo,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{rev}^{{commit}}"),
+            ],
+        )
+        .is_ok()
 }
 
 /// Branch names stay symbolic; anything else (`HEAD~2`, tags, SHAs) is pinned to its commit so it can't drift later.
 pub fn pin_base(repo: &Path, base: &str) -> Result<String> {
-    let is_branch = ["refs/heads/", "refs/remotes/"]
-        .iter()
-        .any(|prefix| git(repo, &["show-ref", "--verify", "--quiet", &format!("{prefix}{base}")]).is_ok());
+    let is_branch = ["refs/heads/", "refs/remotes/"].iter().any(|prefix| {
+        git(
+            repo,
+            &[
+                "show-ref",
+                "--verify",
+                "--quiet",
+                &format!("{prefix}{base}"),
+            ],
+        )
+        .is_ok()
+    });
     if is_branch {
         Ok(base.to_string())
     } else {
-        Ok(git(repo, &["rev-parse", "--verify", &format!("{base}^{{commit}}")])?.trim().to_string())
+        Ok(git(
+            repo,
+            &["rev-parse", "--verify", &format!("{base}^{{commit}}")],
+        )?
+        .trim()
+        .to_string())
     }
 }
 
 /// `refs/heads` and `refs/remotes` as short names, without the symbolic `<remote>/HEAD`.
 pub fn branches(repo: &Path) -> Result<Vec<String>> {
-    let out = git(repo, &["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"])?;
+    let out = git(
+        repo,
+        &[
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/heads",
+            "refs/remotes",
+        ],
+    )?;
     Ok(out
         .lines()
         .filter(|r| !r.ends_with("/HEAD"))
-        .filter_map(|r| r.strip_prefix("refs/heads/").or_else(|| r.strip_prefix("refs/remotes/")))
+        .filter_map(|r| {
+            r.strip_prefix("refs/heads/")
+                .or_else(|| r.strip_prefix("refs/remotes/"))
+        })
         .map(String::from)
         .collect())
 }
 
+fn refs_under(repo: &Path, namespace: &str, strip: &str) -> Result<Vec<String>> {
+    let out = git(repo, &["for-each-ref", "--format=%(refname)", namespace])?;
+    Ok(out
+        .lines()
+        .filter(|r| !r.ends_with("/HEAD"))
+        .filter_map(|r| r.strip_prefix(strip))
+        .map(String::from)
+        .collect())
+}
+
+pub fn local_branches(repo: &Path) -> Result<Vec<String>> {
+    refs_under(repo, "refs/heads", "refs/heads/")
+}
+
+/// Branches of `remote` as `<remote>/<branch>`.
+pub fn remote_branches(repo: &Path, remote: &str) -> Result<Vec<String>> {
+    refs_under(repo, &format!("refs/remotes/{remote}"), "refs/remotes/")
+}
+
 pub fn remote_head(repo: &Path, remote: &str) -> Option<String> {
-    git(repo, &["symbolic-ref", "--quiet", "--short", &format!("refs/remotes/{remote}/HEAD")])
-        .ok()
-        .map(|r| r.trim().to_string())
-        .filter(|r| !r.is_empty())
+    git(
+        repo,
+        &[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            &format!("refs/remotes/{remote}/HEAD"),
+        ],
+    )
+    .ok()
+    .map(|r| r.trim().to_string())
+    .filter(|r| !r.is_empty())
 }
 
 /// Commits on `branch` that are not on `base`; 0 when either is missing.
@@ -120,19 +224,69 @@ pub fn delete_branch(repo: &Path, branch: &str) -> Result<()> {
 }
 
 pub fn add_existing_worktree(repo: &Path, path: &Path, branch: &str) -> Result<()> {
-    git(repo, &["worktree", "add", "-q", &path.to_string_lossy(), branch]).map(|_| ())
+    git(
+        repo,
+        &["worktree", "add", "-q", &path.to_string_lossy(), branch],
+    )
+    .map(|_| ())
+}
+
+pub fn remote_branch_exists(repo: &Path, remote: &str, branch: &str) -> bool {
+    git(
+        repo,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/remotes/{remote}/{branch}"),
+        ],
+    )
+    .is_ok()
+}
+
+/// Creates local `branch` tracking `<remote>/<branch>` and checks it out at `path`.
+pub fn add_tracking_worktree(repo: &Path, path: &Path, branch: &str, remote: &str) -> Result<()> {
+    let upstream = format!("{remote}/{branch}");
+    git(
+        repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--track",
+            "-b",
+            branch,
+            &path.to_string_lossy(),
+            &upstream,
+        ],
+    )
+    .map(|_| ())
 }
 
 pub fn diff(worktree: &Path, base: &str) -> Result<String> {
     let merge_base = git(worktree, &["merge-base", base, "HEAD"])?;
-    let mut patch = git(worktree, &["diff", "--no-color", "--no-ext-diff", merge_base.trim()])?;
-    let untracked = git(worktree, &["ls-files", "-z", "--others", "--exclude-standard"])?;
+    let mut patch = git(
+        worktree,
+        &["diff", "--no-color", "--no-ext-diff", merge_base.trim()],
+    )?;
+    let untracked = git(
+        worktree,
+        &["ls-files", "-z", "--others", "--exclude-standard"],
+    )?;
     for file in untracked.split('\0').filter(|f| !f.is_empty()) {
         // `git diff --no-index` exits 1 when the files differ, so its status is ignored.
         let out = Command::new("git")
             .arg("-C")
             .arg(worktree)
-            .args(["diff", "--no-color", "--no-ext-diff", "--no-index", "--", "/dev/null", file])
+            .args([
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                "--no-index",
+                "--",
+                "/dev/null",
+                file,
+            ])
             .output()?;
         patch.push_str(&String::from_utf8_lossy(&out.stdout));
     }
@@ -148,11 +302,15 @@ pub fn truncate(message: &str) -> String {
     if trimmed.chars().count() <= MESSAGE_LIMIT {
         trimmed.to_string()
     } else {
-        format!("{}…", trimmed.chars().take(MESSAGE_LIMIT).collect::<String>())
+        format!(
+            "{}…",
+            trimmed.chars().take(MESSAGE_LIMIT).collect::<String>()
+        )
     }
 }
 
-const DEFAULT_SSH_COMMAND: &str = "ssh -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4";
+const DEFAULT_SSH_COMMAND: &str =
+    "ssh -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4";
 
 fn has_ssh_command_config(extra: &GitEnv) -> bool {
     Command::new("git")
@@ -172,9 +330,13 @@ pub fn clone_env(extra: &GitEnv) -> Vec<(String, String)> {
         ("GIT_HTTP_LOW_SPEED_LIMIT".to_string(), "1000".to_string()),
         ("GIT_HTTP_LOW_SPEED_TIME".to_string(), "60".to_string()),
     ];
-    let user_ssh = extra.iter().any(|(k, _)| k == "GIT_SSH_COMMAND") || std::env::var_os("GIT_SSH_COMMAND").is_some();
+    let user_ssh = extra.iter().any(|(k, _)| k == "GIT_SSH_COMMAND")
+        || std::env::var_os("GIT_SSH_COMMAND").is_some();
     if !user_ssh && !has_ssh_command_config(extra) {
-        env.push(("GIT_SSH_COMMAND".to_string(), DEFAULT_SSH_COMMAND.to_string()));
+        env.push((
+            "GIT_SSH_COMMAND".to_string(),
+            DEFAULT_SSH_COMMAND.to_string(),
+        ));
     }
     env.extend(extra.iter().cloned());
     env
@@ -182,28 +344,69 @@ pub fn clone_env(extra: &GitEnv) -> Vec<(String, String)> {
 
 fn run_with_env(dir: Option<&Path>, args: &[&str], env: &GitEnv) -> Result<String> {
     let mut cmd = Command::new("git");
+    cmd.env("LC_ALL", "C");
     if let Some(dir) = dir {
         cmd.arg("-C").arg(dir);
     }
-    let out = cmd.args(args).envs(env.iter().map(|(k, v)| (k, v))).stdin(std::process::Stdio::null()).output()?;
+    let out = cmd
+        .args(args)
+        .envs(env.iter().map(|(k, v)| (k, v)))
+        .stdin(std::process::Stdio::null())
+        .output()?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
-        Err(Error::new(ErrorKind::Git, truncate(&String::from_utf8_lossy(&out.stderr))))
+        Err(Error::new(
+            ErrorKind::Git,
+            truncate(&String::from_utf8_lossy(&out.stderr)),
+        ))
     }
 }
 
 pub fn remote_url(repo: &Path, remote: &str) -> Option<String> {
-    git(repo, &["remote", "get-url", remote]).ok().map(|url| url.trim().to_string()).filter(|url| !url.is_empty())
+    git(repo, &["remote", "get-url", remote])
+        .ok()
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())
 }
 
 pub fn clone_url(url: &str, target: &Path, extra: &GitEnv) -> Result<()> {
     let target = target.to_string_lossy();
-    run_with_env(None, &["clone", "-q", "--", url, &target], &clone_env(extra)).map(|_| ())
+    run_with_env(
+        None,
+        &["clone", "-q", "--", url, &target],
+        &clone_env(extra),
+    )
+    .map(|_| ())
 }
 
 pub fn fetch(repo: &Path, remote: &str, extra: &GitEnv) -> Result<()> {
-    run_with_env(Some(repo), &["fetch", "-q", "--prune", remote], &clone_env(extra)).map(|_| ())
+    run_with_env(
+        Some(repo),
+        &["fetch", "-q", "--prune", remote],
+        &clone_env(extra),
+    )
+    .map(|_| ())
+}
+
+pub fn fetch_branch(repo: &Path, remote: &str, branch: &str, extra: &GitEnv) -> Result<()> {
+    run_with_env(
+        Some(repo),
+        &["fetch", "-q", remote, branch],
+        &clone_env(extra),
+    )
+    .map(|_| ())
+}
+
+// ponytail: bounded only by clone_env's low-speed and SSH connect timeouts; add a hard deadline if pushes hang.
+/// Publishes a just-created branch; pre-push hooks are skipped because a fresh worktree lacks their dependencies.
+pub fn push_upstream(worktree: &Path, remote: &str, branch: &str, extra: &GitEnv) -> Result<()> {
+    run_with_env(
+        Some(worktree),
+        &["push", "-q", "--no-verify", "-u", remote, branch],
+        &clone_env(extra),
+    )
+    .map(|_| ())
 }
 
 pub fn init_with_readme(dir: &Path, name: &str, extra: &GitEnv) -> Result<()> {
@@ -234,14 +437,26 @@ mod tests {
     #[test]
     fn clone_env_is_non_interactive() {
         let env = clone_env(&[]);
-        for pair in [("GIT_TERMINAL_PROMPT", "0"), ("GCM_INTERACTIVE", "never"), ("GIT_HTTP_LOW_SPEED_LIMIT", "1000"), ("GIT_HTTP_LOW_SPEED_TIME", "60")] {
+        for pair in [
+            ("GIT_TERMINAL_PROMPT", "0"),
+            ("GCM_INTERACTIVE", "never"),
+            ("GIT_HTTP_LOW_SPEED_LIMIT", "1000"),
+            ("GIT_HTTP_LOW_SPEED_TIME", "60"),
+        ] {
             assert!(env.contains(&(pair.0.into(), pair.1.into())), "{pair:?}");
         }
-        let ssh = env.iter().find(|(k, _)| k == "GIT_SSH_COMMAND").map(|(_, v)| v.as_str());
+        let ssh = env
+            .iter()
+            .find(|(k, _)| k == "GIT_SSH_COMMAND")
+            .map(|(_, v)| v.as_str());
         match std::env::var_os("GIT_SSH_COMMAND") {
             None => {
                 let ssh = ssh.unwrap_or_default();
-                assert!(ssh.contains("BatchMode=yes") && ssh.contains("ConnectTimeout=30") && ssh.contains("ServerAliveCountMax=4"));
+                assert!(
+                    ssh.contains("BatchMode=yes")
+                        && ssh.contains("ConnectTimeout=30")
+                        && ssh.contains("ServerAliveCountMax=4")
+                );
             }
             Some(_) => assert_eq!(ssh, None),
         }
@@ -255,7 +470,9 @@ mod tests {
         let mut extra = isolated();
         extra.retain(|(k, _)| k != "GIT_CONFIG_GLOBAL");
         extra.push(("GIT_CONFIG_GLOBAL".into(), config.display().to_string()));
-        assert!(!clone_env(&extra).iter().any(|(k, _)| k == "GIT_SSH_COMMAND"));
+        assert!(!clone_env(&extra)
+            .iter()
+            .any(|(k, _)| k == "GIT_SSH_COMMAND"));
     }
 
     #[test]
@@ -263,16 +480,29 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let origin = dir.path().join("origin");
         init_with_readme(&origin, "demo", &isolated()).unwrap();
-        assert_eq!(std::fs::read_to_string(origin.join("README.md")).unwrap(), "# demo\n");
+        assert_eq!(
+            std::fs::read_to_string(origin.join("README.md")).unwrap(),
+            "# demo\n"
+        );
         assert_eq!(base_ref(&origin).unwrap(), "main");
 
         let target = dir.path().join("clone");
-        clone_url(&format!("file://{}", origin.display()), &target, &isolated()).unwrap();
+        clone_url(
+            &format!("file://{}", origin.display()),
+            &target,
+            &isolated(),
+        )
+        .unwrap();
         assert!(target.join("README.md").exists());
         assert!(remote_url(&target, "origin").unwrap().ends_with("origin"));
         assert_eq!(remote_url(&origin, "origin"), None);
 
-        let err = clone_url("file:///definitely/missing.git", &dir.path().join("x"), &isolated()).unwrap_err();
+        let err = clone_url(
+            "file:///definitely/missing.git",
+            &dir.path().join("x"),
+            &isolated(),
+        )
+        .unwrap_err();
         assert_eq!(err.kind, ErrorKind::Git);
     }
 
@@ -309,10 +539,19 @@ pub fn parse_worktrees(text: &str) -> Vec<WorktreeEntry> {
             });
             continue;
         }
-        let Some(entry) = list.last_mut() else { continue };
+        let Some(entry) = list.last_mut() else {
+            continue;
+        };
         match key {
             "HEAD" => entry.head = value.to_string(),
-            "branch" => entry.branch = Some(value.strip_prefix("refs/heads/").unwrap_or(value).to_string()),
+            "branch" => {
+                entry.branch = Some(
+                    value
+                        .strip_prefix("refs/heads/")
+                        .unwrap_or(value)
+                        .to_string(),
+                )
+            }
             "locked" => entry.locked = true,
             "prunable" => entry.prunable = true,
             _ => {}
@@ -322,7 +561,10 @@ pub fn parse_worktrees(text: &str) -> Vec<WorktreeEntry> {
 }
 
 pub fn worktrees(repo: &Path) -> Result<Vec<WorktreeEntry>> {
-    Ok(parse_worktrees(&git(repo, &["worktree", "list", "--porcelain"])?))
+    Ok(parse_worktrees(&git(
+        repo,
+        &["worktree", "list", "--porcelain"],
+    )?))
 }
 
 pub fn prune_worktrees(repo: &Path) -> Result<()> {
@@ -332,12 +574,18 @@ pub fn prune_worktrees(repo: &Path) -> Result<()> {
 /// Bytes below `path` without following symlinks; skips the main checkout's `.git` object store.
 pub fn dir_size(path: &Path) -> u64 {
     fn walk(path: &Path, top: bool) -> u64 {
-        let Ok(entries) = std::fs::read_dir(path) else { return 0 };
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return 0;
+        };
         entries
             .filter_map(|e| e.ok())
             .map(|entry| match entry.file_type() {
                 Ok(t) if t.is_dir() => {
-                    if top && entry.file_name() == ".git" { 0 } else { walk(&entry.path(), false) }
+                    if top && entry.file_name() == ".git" {
+                        0
+                    } else {
+                        walk(&entry.path(), false)
+                    }
                 }
                 Ok(t) if t.is_file() => entry.metadata().map(|m| m.len()).unwrap_or(0),
                 _ => 0,
@@ -356,9 +604,26 @@ mod worktree_tests {
         let text = "worktree /repo\nHEAD 1111111111\nbranch refs/heads/main\n\nworktree /wt/a\nHEAD 2222222222\nbranch refs/heads/asterism/1-a\nlocked reason\n\nworktree /wt/b\nHEAD 3333333333\ndetached\nprunable gitdir file points to non-existent location\n\n";
         let list = parse_worktrees(text);
         assert_eq!(list.len(), 3);
-        assert_eq!((list[0].path.as_str(), list[0].branch.as_deref(), list[0].is_main), ("/repo", Some("main"), true));
-        assert_eq!((list[1].branch.as_deref(), list[1].locked, list[1].is_main), (Some("asterism/1-a"), true, false));
-        assert_eq!((list[2].branch.as_deref(), list[2].prunable, list[2].head.as_str()), (None, true, "3333333333"));
+        assert_eq!(
+            (
+                list[0].path.as_str(),
+                list[0].branch.as_deref(),
+                list[0].is_main
+            ),
+            ("/repo", Some("main"), true)
+        );
+        assert_eq!(
+            (list[1].branch.as_deref(), list[1].locked, list[1].is_main),
+            (Some("asterism/1-a"), true, false)
+        );
+        assert_eq!(
+            (
+                list[2].branch.as_deref(),
+                list[2].prunable,
+                list[2].head.as_str()
+            ),
+            (None, true, "3333333333")
+        );
     }
 
     #[test]

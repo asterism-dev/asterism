@@ -14,7 +14,11 @@ pub fn run_git(dir: &Path, args: &[&str]) -> String {
         .args(args)
         .output()
         .unwrap();
-    assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
@@ -80,7 +84,11 @@ impl Node {
 
     pub fn json(&self, args: &[&str]) -> serde_json::Value {
         let out = self.cmd(&[&["--json"][..], args].concat());
-        assert!(out.status.success(), "asterism {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "asterism {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         serde_json::from_slice(&out.stdout).unwrap()
     }
 }
@@ -98,7 +106,10 @@ use asterism_core::paths::Paths;
 
 /// Where cargo puts this package's binaries, including the built-in plugin backends.
 pub fn bin_dir() -> PathBuf {
-    Path::new(env!("CARGO_BIN_EXE_asterism")).parent().unwrap().to_path_buf()
+    Path::new(env!("CARGO_BIN_EXE_asterism"))
+        .parent()
+        .unwrap()
+        .to_path_buf()
 }
 
 pub fn fixture_dir() -> PathBuf {
@@ -106,16 +117,29 @@ pub fn fixture_dir() -> PathBuf {
 }
 
 pub fn daemon_options() -> DaemonOptions {
-    DaemonOptions { builtin_plugins_dir: Some(bin_dir()), ..Default::default() }
+    DaemonOptions {
+        builtin_plugins_dir: Some(bin_dir()),
+        ..Default::default()
+    }
 }
 
 pub fn link_fixture(paths: &Paths) {
     std::fs::create_dir_all(paths.plugins_dir()).unwrap();
-    std::fs::write(paths.plugin_links(), format!("[links]\necho = {:?}\n", fixture_dir().display().to_string())).unwrap();
+    std::fs::write(
+        paths.plugin_links(),
+        format!(
+            "[links]\necho = {:?}\n",
+            fixture_dir().display().to_string()
+        ),
+    )
+    .unwrap();
 }
 
 pub fn set_fixture_token(paths: &Paths) {
-    let manifest = asterism_core::plugins::manifest::parse(&std::fs::read_to_string(fixture_dir().join("plugin.toml")).unwrap()).unwrap();
+    let manifest = asterism_core::plugins::manifest::parse(
+        &std::fs::read_to_string(fixture_dir().join("plugin.toml")).unwrap(),
+    )
+    .unwrap();
     let values = [("token".to_string(), serde_json::json!("t"))].into();
     asterism_core::plugins::settings::save(paths, "echo", &manifest.settings, &values).unwrap();
 }
@@ -148,7 +172,11 @@ pub fn plugin_manifest(name: &str, version: &str, permissions: &[&str]) -> Strin
 
 pub fn write_plugin(dir: &Path, name: &str, version: &str, permissions: &[&str]) {
     std::fs::create_dir_all(dir).unwrap();
-    std::fs::write(dir.join("plugin.toml"), plugin_manifest(name, version, permissions)).unwrap();
+    std::fs::write(
+        dir.join("plugin.toml"),
+        plugin_manifest(name, version, permissions),
+    )
+    .unwrap();
     std::fs::write(dir.join("README.md"), format!("# {name}\n")).unwrap();
 }
 
@@ -159,18 +187,27 @@ pub fn store_repo(dir: &Path, store: &str, entries: serde_json::Value) {
         run_git(dir, &["init", "-q", "-b", "main"]);
     }
     let index = serde_json::json!({ "format": 1, "name": store, "plugins": entries });
-    std::fs::write(dir.join("store.json"), serde_json::to_string_pretty(&index).unwrap()).unwrap();
+    std::fs::write(
+        dir.join("store.json"),
+        serde_json::to_string_pretty(&index).unwrap(),
+    )
+    .unwrap();
 }
 
 /// A daemon with an empty stores.toml unless one exists, so nothing reaches the network.
 pub fn daemon_with_stores(home: &Path) -> (Paths, std::sync::Arc<asterism_core::daemon::Daemon>) {
-    let paths = Paths { home: home.join("h") };
+    let paths = Paths {
+        home: home.join("h"),
+    };
     paths.ensure_dirs().unwrap();
     std::fs::create_dir_all(paths.plugins_dir()).unwrap();
     if !paths.plugin_stores_file().exists() {
         std::fs::write(paths.plugin_stores_file(), "auto_update = false\n").unwrap();
     }
-    let options = DaemonOptions { git_env: isolated_git_env(), ..daemon_options() };
+    let options = DaemonOptions {
+        git_env: isolated_git_env(),
+        ..daemon_options()
+    };
     let daemon = asterism_core::daemon::Daemon::with_options(paths.clone(), options).unwrap();
     (paths, daemon)
 }

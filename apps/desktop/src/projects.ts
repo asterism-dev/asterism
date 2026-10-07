@@ -5,7 +5,9 @@ export const COLLAPSED_KEY = 'asterism.collapsedProjects';
 export function loadCollapsed(): Record<number, boolean> {
   try {
     const ids: unknown = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]');
-    return Array.isArray(ids) ? Object.fromEntries(ids.filter((id) => typeof id === 'number').map((id) => [id, true])) : {};
+    return Array.isArray(ids)
+      ? Object.fromEntries(ids.filter((id) => typeof id === 'number').map((id) => [id, true]))
+      : {};
   } catch {
     return {};
   }
@@ -13,7 +15,14 @@ export function loadCollapsed(): Record<number, boolean> {
 
 export function saveCollapsed(collapsed: Record<number, boolean>) {
   try {
-    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(Object.keys(collapsed).filter((id) => collapsed[Number(id)]).map(Number)));
+    localStorage.setItem(
+      COLLAPSED_KEY,
+      JSON.stringify(
+        Object.keys(collapsed)
+          .filter((id) => collapsed[Number(id)])
+          .map(Number),
+      ),
+    );
   } catch {
     // Storage can be unavailable; collapsing still works for this run.
   }
@@ -39,20 +48,28 @@ export function saveSortMode(mode: SortMode) {
   }
 }
 
-const byName = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+const byName = (a: string, b: string) =>
+  a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
 
 export function sortTasks(tasks: Task[], mode: SortMode): Task[] {
   const key = (t: Task) => (mode === 'activity' ? t.last_activity_at : t.created_at);
-  return [...tasks].sort((a, b) => (mode === 'alphabetical' ? byName(a.title, b.title) : key(b) - key(a)) || b.id - a.id);
+  return [...tasks].sort(
+    (a, b) => (mode === 'alphabetical' ? byName(a.title, b.title) : key(b) - key(a)) || b.id - a.id,
+  );
 }
 
 export function projectActivity(p: Project, tasks: Task[]): number {
-  return tasks.reduce((latest, t) => (t.project_id === p.id ? Math.max(latest, t.last_activity_at) : latest), p.created_at);
+  return tasks.reduce(
+    (latest, t) => (t.project_id === p.id ? Math.max(latest, t.last_activity_at) : latest),
+    p.created_at,
+  );
 }
 
 export function sortProjects(projects: Project[], tasks: Task[], mode: SortMode): Project[] {
   const key = (p: Project) => (mode === 'activity' ? projectActivity(p, tasks) : p.created_at);
-  return [...projects].sort((a, b) => (mode === 'alphabetical' ? byName(a.name, b.name) : key(b) - key(a)) || b.id - a.id);
+  return [...projects].sort(
+    (a, b) => (mode === 'alphabetical' ? byName(a.name, b.name) : key(b) - key(a)) || b.id - a.id,
+  );
 }
 
 /** The project's tasks shown for a search, or null to hide the project; a matching project name keeps all its tasks. */
@@ -60,11 +77,19 @@ export function filterTasks(project: Project, tasks: Task[], query: string): Tas
   const q = query.trim().toLowerCase();
   const own = tasks.filter((t) => t.project_id === project.id);
   if (!q || project.name.toLowerCase().includes(q)) return own;
-  const hits = own.filter((t) => t.title.toLowerCase().includes(q) || t.branch.toLowerCase().includes(q));
+  const hits = own.filter(
+    (t) => t.title.toLowerCase().includes(q) || t.branch.toLowerCase().includes(q),
+  );
   return hits.length ? hits : null;
 }
 
-const UNITS: [number, string][] = [[31_536_000, 'y'], [604_800, 'w'], [86_400, 'd'], [3_600, 'h'], [60, 'm']];
+const UNITS: [number, string][] = [
+  [31_536_000, 'y'],
+  [604_800, 'w'],
+  [86_400, 'd'],
+  [3_600, 'h'],
+  [60, 'm'],
+];
 
 export function relativeTime(seconds: number, now: number): string {
   const elapsed = Math.max(0, now - seconds);
@@ -102,13 +127,18 @@ function isGithub(source: string): boolean {
 
 export function sourceOwnerRepo(source: string): { owner: string; repo: string } | null {
   const trimmed = source.trim();
+  // eslint-disable-next-line no-control-regex -- rejecting control characters is the point
   if (trimmed.startsWith('-') || /[\s\x00-\x1f\x7f]/.test(trimmed)) return null;
 
   let owner: string | undefined;
   let repo: string | undefined;
   const path = urlPath(trimmed);
   if (path !== null) {
-    const segments = path.replace(/\/+$/, '').replace(/\.git$/, '').split('/').filter(Boolean);
+    const segments = path
+      .replace(/\/+$/, '')
+      .replace(/\.git$/, '')
+      .split('/')
+      .filter(Boolean);
     if (segments.length < 2) return null;
     if (isGithub(trimmed)) {
       [owner, repo] = segments.slice(0, 2);

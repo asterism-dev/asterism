@@ -5,7 +5,10 @@ import { state } from './store';
 export async function leaveSettings(): Promise<boolean> {
   if (!state.settingsOpen) return true;
   if (state.settingsDirty) {
-    const discard = await ask('Discard unsaved settings changes?', { title: 'Settings', kind: 'warning' });
+    const discard = await ask('Discard unsaved settings changes?', {
+      title: 'Settings',
+      kind: 'warning',
+    });
     if (!discard) return false;
   }
   state.settingsDirty = false;

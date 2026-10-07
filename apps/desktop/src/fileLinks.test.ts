@@ -3,7 +3,9 @@ import { findFileLinks } from './fileLinks';
 
 describe('findFileLinks', () => {
   it('finds relative paths with an extension and their line', () => {
-    expect(findFileLinks('edit src/api.ts:42 now')).toEqual([{ start: 5, end: 18, path: 'src/api.ts', line: 42 }]);
+    expect(findFileLinks('edit src/api.ts:42 now')).toEqual([
+      { start: 5, end: 18, path: 'src/api.ts', line: 42 },
+    ]);
     expect(findFileLinks('a.ts:42:7')).toEqual([{ start: 0, end: 9, path: 'a.ts', line: 42 }]);
     expect(findFileLinks('Cargo.toml')).toEqual([{ start: 0, end: 10, path: 'Cargo.toml' }]);
   });

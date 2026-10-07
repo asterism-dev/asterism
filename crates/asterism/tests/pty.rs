@@ -9,7 +9,10 @@ fn spec(cwd: &std::path::Path, argv: &[&str]) -> SpawnSpec {
     SpawnSpec {
         argv: argv.iter().map(|s| s.to_string()).collect(),
         cwd: cwd.to_path_buf(),
-        env: vec![("ASTERISM_TEST".into(), "yes".into()), ("PATH".into(), std::env::var("PATH").unwrap())],
+        env: vec![
+            ("ASTERISM_TEST".into(), "yes".into()),
+            ("PATH".into(), std::env::var("PATH").unwrap()),
+        ],
         rows: 24,
         cols: 80,
     }
@@ -18,7 +21,11 @@ fn spec(cwd: &std::path::Path, argv: &[&str]) -> SpawnSpec {
 #[tokio::test]
 async fn output_lands_on_screen_and_input_reaches_process() {
     let dir = tempfile::tempdir().unwrap();
-    let pty = Pty::spawn(spec(dir.path(), &["sh", "-c", "echo ready $ASTERISM_TEST; cat"])).unwrap();
+    let pty = Pty::spawn(spec(
+        dir.path(),
+        &["sh", "-c", "echo ready $ASTERISM_TEST; cat"],
+    ))
+    .unwrap();
     assert!(eventually(|| pty.text().contains("ready yes")).await);
     pty.write(b"ping\n").unwrap();
     assert!(eventually(|| pty.text().contains("ping")).await);
@@ -37,7 +44,10 @@ async fn attach_returns_snapshot_then_streams_new_output() {
     pty.write(b"after\n").unwrap();
     let mut seen = String::new();
     while !seen.contains("after") {
-        let chunk = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
+        let chunk = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
         seen.push_str(&String::from_utf8_lossy(&chunk));
     }
 }
@@ -56,12 +66,18 @@ async fn exit_and_kill_are_reported() {
     let dir = tempfile::tempdir().unwrap();
     let done = Pty::spawn(spec(dir.path(), &["sh", "-c", "exit 0"])).unwrap();
     let mut rx = done.exited();
-    tokio::time::timeout(Duration::from_secs(5), rx.wait_for(|e| *e)).await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(5), rx.wait_for(|e| *e))
+        .await
+        .unwrap()
+        .unwrap();
 
     let sleeper = Pty::spawn(spec(dir.path(), &["sh", "-c", "sleep 30"])).unwrap();
     sleeper.kill().unwrap();
     let mut rx = sleeper.exited();
-    tokio::time::timeout(Duration::from_secs(5), rx.wait_for(|e| *e)).await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(5), rx.wait_for(|e| *e))
+        .await
+        .unwrap()
+        .unwrap();
 }
 
 #[test]
@@ -110,7 +126,11 @@ async fn attach_restores_alternate_screen_over_scrollback() {
 
 #[tokio::test]
 async fn attach_bounds_the_replayed_output() {
-    let argv = ["sh", "-c", r"yes 0123456789 | head -c 3000000; printf '\033[?1049h\033[HTUI'; cat"];
+    let argv = [
+        "sh",
+        "-c",
+        r"yes 0123456789 | head -c 3000000; printf '\033[?1049h\033[HTUI'; cat",
+    ];
     let (_pty, parser, len) = replayed(&argv, "TUI").await;
     assert!(len < TAIL_BYTES + 64 * 1024, "snapshot is {len} bytes");
     assert!(parser.screen().alternate_screen());

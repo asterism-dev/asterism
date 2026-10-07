@@ -30,7 +30,9 @@ function apply() {
   activeTheme.value = resolveTheme(themeChoice.value, window.matchMedia(systemQuery).matches);
   document.documentElement.dataset.theme = activeTheme.value;
   // Keeps the native title bar in step; `null` lets it follow the OS for "system".
-  getCurrentWindow().setTheme(themeChoice.value === 'system' ? null : themeChoice.value).catch(() => {});
+  getCurrentWindow()
+    .setTheme(themeChoice.value === 'system' ? null : themeChoice.value)
+    .catch(() => {});
 }
 
 export function setTheme(choice: ThemeChoice) {

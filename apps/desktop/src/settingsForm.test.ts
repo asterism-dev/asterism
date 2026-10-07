@@ -21,20 +21,44 @@ describe('settings form', () => {
   });
 
   it('drops empty rows and rejects duplicate keys', () => {
-    const form = { ...emptyForm(), args: ['', '  ', '--verbose'], remove: [' ', 'X_*'], set: [{ key: '', value: 'x' }] };
+    const form = {
+      ...emptyForm(),
+      args: ['', '  ', '--verbose'],
+      remove: [' ', 'X_*'],
+      set: [{ key: '', value: 'x' }],
+    };
     expect(fromForm(form, ALL)).toEqual({
       config: { args: ['--verbose'], env: { remove: ['X_*'], set: {} }, mcp: null, hooks: null },
     });
-    const dup = { ...emptyForm(), set: [{ key: 'A', value: '1' }, { key: 'A', value: '2' }] };
+    const dup = {
+      ...emptyForm(),
+      set: [
+        { key: 'A', value: '1' },
+        { key: 'A', value: '2' },
+      ],
+    };
     expect(fromForm(dup, ALL)).toEqual({ errors: { env: 'A is set twice' } });
   });
 
   it('accepts variable names that clash with Object.prototype', () => {
-    const form = { ...emptyForm(), set: [{ key: 'constructor', value: '1' }, { key: '__proto__', value: '2' }, { key: 'toString', value: '3' }] };
+    const form = {
+      ...emptyForm(),
+      set: [
+        { key: 'constructor', value: '1' },
+        { key: '__proto__', value: '2' },
+        { key: 'toString', value: '3' },
+      ],
+    };
     const result = fromForm(form, ALL);
     if (!('config' in result)) throw new Error(JSON.stringify(result));
-    expect(Object.entries(result.config.env.set)).toEqual([['constructor', '1'], ['__proto__', '2'], ['toString', '3']]);
-    expect(JSON.parse(JSON.stringify(result.config.env.set))).toEqual(JSON.parse('{"constructor":"1","__proto__":"2","toString":"3"}'));
+    expect(Object.entries(result.config.env.set)).toEqual([
+      ['constructor', '1'],
+      ['__proto__', '2'],
+      ['toString', '3'],
+    ]);
+    expect(JSON.parse(JSON.stringify(result.config.env.set))).toEqual(
+      JSON.parse('{"constructor":"1","__proto__":"2","toString":"3"}'),
+    );
   });
 
   it('reports invalid JSON per section', () => {
@@ -44,14 +68,26 @@ describe('settings form', () => {
   });
 
   it('shows only the sections an agent supports', () => {
-    const claude = { name: 'claude', available: true, display_name: 'Claude Code', settings: ['args', 'mcp', 'hooks'], plugin: 'claude' } as const;
-    expect(agentSections({ ...claude, settings: [...claude.settings] })).toEqual({ args: true, mcp: true, hooks: true });
+    const claude = {
+      name: 'claude',
+      available: true,
+      display_name: 'Claude Code',
+      settings: ['args', 'mcp', 'hooks'],
+      plugin: 'claude',
+    } as const;
+    expect(agentSections({ ...claude, settings: [...claude.settings] })).toEqual({
+      args: true,
+      mcp: true,
+      hooks: true,
+    });
     expect(agentSections(undefined)).toEqual({ args: false, mcp: false, hooks: false });
   });
 
   it('ignores options an agent does not support', () => {
     const form = { ...toForm(config), hooksText: '{ broken' };
-    expect(fromForm(form, NONE)).toEqual({ config: { ...config, args: [], mcp: null, hooks: null } });
+    expect(fromForm(form, NONE)).toEqual({
+      config: { ...config, args: [], mcp: null, hooks: null },
+    });
   });
 
   it('previews the command line with quoting', () => {

@@ -83,7 +83,8 @@ impl Client {
         tokio::spawn(async move {
             while let Some(mut line) = outgoing_rx.recv().await {
                 line.push('\n');
-                if writer.write_all(line.as_bytes()).await.is_err() || writer.flush().await.is_err() {
+                if writer.write_all(line.as_bytes()).await.is_err() || writer.flush().await.is_err()
+                {
                     break;
                 }
             }
@@ -107,7 +108,9 @@ impl Client {
                     }
                     // Fail the matching call instead of leaving it waiting forever.
                     Err(e) => {
-                        let id = serde_json::from_str::<Value>(&line).ok().and_then(|v| v["id"].as_u64());
+                        let id = serde_json::from_str::<Value>(&line)
+                            .ok()
+                            .and_then(|v| v["id"].as_u64());
                         if let Some(tx) = id.and_then(|id| lock(&reader_pending).remove(&id)) {
                             let _ = tx.send(Err(e.to_string()));
                         }
@@ -118,10 +121,20 @@ impl Client {
             lock(&reader_pending).clear();
         });
 
-        Self { next_id: AtomicU64::new(1), pending, closed, outgoing, events: Mutex::new(Some(event_rx)) }
+        Self {
+            next_id: AtomicU64::new(1),
+            pending,
+            closed,
+            outgoing,
+            events: Mutex::new(Some(event_rx)),
+        }
     }
 
-    pub async fn call<P: Serialize, T: DeserializeOwned>(&self, method: &str, params: P) -> Result<T, ClientError> {
+    pub async fn call<P: Serialize, T: DeserializeOwned>(
+        &self,
+        method: &str,
+        params: P,
+    ) -> Result<T, ClientError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         lock(&self.pending).insert(id, tx);
@@ -130,8 +143,13 @@ impl Client {
             return Err(ClientError::Closed);
         }
         let request = Request::new(id, method, serde_json::to_value(params)?);
-        self.outgoing.send(serde_json::to_string(&request)?).map_err(|_| ClientError::Closed)?;
-        let response = rx.await.map_err(|_| ClientError::Closed)?.map_err(ClientError::Protocol)?;
+        self.outgoing
+            .send(serde_json::to_string(&request)?)
+            .map_err(|_| ClientError::Closed)?;
+        let response = rx
+            .await
+            .map_err(|_| ClientError::Closed)?
+            .map_err(ClientError::Protocol)?;
         match (response.result, response.error) {
             (_, Some(error)) => Err(ClientError::Rpc(error)),
             (result, None) => Ok(serde_json::from_value(result.unwrap_or(Value::Null))?),

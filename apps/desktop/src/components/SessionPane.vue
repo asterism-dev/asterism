@@ -5,10 +5,14 @@ import { state } from '../store';
 import TerminalPane from './TerminalPane.vue';
 
 const props = defineProps<{ params: { params: { sessionId: number }; api: DockviewPanelApi } }>();
-const session = computed(() => state.sessions.find((s) => s.id === props.params.params.sessionId) ?? null);
+const session = computed(
+  () => state.sessions.find((s) => s.id === props.params.params.sessionId) ?? null,
+);
 // dockview keeps hidden panels mounted, so the terminal is torn down here to detach it like an inactive tab.
 const visible = ref(props.params.api.isVisible);
-const subscription = props.params.api.onDidVisibilityChange((e) => { visible.value = e.isVisible; });
+const subscription = props.params.api.onDidVisibilityChange((e) => {
+  visible.value = e.isVisible;
+});
 onUnmounted(() => subscription.dispose());
 </script>
 

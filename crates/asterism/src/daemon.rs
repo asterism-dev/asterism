@@ -4,7 +4,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
-use asterism_plugin::protocol::{self, BranchPr, PullRequestsParams, CloneParams, CreateRemoteParams, GetIssueParams, LaunchMode, ListReposParams, SearchIssuesParams, TaskSourceCheck, TaskSourceCheckParams, PrepareParams, PrepareResult, ResolveOwnerParams, ResolveOwnerResult};
+use asterism_plugin::protocol::{
+    self, BranchPr, CloneParams, CreateRemoteParams, GetIssueParams, LaunchMode, ListReposParams,
+    PrepareParams, PrepareResult, PullRequestsParams, ResolveOwnerParams, ResolveOwnerResult,
+    SearchIssuesParams, SearchPullRequestsParams, TaskSourceCheck, TaskSourceCheckParams,
+};
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
 use asterism_proto::PROTO_VERSION;
@@ -18,17 +22,17 @@ use crate::config::{self, Config};
 use crate::error::{Error, Result};
 use crate::files;
 use crate::git::GitEnv;
+use crate::node_settings::LOCAL_OWNER;
 use crate::paths::Paths;
+use crate::plugins::catalog::{self, EntrySource, StoreConfig};
 use crate::plugins::manifest::{self, AgentDecl, LaunchKind, Manifest};
 use crate::plugins::process::{self, HostFn};
 use crate::plugins::registry::{self, Plugin, Status};
-use crate::plugins::catalog::{self, EntrySource, StoreConfig};
 use crate::plugins::{install, settings, source, store_ops, PluginSet, Runtime, STORE_LOCK};
 use crate::pr_status::{self, ForgeCandidate, InFlight, PrStatus};
 use crate::proc_stats::{self, CpuTracker};
 use crate::session::{Pty, Snapshot, SpawnSpec, SCROLLBACK_LINES};
 use crate::store::Store;
-use crate::node_settings::LOCAL_OWNER;
 use crate::{git, lock, node_settings, repo_source, status};
 
 const DEFAULT_ROWS: u16 = 40;
@@ -71,8 +75,13 @@ impl Default for DaemonOptions {
 
 /// The daemon's directory (bundled sidecars) followed by the inherited PATH.
 fn tool_path() -> Result<(PathBuf, String)> {
-    let bin_dir = std::env::current_exe()?.parent().map(Path::to_path_buf).unwrap_or_default();
-    let inherited = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default();
+    let bin_dir = std::env::current_exe()?
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    let inherited = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+        .unwrap_or_default();
     let path = std::env::join_paths(std::iter::once(bin_dir.clone()).chain(inherited))
         .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
     Ok((bin_dir, path.to_string_lossy().into_owned()))
@@ -88,9 +97,18 @@ fn plugin_env(paths: &Paths, extra: &[(String, String)]) -> Result<Vec<(String, 
         .collect();
     env.extend([
         ("PATH".to_string(), path),
-        ("ASTERISM_HOME".to_string(), paths.home.display().to_string()),
-        ("ASTERISM_SOCKET".to_string(), paths.socket().display().to_string()),
-        ("ASTERISM_CLI".to_string(), bin_dir.join("asterism").display().to_string()),
+        (
+            "ASTERISM_HOME".to_string(),
+            paths.home.display().to_string(),
+        ),
+        (
+            "ASTERISM_SOCKET".to_string(),
+            paths.socket().display().to_string(),
+        ),
+        (
+            "ASTERISM_CLI".to_string(),
+            bin_dir.join("asterism").display().to_string(),
+        ),
     ]);
     env.extend(extra.iter().cloned());
     Ok(env)
@@ -106,7 +124,9 @@ struct StoreStatus {
 }
 
 fn unix_now() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 pub struct Daemon {
@@ -167,17 +187,31 @@ impl Daemon {
     }
 
     pub fn plugin_set(&self) -> Arc<PluginSet> {
-        self.plugins.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+        self.plugins
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     pub fn call_timeout(&self) -> Duration {
         self.runtime.call_timeout
     }
 
-    pub async fn plugin_call(&self, plugin: &str, method: &str, params: Value, timeout: Option<Duration>) -> Result<Value> {
+    pub async fn plugin_call(
+        &self,
+        plugin: &str,
+        method: &str,
+        params: Value,
+        timeout: Option<Duration>,
+    ) -> Result<Value> {
         let set = self.plugin_set();
-        let unavailable = |reason: String| Error::new(ErrorKind::PluginError, format!("plugin {plugin} {reason}"));
-        let entry = set.registry.get(plugin).ok_or_else(|| unavailable("is not installed".into()))?;
+        let unavailable = |reason: String| {
+            Error::new(ErrorKind::PluginError, format!("plugin {plugin} {reason}"))
+        };
+        let entry = set
+            .registry
+            .get(plugin)
+            .ok_or_else(|| unavailable("is not installed".into()))?;
         if let Status::Broken(reason) = &entry.status {
             return Err(unavailable(format!("is broken: {reason}")));
         }
@@ -189,11 +223,17 @@ impl Daemon {
             if !missing.is_empty() {
                 return Err(Error::new(
                     ErrorKind::NeedsSetup,
-                    format!("{plugin}: {} is not set, see Settings → Plugins", missing.join(", ")),
+                    format!(
+                        "{plugin}: {} is not set, see Settings → Plugins",
+                        missing.join(", ")
+                    ),
                 ));
             }
         }
-        let backend = set.backend(plugin).cloned().ok_or_else(|| unavailable("has no backend".into()))?;
+        let backend = set
+            .backend(plugin)
+            .cloned()
+            .ok_or_else(|| unavailable("has no backend".into()))?;
         backend.call(method, params, timeout).await
     }
 
@@ -223,10 +263,16 @@ impl Daemon {
 
     fn plugin_info(&self, set: &PluginSet, plugin: &Plugin) -> PluginInfo {
         let state = match &plugin.status {
-            Status::Broken(reason) => PluginState::Broken { reason: reason.clone() },
+            Status::Broken(reason) => PluginState::Broken {
+                reason: reason.clone(),
+            },
             Status::Ok => match set.backend(&plugin.name).and_then(|b| b.failing()) {
                 Some(reason) => PluginState::Failing { reason },
-                None => match plugin.manifest.as_ref().map(|m| settings::missing(&self.paths, &plugin.name, &m.settings)) {
+                None => match plugin
+                    .manifest
+                    .as_ref()
+                    .map(|m| settings::missing(&self.paths, &plugin.name, &m.settings))
+                {
                     Some(Ok(missing)) if !missing.is_empty() => PluginState::NeedsSetup { missing },
                     Some(Err(e)) => PluginState::Broken { reason: e.message },
                     _ => PluginState::Ok,
@@ -235,7 +281,9 @@ impl Daemon {
             Status::Disabled => PluginState::Disabled,
         };
         let manifest = plugin.manifest.as_ref();
-        let entry = (plugin.origin == PluginOrigin::Installed).then(|| set.installed.plugins.get(&plugin.name)).flatten();
+        let entry = (plugin.origin == PluginOrigin::Installed)
+            .then(|| set.installed.plugins.get(&plugin.name))
+            .flatten();
         PluginInfo {
             name: plugin.name.clone(),
             version: manifest.map(|m| m.version.clone()),
@@ -254,7 +302,12 @@ impl Daemon {
 
     pub fn plugin_list(&self) -> Result<Vec<PluginInfo>> {
         let set = self.plugin_set();
-        Ok(set.registry.plugins().iter().map(|p| self.plugin_info(&set, p)).collect())
+        Ok(set
+            .registry
+            .plugins()
+            .iter()
+            .map(|p| self.plugin_info(&set, p))
+            .collect())
     }
 
     /// Whether the plugin's store offers something newer than what is installed.
@@ -269,7 +322,10 @@ impl Daemon {
             Some(match entry.source() {
                 EntrySource::Git { git_ref, .. } => installed.git_ref.as_deref() != Some(git_ref),
                 EntrySource::Local { path } => {
-                    let text = std::fs::read_to_string(source::plugin_dir(&dir, path).ok()?.join("plugin.toml")).ok()?;
+                    let text = std::fs::read_to_string(
+                        source::plugin_dir(&dir, path).ok()?.join("plugin.toml"),
+                    )
+                    .ok()?;
                     manifest::parse(&text).ok()?.version != installed.version
                 }
             })
@@ -279,7 +335,12 @@ impl Daemon {
 
     fn plugin_info_of(&self, name: &str) -> Result<PluginInfo> {
         let set = self.plugin_set();
-        let plugin = set.registry.get(name).ok_or_else(|| Error::new(ErrorKind::NotFound, format!("plugin {name} is not installed")))?;
+        let plugin = set.registry.get(name).ok_or_else(|| {
+            Error::new(
+                ErrorKind::NotFound,
+                format!("plugin {name} is not installed"),
+            )
+        })?;
         Ok(self.plugin_info(&set, plugin))
     }
 
@@ -287,22 +348,32 @@ impl Daemon {
         let file = store_ops::load(&self.paths)?;
         let indexes = store_ops::indexes(&self.paths, &file);
         let set = self.plugin_set();
-        Ok(catalog::search(&indexes, params.query.as_deref(), params.capability, params.store.as_deref())
-            .into_iter()
-            .map(|(store, entry)| {
-                let plugin = set.registry.get(&entry.name);
-                let installed = set.installed.plugins.get(&entry.name).filter(|e| e.store == store);
-                SearchHit {
-                    store: store.to_string(),
-                    name: entry.name.clone(),
-                    description: entry.description.clone(),
-                    tags: entry.tags.clone(),
-                    installed_version: installed.map(|e| e.version.clone()),
-                    update_available: installed.is_some() && plugin.is_some_and(|p| self.update_available(&set, p)),
-                    linked: plugin.is_some_and(|p| p.origin == PluginOrigin::Linked),
-                }
-            })
-            .collect())
+        Ok(catalog::search(
+            &indexes,
+            params.query.as_deref(),
+            params.capability,
+            params.store.as_deref(),
+        )
+        .into_iter()
+        .map(|(store, entry)| {
+            let plugin = set.registry.get(&entry.name);
+            let installed = set
+                .installed
+                .plugins
+                .get(&entry.name)
+                .filter(|e| e.store == store);
+            SearchHit {
+                store: store.to_string(),
+                name: entry.name.clone(),
+                description: entry.description.clone(),
+                tags: entry.tags.clone(),
+                installed_version: installed.map(|e| e.version.clone()),
+                update_available: installed.is_some()
+                    && plugin.is_some_and(|p| self.update_available(&set, p)),
+                linked: plugin.is_some_and(|p| p.origin == PluginOrigin::Linked),
+            }
+        })
+        .collect())
     }
 
     async fn resolve_entry(&self, store: &str, name: &str) -> Result<install::Resolved> {
@@ -333,12 +404,21 @@ impl Daemon {
         let set = self.plugin_set();
         for cap in manifest.capabilities() {
             let owner = set.registry.plugins().iter().find(|p| {
-                p.is_ok() && p.name != manifest.name && p.capabilities().iter().any(|c| c.kind == cap.kind && c.id == cap.id)
+                p.is_ok()
+                    && p.name != manifest.name
+                    && p.capabilities()
+                        .iter()
+                        .any(|c| c.kind == cap.kind && c.id == cap.id)
             });
             if let Some(owner) = owner {
                 return Err(Error::new(
                     ErrorKind::InvalidParams,
-                    format!("{} {:?} is already provided by plugin {}", catalog::capability_tag(cap.kind), cap.id, owner.name),
+                    format!(
+                        "{} {:?} is already provided by plugin {}",
+                        catalog::capability_tag(cap.kind),
+                        cap.id,
+                        owner.name
+                    ),
                 ));
             }
         }
@@ -346,8 +426,15 @@ impl Daemon {
     }
 
     fn permissions_error(name: &str, wanted: &[String]) -> Error {
-        let list = if wanted.is_empty() { "none".to_string() } else { wanted.join(", ") };
-        Error::new(ErrorKind::PermissionsChanged, format!("{name} asks for permissions: {list}"))
+        let list = if wanted.is_empty() {
+            "none".to_string()
+        } else {
+            wanted.join(", ")
+        };
+        Error::new(
+            ErrorKind::PermissionsChanged,
+            format!("{name} asks for permissions: {list}"),
+        )
     }
 
     async fn write_install(&self, store: &str, resolved: install::Resolved) -> Result<PluginInfo> {
@@ -363,34 +450,76 @@ impl Daemon {
         self.plugin_info_of(&name)
     }
 
-    pub async fn plugin_install(&self, store: &str, name: &str, accept: Vec<String>) -> Result<PluginInfo> {
-        if let Some(entry) = self.plugin_set().installed.plugins.get(name).filter(|e| e.store != store) {
-            return Err(Error::new(ErrorKind::InvalidParams, format!("{name} is installed from store {}; uninstall it first", entry.store)));
+    pub async fn plugin_install(
+        &self,
+        store: &str,
+        name: &str,
+        accept: Vec<String>,
+    ) -> Result<PluginInfo> {
+        if let Some(entry) = self
+            .plugin_set()
+            .installed
+            .plugins
+            .get(name)
+            .filter(|e| e.store != store)
+        {
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                format!(
+                    "{name} is installed from store {}; uninstall it first",
+                    entry.store
+                ),
+            ));
         }
         let resolved = self.resolve_entry(store, name).await?;
         self.check_collisions(&resolved.manifest)?;
         if !install::same_permissions(&accept, &resolved.manifest.permissions) {
-            return Err(Self::permissions_error(name, &resolved.manifest.permissions));
+            return Err(Self::permissions_error(
+                name,
+                &resolved.manifest.permissions,
+            ));
         }
         self.write_install(store, resolved).await
     }
 
-    pub async fn plugin_update(&self, name: &str, accept: Option<Vec<String>>) -> Result<PluginInfo> {
+    pub async fn plugin_update(
+        &self,
+        name: &str,
+        accept: Option<Vec<String>>,
+    ) -> Result<PluginInfo> {
         self.update_plugin(name, accept, false).await
     }
 
-    async fn update_plugin(&self, name: &str, accept: Option<Vec<String>>, auto: bool) -> Result<PluginInfo> {
+    async fn update_plugin(
+        &self,
+        name: &str,
+        accept: Option<Vec<String>>,
+        auto: bool,
+    ) -> Result<PluginInfo> {
         let entry = self
             .plugin_set()
             .installed
             .plugins
             .get(name)
             .cloned()
-            .ok_or_else(|| Error::new(ErrorKind::NotFound, format!("plugin {name} is not installed from a store")))?;
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::NotFound,
+                    format!("plugin {name} is not installed from a store"),
+                )
+            })?;
         install::check_version(&entry.version)?;
-        let current = self.paths.plugins_installed().join(name).join(&entry.version).join("plugin.toml");
-        let old_permissions =
-            std::fs::read_to_string(current).ok().and_then(|t| manifest::parse(&t).ok()).map(|m| m.permissions).unwrap_or_default();
+        let current = self
+            .paths
+            .plugins_installed()
+            .join(name)
+            .join(&entry.version)
+            .join("plugin.toml");
+        let old_permissions = std::fs::read_to_string(current)
+            .ok()
+            .and_then(|t| manifest::parse(&t).ok())
+            .map(|m| m.permissions)
+            .unwrap_or_default();
         let resolved = self.resolve_entry(&entry.store, name).await?;
         if resolved.manifest.version == entry.version && resolved.git_ref == entry.git_ref {
             return self.plugin_info_of(name);
@@ -413,23 +542,29 @@ impl Daemon {
 
     pub async fn plugin_rollback(&self, name: &str) -> Result<PluginInfo> {
         let plugin = name.to_string();
-        self.plugin_op(move |paths, _| install::rollback(paths, &plugin)).await?;
+        self.plugin_op(move |paths, _| install::rollback(paths, &plugin))
+            .await?;
         self.reload_plugins(None).await?;
         self.plugin_info_of(name)
     }
 
     pub async fn plugin_uninstall(&self, name: &str) -> Result<()> {
         let plugin = name.to_string();
-        self.plugin_op(move |paths, _| install::uninstall(paths, &plugin)).await?;
+        self.plugin_op(move |paths, _| install::uninstall(paths, &plugin))
+            .await?;
         self.reload_plugins(None).await
     }
 
     pub async fn plugin_set_enabled(&self, name: &str, enabled: bool) -> Result<()> {
         if self.plugin_set().registry.get(name).is_none() {
-            return Err(Error::new(ErrorKind::NotFound, format!("plugin {name} is not installed")));
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                format!("plugin {name} is not installed"),
+            ));
         }
         let plugin = name.to_string();
-        self.plugin_op(move |paths, _| install::set_enabled(paths, &plugin, enabled)).await?;
+        self.plugin_op(move |paths, _| install::set_enabled(paths, &plugin, enabled))
+            .await?;
         self.reload_plugins(None).await
     }
 
@@ -437,7 +572,12 @@ impl Daemon {
     pub async fn auto_update(&self) {
         let names: Vec<String> = {
             let set = self.plugin_set();
-            set.registry.plugins().iter().filter(|p| self.update_available(&set, p)).map(|p| p.name.clone()).collect()
+            set.registry
+                .plugins()
+                .iter()
+                .filter(|p| self.update_available(&set, p))
+                .map(|p| p.name.clone())
+                .collect()
         };
         for name in names {
             if let Err(e) = self.update_plugin(&name, None, true).await {
@@ -476,7 +616,12 @@ impl Daemon {
     pub fn store_list(&self) -> StoreList {
         let file = match store_ops::load(&self.paths) {
             Ok(file) => file,
-            Err(e) => return StoreList { error: Some(e.message), ..Default::default() },
+            Err(e) => {
+                return StoreList {
+                    error: Some(e.message),
+                    ..Default::default()
+                }
+            }
         };
         let status = lock(&self.store_status);
         let stores = file
@@ -490,16 +635,23 @@ impl Daemon {
                     official: s.official,
                     last_refreshed: st.last_refreshed,
                     last_error: st.last_error,
-                    plugin_count: source::read_index(&store_ops::store_dir(&self.paths, s)).map_or(0, |i| i.plugins.len()),
+                    plugin_count: source::read_index(&store_ops::store_dir(&self.paths, s))
+                        .map_or(0, |i| i.plugins.len()),
                 }
             })
             .collect();
-        StoreList { auto_update: file.auto_update, stores, error: None }
+        StoreList {
+            auto_update: file.auto_update,
+            stores,
+            error: None,
+        }
     }
 
     pub async fn store_add(&self, source_url: &str) -> Result<StoreInfo> {
         let source_url = source_url.trim().to_string();
-        let added = self.plugin_op(move |paths, env| store_ops::add_store(paths, &source_url, env)).await?;
+        let added = self
+            .plugin_op(move |paths, env| store_ops::add_store(paths, &source_url, env))
+            .await?;
         self.set_store_status(&added.name, &Ok(()));
         self.emit(Event::StoresChanged {});
         self.store_list()
@@ -540,9 +692,17 @@ impl Daemon {
     /// Refreshes one store (its error is returned) or all of them (errors are recorded and logged).
     pub async fn refresh_stores(&self, name: Option<&str>) -> Result<()> {
         let file = store_ops::load(&self.paths)?;
-        let targets: Vec<StoreConfig> = file.stores.iter().filter(|s| name.is_none_or(|n| n == s.name)).cloned().collect();
+        let targets: Vec<StoreConfig> = file
+            .stores
+            .iter()
+            .filter(|s| name.is_none_or(|n| n == s.name))
+            .cloned()
+            .collect();
         if let (Some(name), true) = (name, targets.is_empty()) {
-            return Err(Error::new(ErrorKind::NotFound, format!("no store named {name}")));
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                format!("no store named {name}"),
+            ));
         }
         let mut failed = None;
         for store in targets {
@@ -550,7 +710,11 @@ impl Daemon {
             let result = self
                 .plugin_op(move |paths, env| {
                     // Skip a store removed since the snapshot so its checkout is not re-created.
-                    if !store_ops::load(paths)?.stores.iter().any(|s| s.name == config.name) {
+                    if !store_ops::load(paths)?
+                        .stores
+                        .iter()
+                        .any(|s| s.name == config.name)
+                    {
                         return Ok(false);
                     }
                     store_ops::sync_store(paths, &config, env).map(|_| true)
@@ -599,11 +763,25 @@ impl Daemon {
     pub async fn reload_plugins(&self, name: Option<&str>) -> Result<()> {
         if let Some(name) = name {
             if self.plugin_set().registry.get(name).is_none() {
-                return Err(Error::new(ErrorKind::NotFound, format!("plugin {name} is not installed")));
+                return Err(Error::new(
+                    ErrorKind::NotFound,
+                    format!("plugin {name} is not installed"),
+                ));
             }
         }
-        let fresh = Arc::new(PluginSet::load(&self.paths, &self.builtin_dir, &self.runtime, &self.host));
-        let old = std::mem::replace(&mut *self.plugins.write().unwrap_or_else(std::sync::PoisonError::into_inner), fresh);
+        let fresh = Arc::new(PluginSet::load(
+            &self.paths,
+            &self.builtin_dir,
+            &self.runtime,
+            &self.host,
+        ));
+        let old = std::mem::replace(
+            &mut *self
+                .plugins
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            fresh,
+        );
         old.stop_all().await;
         self.emit(Event::PluginsChanged {});
         Ok(())
@@ -611,9 +789,13 @@ impl Daemon {
 
     pub async fn plugin_link(&self, path: &str) -> Result<PluginInfo> {
         let invalid = |message: String| Error::new(ErrorKind::InvalidParams, message);
-        let dir = node_settings::expand_home(path)?.canonicalize().map_err(|e| invalid(format!("{path}: {e}")))?;
-        let text = std::fs::read_to_string(dir.join("plugin.toml")).map_err(|e| invalid(format!("no plugin.toml in {}: {e}", dir.display())))?;
-        let manifest = manifest::parse(&text).map_err(|e| invalid(format!("{}: {e}", dir.join("plugin.toml").display())))?;
+        let dir = node_settings::expand_home(path)?
+            .canonicalize()
+            .map_err(|e| invalid(format!("{path}: {e}")))?;
+        let text = std::fs::read_to_string(dir.join("plugin.toml"))
+            .map_err(|e| invalid(format!("no plugin.toml in {}: {e}", dir.display())))?;
+        let manifest = manifest::parse(&text)
+            .map_err(|e| invalid(format!("{}: {e}", dir.join("plugin.toml").display())))?;
         {
             let _guard = crate::lock(&agent_settings::SAVE_LOCK);
             let mut links = registry::load_links(&self.paths.plugin_links()).map_err(invalid)?;
@@ -622,16 +804,23 @@ impl Daemon {
         }
         self.reload_plugins(None).await?;
         let set = self.plugin_set();
-        let plugin = set.registry.get(&manifest.name).ok_or_else(|| Error::new(ErrorKind::Internal, "linked plugin vanished"))?;
+        let plugin = set
+            .registry
+            .get(&manifest.name)
+            .ok_or_else(|| Error::new(ErrorKind::Internal, "linked plugin vanished"))?;
         Ok(self.plugin_info(&set, plugin))
     }
 
     pub async fn plugin_unlink(&self, name: &str) -> Result<()> {
         {
             let _guard = crate::lock(&agent_settings::SAVE_LOCK);
-            let mut links = registry::load_links(&self.paths.plugin_links()).map_err(|e| Error::new(ErrorKind::InvalidParams, e))?;
+            let mut links = registry::load_links(&self.paths.plugin_links())
+                .map_err(|e| Error::new(ErrorKind::InvalidParams, e))?;
             if links.remove(name).is_none() {
-                return Err(Error::new(ErrorKind::NotFound, format!("plugin {name} is not linked")));
+                return Err(Error::new(
+                    ErrorKind::NotFound,
+                    format!("plugin {name} is not linked"),
+                ));
             }
             registry::save_links(&self.paths.plugin_links(), &links)?;
         }
@@ -640,11 +829,18 @@ impl Daemon {
 
     fn plugin_schema(&self, name: &str) -> Result<Vec<SettingSpec>> {
         let set = self.plugin_set();
-        let plugin = set.registry.get(name).ok_or_else(|| Error::new(ErrorKind::NotFound, format!("plugin {name} is not installed")))?;
-        let manifest = plugin
-            .manifest
-            .as_ref()
-            .ok_or_else(|| Error::new(ErrorKind::InvalidParams, format!("plugin {name} is broken and has no settings")))?;
+        let plugin = set.registry.get(name).ok_or_else(|| {
+            Error::new(
+                ErrorKind::NotFound,
+                format!("plugin {name} is not installed"),
+            )
+        })?;
+        let manifest = plugin.manifest.as_ref().ok_or_else(|| {
+            Error::new(
+                ErrorKind::InvalidParams,
+                format!("plugin {name} is broken and has no settings"),
+            )
+        })?;
         Ok(manifest.settings.clone())
     }
 
@@ -652,11 +848,17 @@ impl Daemon {
         settings::view(&self.paths, name, &self.plugin_schema(name)?)
     }
 
-    pub async fn set_plugin_settings(&self, name: &str, values: &BTreeMap<String, Value>) -> Result<()> {
+    pub async fn set_plugin_settings(
+        &self,
+        name: &str,
+        values: &BTreeMap<String, Value>,
+    ) -> Result<()> {
         let schema = self.plugin_schema(name)?;
         settings::save(&self.paths, name, &schema, values)?;
         if let Some(backend) = self.plugin_set().backend(name).cloned() {
-            backend.update_settings(settings::resolved(&self.paths, name, &schema)?).await;
+            backend
+                .update_settings(settings::resolved(&self.paths, name, &schema)?)
+                .await;
         }
         self.emit(Event::PluginsChanged {});
         Ok(())
@@ -666,7 +868,10 @@ impl Daemon {
         if params.proto_version != PROTO_VERSION {
             return Err(Error::new(
                 ErrorKind::IncompatibleVersion,
-                format!("daemon speaks protocol {PROTO_VERSION}, client speaks {}", params.proto_version),
+                format!(
+                    "daemon speaks protocol {PROTO_VERSION}, client speaks {}",
+                    params.proto_version
+                ),
             ));
         }
         Ok(HelloResult {
@@ -682,7 +887,9 @@ impl Daemon {
 
     pub fn add_project(&self, path: &str) -> Result<Project> {
         let root = git::toplevel(Path::new(path))?;
-        let name = root.file_name().map_or_else(|| "project".into(), |n| n.to_string_lossy().into_owned());
+        let name = root
+            .file_name()
+            .map_or_else(|| "project".into(), |n| n.to_string_lossy().into_owned());
         let project = self.store().add_project(&name, &root.to_string_lossy())?;
         self.emit(Event::ProjectChanged(project.clone()));
         Ok(project)
@@ -696,7 +903,10 @@ impl Daemon {
         {
             let store = self.store();
             if !store.tasks(Some(project_id), false)?.is_empty() {
-                return Err(Error::new(ErrorKind::InvalidParams, "project has active tasks; archive them first"));
+                return Err(Error::new(
+                    ErrorKind::InvalidParams,
+                    "project has active tasks; archive them first",
+                ));
             }
             store.remove_project(project_id)?;
         }
@@ -712,7 +922,10 @@ impl Daemon {
     }
 
     pub fn project_branches(&self, project_id: i64) -> Result<ProjectBranches> {
-        let project = self.store().project(project_id)?.ok_or_else(|| not_found("project", project_id))?;
+        let project = self
+            .store()
+            .project(project_id)?
+            .ok_or_else(|| not_found("project", project_id))?;
         let repo = PathBuf::from(&project.path);
         let fetch_error = git::remote_url(&repo, "origin")
             .and_then(|_| git::fetch(&repo, "origin", &self.options.git_env).err())
@@ -721,17 +934,29 @@ impl Daemon {
             branches: git::branches(&repo)?,
             default: default_base(&repo, &project),
             automatic: automatic_base(&repo),
-            configured: project.default_base,
+            configured: project.default_base.clone(),
             fetch_error,
+            worktree_root: self
+                .worktree_root(&repo, &project)
+                .ok()
+                .map(|p| p.display().to_string()),
+            local: git::local_branches(&repo)?,
+            remote: git::remote_branches(&repo, "origin")?,
         })
     }
 
     pub fn update_project(&self, params: ProjectUpdateParams) -> Result<Project> {
-        let base = params.default_base.as_deref().map(str::trim).filter(|b| !b.is_empty());
+        let base = params
+            .default_base
+            .as_deref()
+            .map(str::trim)
+            .filter(|b| !b.is_empty());
         let project = {
             let store = self.store();
             store.set_project_default_base(params.project_id, base)?;
-            store.project(params.project_id)?.ok_or_else(|| not_found("project", params.project_id))?
+            store
+                .project(params.project_id)?
+                .ok_or_else(|| not_found("project", params.project_id))?
         };
         self.emit(Event::ProjectChanged(project.clone()));
         Ok(project)
@@ -758,28 +983,63 @@ impl Daemon {
             .collect()
     }
 
-    async fn forge_call<P: Serialize, R: DeserializeOwned>(&self, forge: &str, method: &str, params: P, timeout: Option<Duration>) -> Result<R> {
+    async fn forge_call<P: Serialize, R: DeserializeOwned>(
+        &self,
+        forge: &str,
+        method: &str,
+        params: P,
+        timeout: Option<Duration>,
+    ) -> Result<R> {
         let plugin = self
             .plugin_set()
             .registry
             .forge(forge)
             .map(|(plugin, _)| plugin.name.clone())
-            .ok_or_else(|| Error::new(ErrorKind::PluginError, format!("no forge {forge:?} is installed")))?;
-        let params = serde_json::to_value(params).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::PluginError,
+                    format!("no forge {forge:?} is installed"),
+                )
+            })?;
+        let params = serde_json::to_value(params)
+            .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
         let reply = self.plugin_call(&plugin, method, params, timeout).await?;
-        serde_json::from_value(reply).map_err(|e| Error::new(ErrorKind::PluginError, format!("{plugin}: unexpected {method} reply: {e}")))
+        serde_json::from_value(reply).map_err(|e| {
+            Error::new(
+                ErrorKind::PluginError,
+                format!("{plugin}: unexpected {method} reply: {e}"),
+            )
+        })
     }
 
-    async fn task_source_call<P: Serialize, R: DeserializeOwned>(&self, source: &str, method: &str, params: P) -> Result<R> {
+    async fn task_source_call<P: Serialize, R: DeserializeOwned>(
+        &self,
+        source: &str,
+        method: &str,
+        params: P,
+    ) -> Result<R> {
         let plugin = self
             .plugin_set()
             .registry
             .task_source(source)
             .map(|(plugin, _)| plugin.name.clone())
-            .ok_or_else(|| Error::new(ErrorKind::NotFound, format!("no task source {source:?} is installed")))?;
-        let params = serde_json::to_value(params).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
-        let reply = self.plugin_call(&plugin, method, params, Some(self.call_timeout())).await?;
-        serde_json::from_value(reply).map_err(|e| Error::new(ErrorKind::PluginError, format!("{plugin}: unexpected {method} reply: {e}")))
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::NotFound,
+                    format!("no task source {source:?} is installed"),
+                )
+            })?;
+        let params = serde_json::to_value(params)
+            .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+        let reply = self
+            .plugin_call(&plugin, method, params, Some(self.call_timeout()))
+            .await?;
+        serde_json::from_value(reply).map_err(|e| {
+            Error::new(
+                ErrorKind::PluginError,
+                format!("{plugin}: unexpected {method} reply: {e}"),
+            )
+        })
     }
 
     pub async fn task_sources(&self, project_id: Option<i64>) -> Result<Vec<TaskSourceInfo>> {
@@ -788,15 +1048,31 @@ impl Daemon {
             .plugin_set()
             .registry
             .task_sources()
-            .map(|(plugin, source)| (source.id.clone(), source.display_name.clone(), plugin.name.clone()))
+            .map(|(plugin, source)| {
+                (
+                    source.id.clone(),
+                    source.display_name.clone(),
+                    plugin.name.clone(),
+                )
+            })
             .collect();
         let mut infos = Vec::new();
         for (id, display_name, plugin) in sources {
             let (available, reason) = match &project_path {
                 None => (true, None),
                 Some(path) => {
-                    let params = TaskSourceCheckParams { source: id.clone(), project_path: path.display().to_string() };
-                    match self.task_source_call::<_, TaskSourceCheck>(&id, protocol::method::TASK_SOURCE_CHECK, params).await {
+                    let params = TaskSourceCheckParams {
+                        source: id.clone(),
+                        project_path: path.display().to_string(),
+                    };
+                    match self
+                        .task_source_call::<_, TaskSourceCheck>(
+                            &id,
+                            protocol::method::TASK_SOURCE_CHECK,
+                            params,
+                        )
+                        .await
+                    {
                         Ok(check) => (check.available, check.reason),
                         // Searching surfaces the setup error with a way to fix it.
                         Err(e) if e.kind == ErrorKind::NeedsSetup => (true, None),
@@ -804,7 +1080,13 @@ impl Daemon {
                     }
                 }
             };
-            infos.push(TaskSourceInfo { id, display_name, plugin, available, reason });
+            infos.push(TaskSourceInfo {
+                id,
+                display_name,
+                plugin,
+                available,
+                reason,
+            });
         }
         Ok(infos)
     }
@@ -817,13 +1099,20 @@ impl Daemon {
             assigned_to_me: p.assigned_to_me,
             project_path: project_path.display().to_string(),
         };
-        self.task_source_call(&p.source, protocol::method::TASK_SOURCE_SEARCH, params).await
+        self.task_source_call(&p.source, protocol::method::TASK_SOURCE_SEARCH, params)
+            .await
     }
 
     pub async fn task_source_get(&self, p: &TaskSourceGetParams) -> Result<IssueDetails> {
         let project_path = self.project_path(p.project_id)?;
-        let params = GetIssueParams { source: p.source.clone(), key: p.key.clone(), project_path: project_path.display().to_string() };
-        let issue: Issue = self.task_source_call(&p.source, protocol::method::TASK_SOURCE_GET, params).await?;
+        let params = GetIssueParams {
+            source: p.source.clone(),
+            key: p.key.clone(),
+            project_path: project_path.display().to_string(),
+        };
+        let issue: Issue = self
+            .task_source_call(&p.source, protocol::method::TASK_SOURCE_GET, params)
+            .await?;
         let name = issue_name(&issue.key, &issue.title);
         let branch = match &issue.branch {
             Some(branch) => branch.clone(),
@@ -844,13 +1133,27 @@ impl Daemon {
     }
 
     pub async fn forge_status(&self, forge: &str) -> Result<ForgeStatus> {
-        self.forge_call(forge, protocol::method::FORGE_STATUS, serde_json::json!({}), Some(self.call_timeout())).await
+        self.forge_call(
+            forge,
+            protocol::method::FORGE_STATUS,
+            serde_json::json!({}),
+            Some(self.call_timeout()),
+        )
+        .await
     }
 
     pub async fn forge_repos(&self, forge: &str, owner: &str) -> Result<Vec<ForgeRepo>> {
         repo_source::check_name("owner", owner)?;
-        let params = ListReposParams { owner: owner.to_string() };
-        self.forge_call(forge, protocol::method::FORGE_LIST_REPOS, params, Some(self.call_timeout())).await
+        let params = ListReposParams {
+            owner: owner.to_string(),
+        };
+        self.forge_call(
+            forge,
+            protocol::method::FORGE_LIST_REPOS,
+            params,
+            Some(self.call_timeout()),
+        )
+        .await
     }
 
     fn resolve_forge(&self, explicit: Option<&str>) -> Result<String> {
@@ -859,38 +1162,68 @@ impl Daemon {
             None => match Config::load(&self.paths.config())?.default_forge {
                 Some(id) => (id, " in config.toml"),
                 None => {
-                    let first = self.plugin_set().registry.forges().next().map(|(_, forge)| forge.id.clone());
-                    return first.ok_or_else(|| Error::new(ErrorKind::InvalidParams, "no forge is installed; clone by URL instead"));
+                    let first = self
+                        .plugin_set()
+                        .registry
+                        .forges()
+                        .next()
+                        .map(|(_, forge)| forge.id.clone());
+                    return first.ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::InvalidParams,
+                            "no forge is installed; clone by URL instead",
+                        )
+                    });
                 }
             },
         };
         if self.plugin_set().registry.forge(&id).is_none() {
-            return Err(Error::new(ErrorKind::InvalidParams, format!("{}{id:?}{origin} is not an installed forge", if origin.is_empty() { "forge " } else { "default_forge " })));
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                format!(
+                    "{}{id:?}{origin} is not an installed forge",
+                    if origin.is_empty() {
+                        "forge "
+                    } else {
+                        "default_forge "
+                    }
+                ),
+            ));
         }
         Ok(id)
     }
 
     fn new_repo_dir(&self, owner: &str, name: &str) -> Result<PathBuf> {
-        let dir = node_settings::repos_dir(&self.paths)?.join(owner).join(name);
+        let dir = node_settings::repos_dir(&self.paths)?
+            .join(owner)
+            .join(name);
         if let Some(parent) = dir.parent() {
             std::fs::create_dir_all(parent)?;
         }
         // create_dir is atomic, so concurrent requests cannot both claim (and later clean up) the same target.
         match std::fs::create_dir(&dir) {
             Ok(()) => Ok(dir),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                Err(Error::new(ErrorKind::InvalidParams, format!("{} already exists", dir.display())))
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(Error::new(
+                ErrorKind::InvalidParams,
+                format!("{} already exists", dir.display()),
+            )),
             Err(e) => Err(e.into()),
         }
     }
 
-    pub async fn clone_project(self: &Arc<Self>, source: &str, forge: Option<&str>) -> Result<Project> {
+    pub async fn clone_project(
+        self: &Arc<Self>,
+        source: &str,
+        forge: Option<&str>,
+    ) -> Result<Project> {
         let source = repo_source::parse_source(source)?;
         let target = self.new_repo_dir(&source.owner, &source.repo)?;
         let cloned = match &source.url {
             Some(url) => self.git_clone(url.clone(), target.clone()).await,
-            None => self.clone_shorthand(forge, &source.owner, &source.repo, &target).await,
+            None => {
+                self.clone_shorthand(forge, &source.owner, &source.repo, &target)
+                    .await
+            }
         };
         if let Err(e) = cloned {
             // A half-cloned directory would block the next attempt.
@@ -908,7 +1241,13 @@ impl Daemon {
     }
 
     /// `owner/repo` goes to the default forge: its own clone when signed in, else anonymous HTTPS.
-    async fn clone_shorthand(&self, forge: Option<&str>, owner: &str, repo: &str, target: &Path) -> Result<()> {
+    async fn clone_shorthand(
+        &self,
+        forge: Option<&str>,
+        owner: &str,
+        repo: &str,
+        target: &Path,
+    ) -> Result<()> {
         let forge = self.resolve_forge(forge)?;
         if forge_clone_wanted(self.forge_status(&forge).await)? {
             let params = CloneParams {
@@ -917,20 +1256,48 @@ impl Daemon {
                 target: target.display().to_string(),
                 git_env: git::clone_env(&self.options.git_env),
             };
-            return self.forge_call::<_, Value>(&forge, protocol::method::FORGE_CLONE, params, None).await.map(|_| ());
+            return self
+                .forge_call::<_, Value>(&forge, protocol::method::FORGE_CLONE, params, None)
+                .await
+                .map(|_| ());
         }
-        let host = self.plugin_set().registry.forge(&forge).and_then(|(_, f)| f.hosts.first().cloned());
-        let host = host.ok_or_else(|| Error::new(ErrorKind::InvalidParams, format!("forge {forge} has no host to clone from")))?;
-        self.git_clone(format!("https://{host}/{owner}/{repo}.git"), target.to_path_buf()).await
+        let host = self
+            .plugin_set()
+            .registry
+            .forge(&forge)
+            .and_then(|(_, f)| f.hosts.first().cloned());
+        let host = host.ok_or_else(|| {
+            Error::new(
+                ErrorKind::InvalidParams,
+                format!("forge {forge} has no host to clone from"),
+            )
+        })?;
+        self.git_clone(
+            format!("https://{host}/{owner}/{repo}.git"),
+            target.to_path_buf(),
+        )
+        .await
     }
 
-    pub async fn create_project(self: &Arc<Self>, params: &ProjectCreateParams) -> Result<ProjectCreateResult> {
+    pub async fn create_project(
+        self: &Arc<Self>,
+        params: &ProjectCreateParams,
+    ) -> Result<ProjectCreateResult> {
         repo_source::check_name("repository name", &params.name)?;
         let owner = match &params.remote {
             Some(target) => {
-                let resolve = ResolveOwnerParams { owner: target.owner.clone(), visibility: target.visibility };
-                let resolved: ResolveOwnerResult =
-                    self.forge_call(&target.forge, protocol::method::FORGE_RESOLVE_OWNER, resolve, Some(self.call_timeout())).await?;
+                let resolve = ResolveOwnerParams {
+                    owner: target.owner.clone(),
+                    visibility: target.visibility,
+                };
+                let resolved: ResolveOwnerResult = self
+                    .forge_call(
+                        &target.forge,
+                        protocol::method::FORGE_RESOLVE_OWNER,
+                        resolve,
+                        Some(self.call_timeout()),
+                    )
+                    .await?;
                 // The plugin's answer names a directory.
                 repo_source::check_name("owner", &resolved.owner)?;
                 resolved.owner
@@ -938,10 +1305,15 @@ impl Daemon {
             None => LOCAL_OWNER.to_string(),
         };
         let dir = self.new_repo_dir(&owner, &params.name)?;
-        let (init_dir, name, env) = (dir.clone(), params.name.clone(), self.options.git_env.clone());
-        let initialized = tokio::task::spawn_blocking(move || git::init_with_readme(&init_dir, &name, &env))
-            .await
-            .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+        let (init_dir, name, env) = (
+            dir.clone(),
+            params.name.clone(),
+            self.options.git_env.clone(),
+        );
+        let initialized =
+            tokio::task::spawn_blocking(move || git::init_with_readme(&init_dir, &name, &env))
+                .await
+                .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
         if let Err(e) = initialized {
             let _ = std::fs::remove_dir_all(&dir);
             return Err(e);
@@ -956,19 +1328,57 @@ impl Daemon {
                     dir: dir.display().to_string(),
                     git_env: git::clone_env(&self.options.git_env),
                 };
-                self.forge_call::<_, Value>(&target.forge, protocol::method::FORGE_CREATE_REMOTE, create, None).await.err().map(|e| e.message)
+                self.forge_call::<_, Value>(
+                    &target.forge,
+                    protocol::method::FORGE_CREATE_REMOTE,
+                    create,
+                    None,
+                )
+                .await
+                .err()
+                .map(|e| e.message)
             }
             None => None,
         };
-        Ok(ProjectCreateResult { project, remote_error })
+        Ok(ProjectCreateResult {
+            project,
+            remote_error,
+        })
     }
 
-    pub async fn create_task(self: &Arc<Self>, params: TaskCreateParams) -> Result<TaskCreateResult> {
+    pub async fn create_task(
+        self: &Arc<Self>,
+        params: TaskCreateParams,
+    ) -> Result<TaskCreateResult> {
         if let Some(name) = &params.agent {
             self.ensure_agent_available(name)?;
         }
-        let project = self.store().project(params.project_id)?.ok_or_else(|| not_found("project", params.project_id))?;
+        let project = self
+            .store()
+            .project(params.project_id)?
+            .ok_or_else(|| not_found("project", params.project_id))?;
         let repo = PathBuf::from(&project.path);
+        let checkout = params
+            .checkout
+            .as_deref()
+            .map(str::trim)
+            .filter(|b| !b.is_empty());
+        let new_branch = params
+            .branch
+            .as_deref()
+            .map(str::trim)
+            .filter(|b| !b.is_empty());
+        let explicit_base = params
+            .base
+            .as_deref()
+            .map(str::trim)
+            .filter(|b| !b.is_empty());
+        if checkout.is_some() && (new_branch.is_some() || explicit_base.is_some()) {
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                "checkout cannot be combined with base or branch",
+            ));
+        }
         let base = match params.base.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
             Some(base) if git::resolves(&repo, base) => base.to_string(),
             Some(base) => {
@@ -981,57 +1391,146 @@ impl Daemon {
                 .ok_or_else(|| Error::new(ErrorKind::Git, "repository has no commits yet — create an initial commit first"))?,
         };
         let base = git::pin_base(&repo, &base)?;
-        let origin = git::remote_url(&repo, "origin");
-        let (owner, repo_name) = node_settings::layout_owner_repo(origin.as_deref(), &project.name);
-        let worktree_root = node_settings::worktrees_dir(&self.paths)?.join(owner).join(repo_name);
-        let issue_branch = params.issue.as_ref().and_then(|i| i.branch.as_deref()).filter(|b| !b.is_empty());
+        let worktree_root = self.worktree_root(&repo, &project)?;
+        let explicit = checkout.or(new_branch);
+        if let Some(branch) = explicit {
+            git::check_branch_name(&repo, branch)?;
+        }
+        if let Some(branch) = new_branch {
+            if git::branch_exists(&repo, branch) {
+                return Err(Error::new(
+                    ErrorKind::BranchExists,
+                    format!("branch `{branch}` already exists"),
+                ));
+            }
+        }
+        if let Some(branch) = explicit {
+            let target = worktree_root.join(branch);
+            if target.exists() {
+                return Err(Error::new(
+                    ErrorKind::BranchExists,
+                    format!("worktree directory `{}` already exists", target.display()),
+                ));
+            }
+            // Older tasks used flat directories, so a branch like `42-fix/x` could land inside one.
+            if let Some(inside) = target
+                .ancestors()
+                .skip(1)
+                .take_while(|a| *a != worktree_root)
+                .find(|a| a.join(".git").exists())
+            {
+                return Err(Error::new(
+                    ErrorKind::BranchExists,
+                    format!(
+                        "branch `{branch}` would be placed inside the worktree {}",
+                        inside.display()
+                    ),
+                ));
+            }
+        }
+        let prepared = checkout
+            .map(|b| self.prepare_checkout(&repo, b))
+            .transpose()?;
+        let local_checkout = prepared.as_ref().map(|p| p.0);
+        let diverged = prepared.and_then(|p| p.1);
+        let issue_branch = params
+            .issue
+            .as_ref()
+            .and_then(|i| i.branch.as_deref())
+            .filter(|b| !b.is_empty());
         if let Some(branch) = issue_branch {
             git::check_branch_name(&repo, branch)?;
         }
         let issue_name = params.issue.as_ref().map(|i| issue_name(&i.key, &i.title));
         let derived_title = params.issue.is_some() && params.title.trim().is_empty();
-        let title = if derived_title { issue_name.clone().unwrap_or_default() } else { params.title.clone() };
-        let id = self.store().insert_task(project.id, &title, params.prompt.as_deref(), &base)?;
-        let (slug, branch) = match (&params.issue, issue_name) {
-            (Some(_), Some(name)) => {
-                let name = if name.is_empty() { id.to_string() } else { name };
-                let branch = issue_branch.map_or_else(|| format!("asterism/{name}"), String::from);
-                if git::branch_exists(&repo, &branch) || worktree_root.join(&name).exists() {
-                    (format!("{name}-{id}"), format!("{branch}-{id}"))
-                } else {
-                    (name, branch)
+        let title = if derived_title {
+            issue_name.clone().unwrap_or_default()
+        } else {
+            params.title.clone()
+        };
+        let id = self
+            .store()
+            .insert_task(project.id, &title, params.prompt.as_deref(), &base)?;
+        let (slug, branch) = match explicit {
+            Some(b) => (b.to_string(), b.to_string()),
+            None => match (&params.issue, issue_name) {
+                (Some(_), Some(name)) => {
+                    let name = if name.is_empty() {
+                        id.to_string()
+                    } else {
+                        name
+                    };
+                    let branch =
+                        issue_branch.map_or_else(|| format!("asterism/{name}"), String::from);
+                    if git::branch_exists(&repo, &branch) || worktree_root.join(&name).exists() {
+                        (format!("{name}-{id}"), format!("{branch}-{id}"))
+                    } else {
+                        (name, branch)
+                    }
                 }
-            }
-            _ => {
-                let slug = slugify(id, &params.title);
-                let branch = format!("asterism/{slug}");
-                (slug, branch)
-            }
+                _ => {
+                    let slug = slugify(id, &params.title);
+                    let branch = format!("asterism/{slug}");
+                    (slug, branch)
+                }
+            },
         };
         let worktree = worktree_root.join(&slug);
-        if let Err(e) = git::add_worktree(&repo, &branch, &worktree, &base) {
+        let added = match (checkout, local_checkout) {
+            (Some(b), Some(true)) => git::add_existing_worktree(&repo, &worktree, b)
+                .map_err(|e| checked_out_elsewhere(b, e)),
+            (Some(b), _) => git::add_tracking_worktree(&repo, &worktree, b, "origin")
+                .map_err(|e| checked_out_elsewhere(b, e)),
+            (None, _) => git::add_worktree(&repo, &branch, &worktree, &base),
+        };
+        if let Err(e) = added {
             self.store().delete_task(id)?;
             return Err(e);
         }
-        self.store().set_task_location(id, &slug, &branch, &worktree.to_string_lossy())?;
+        self.store()
+            .set_task_location(id, &slug, &branch, &worktree.to_string_lossy())?;
+        let warning = if diverged.is_some() {
+            diverged
+        } else if params.push && new_branch.is_some() && git::remote_url(&repo, "origin").is_some()
+        {
+            git::push_upstream(&worktree, "origin", &branch, &self.options.git_env)
+                .err()
+                .map(|e| format!("Couldn't push `{branch}` to origin: {}", e.message))
+        } else {
+            None
+        };
         if derived_title && slug != title {
             self.store().set_task_title(id, &slug)?;
         }
         if let Some(issue) = &params.issue {
-            self.store().set_task_issue(id, &IssueRef { source: issue.source.clone(), key: issue.key.clone(), url: issue.url.clone() })?;
+            self.store().set_task_issue(
+                id,
+                &IssueRef {
+                    source: issue.source.clone(),
+                    key: issue.key.clone(),
+                    url: issue.url.clone(),
+                },
+            )?;
         }
         let task = self.task(id)?;
         self.emit(Event::TaskChanged(task.clone()));
 
         let session = match params.agent {
-            Some(name) => Some(self.start_session(SessionStartParams {
-                task_id: id,
-                kind: SessionKind::Agent { name },
-                prompt: params.prompt,
-            }).await?),
+            Some(name) => Some(
+                self.start_session(SessionStartParams {
+                    task_id: id,
+                    kind: SessionKind::Agent { name },
+                    prompt: params.prompt,
+                })
+                .await?,
+            ),
             None => None,
         };
-        Ok(TaskCreateResult { task, session })
+        Ok(TaskCreateResult {
+            task,
+            session,
+            warning,
+        })
     }
 
     pub fn task(&self, id: i64) -> Result<Task> {
@@ -1039,7 +1538,9 @@ impl Daemon {
     }
 
     pub fn tasks(&self, params: TaskListParams) -> Result<Vec<Task>> {
-        Ok(self.store().tasks(params.project_id, params.include_archived)?)
+        Ok(self
+            .store()
+            .tasks(params.project_id, params.include_archived)?)
     }
 
     /// The PR-capable forge serving the repository's origin host, if any.
@@ -1049,9 +1550,88 @@ impl Daemon {
         let forges: Vec<ForgeCandidate> = set
             .registry
             .forges()
-            .map(|(_, f)| ForgeCandidate { id: &f.id, hosts: &f.hosts, pull_requests: f.pull_requests })
+            .map(|(_, f)| ForgeCandidate {
+                id: &f.id,
+                hosts: &f.hosts,
+                pull_requests: f.pull_requests,
+            })
             .collect();
         pr_status::forge_for_host(&forges, &host)
+    }
+
+    fn worktree_root(&self, repo: &Path, project: &Project) -> Result<PathBuf> {
+        let origin = git::remote_url(repo, "origin");
+        let (owner, repo_name) = node_settings::layout_owner_repo(origin.as_deref(), &project.name);
+        Ok(node_settings::worktrees_dir(&self.paths)?
+            .join(owner)
+            .join(repo_name))
+    }
+
+    /// Fetches `branch`; returns whether it exists locally (true) or only on origin (false), plus a warning when the local branch differs from a freshly fetched origin one.
+    fn prepare_checkout(&self, repo: &Path, branch: &str) -> Result<(bool, Option<String>)> {
+        let has_origin = git::remote_url(repo, "origin").is_some();
+        let fetched = if has_origin {
+            git::fetch_branch(repo, "origin", branch, &self.options.git_env)
+        } else {
+            Ok(())
+        };
+        if git::branch_exists(repo, branch) {
+            let remote = format!("origin/{branch}");
+            let warning = (fetched.is_ok() && has_origin && git::remote_branch_exists(repo, "origin", branch))
+                .then(|| (git::unmerged_commits(repo, branch, &remote), git::unmerged_commits(repo, &remote, branch)))
+                .filter(|(behind, ahead)| behind + ahead > 0)
+                .map(|(behind, ahead)| format!("local branch `{branch}` differs from {remote} ({behind} behind, {ahead} ahead)"));
+            return Ok((true, warning));
+        }
+        let not_found = || {
+            Error::new(
+                ErrorKind::NotFound,
+                format!("branch `{branch}` not found locally or on origin"),
+            )
+        };
+        match fetched {
+            Err(e) if e.message.contains("couldn't find remote ref") => Err(not_found()),
+            Err(e) => Err(e),
+            Ok(()) if has_origin && git::remote_branch_exists(repo, "origin", branch) => {
+                Ok((false, None))
+            }
+            Ok(()) => Err(not_found()),
+        }
+    }
+
+    pub async fn search_pull_requests(&self, p: &PrSearchParams) -> Result<PrSearchResult> {
+        let project = self
+            .store()
+            .project(p.project_id)?
+            .ok_or_else(|| not_found("project", p.project_id))?;
+        let repo = PathBuf::from(&project.path);
+        let forge = self.pr_forge(&repo).ok_or_else(|| {
+            Error::new(
+                ErrorKind::NotFound,
+                "this project's origin is not served by a pull-request forge",
+            )
+        })?;
+        let origin = git::remote_url(&repo, "origin");
+        let (owner, name) = node_settings::layout_owner_repo(origin.as_deref(), &project.name);
+        let params = SearchPullRequestsParams {
+            forge: forge.clone(),
+            project_path: project.path.clone(),
+            query: p.query.trim().to_string(),
+            state: p.state,
+        };
+        let hits = self
+            .forge_call(
+                &forge,
+                protocol::method::FORGE_SEARCH_PULL_REQUESTS,
+                params,
+                Some(self.call_timeout()),
+            )
+            .await?;
+        Ok(PrSearchResult {
+            forge,
+            repo: format!("{owner}/{name}"),
+            hits,
+        })
     }
 
     pub fn pr_list(&self, project_id: Option<i64>) -> PrList {
@@ -1060,20 +1640,30 @@ impl Daemon {
             .entries
             .iter()
             .filter(|(_, e)| project_id.is_none_or(|p| p == e.project_id))
-            .map(|(id, e)| TaskPr { task_id: *id, branch: e.branch.clone(), pr: e.pr.clone() })
+            .map(|(id, e)| TaskPr {
+                task_id: *id,
+                branch: e.branch.clone(),
+                pr: e.pr.clone(),
+            })
             .collect();
         prs.sort_by_key(|p| p.task_id);
         let errors = status
             .errors
             .iter()
             .filter(|(id, _)| project_id.is_none_or(|p| p == **id))
-            .map(|(id, message)| PrProjectError { project_id: *id, message: message.clone() })
+            .map(|(id, message)| PrProjectError {
+                project_id: *id,
+                message: message.clone(),
+            })
             .collect();
         PrList { prs, errors }
     }
 
     pub async fn refresh_prs(&self, project_id: i64) -> Result<PrList> {
-        let project = self.store().project(project_id)?.ok_or_else(|| not_found("project", project_id))?;
+        let project = self
+            .store()
+            .project(project_id)?
+            .ok_or_else(|| not_found("project", project_id))?;
         let Some(_guard) = InFlight::start(&self.pr_status, project_id) else {
             return Ok(self.pr_list(Some(project_id)));
         };
@@ -1101,7 +1691,12 @@ impl Daemon {
 
     async fn poll_project(&self, project: &Project) -> Result<()> {
         let repo = PathBuf::from(&project.path);
-        let tasks: Vec<(i64, String)> = self.store().tasks(Some(project.id), false)?.into_iter().map(|t| (t.id, t.branch)).collect();
+        let tasks: Vec<(i64, String)> = self
+            .store()
+            .tasks(Some(project.id), false)?
+            .into_iter()
+            .map(|t| (t.id, t.branch))
+            .collect();
         let (asked, reply) = match self.pr_forge(&repo) {
             None => (Vec::new(), Vec::new()),
             Some(forge) => {
@@ -1109,15 +1704,30 @@ impl Daemon {
                 let reply: Vec<BranchPr> = if asked.is_empty() {
                     Vec::new()
                 } else {
-                    let params = PullRequestsParams { forge: forge.clone(), project_path: project.path.clone(), branches: asked.clone() };
-                    self.forge_call(&forge, protocol::method::FORGE_PULL_REQUESTS, params, Some(self.call_timeout())).await?
+                    let params = PullRequestsParams {
+                        forge: forge.clone(),
+                        project_path: project.path.clone(),
+                        branches: asked.clone(),
+                    };
+                    self.forge_call(
+                        &forge,
+                        protocol::method::FORGE_PULL_REQUESTS,
+                        params,
+                        Some(self.call_timeout()),
+                    )
+                    .await?
                 };
                 (asked, reply)
             }
         };
         // Re-read under the pr_status lock so a concurrent archive/delete cannot be undone by the merge.
         let mut status = lock(&self.pr_status);
-        let tasks: Vec<(i64, String)> = self.store().tasks(Some(project.id), false)?.into_iter().map(|t| (t.id, t.branch)).collect();
+        let tasks: Vec<(i64, String)> = self
+            .store()
+            .tasks(Some(project.id), false)?
+            .into_iter()
+            .map(|t| (t.id, t.branch))
+            .collect();
         let changes = pr_status::merge(project.id, &tasks, &asked, reply, &mut status.entries);
         drop(status);
         for (task_id, pr) in changes {
@@ -1139,14 +1749,25 @@ impl Daemon {
             if self.events.receiver_count() == 0 {
                 continue;
             }
-            let Ok(projects) = self.projects() else { continue };
+            let Ok(projects) = self.projects() else {
+                continue;
+            };
             let now = unix_now();
             // ponytail: projects are polled sequentially, so one slow forge delays the others by up to call_timeout per tick.
             for project in projects {
-                let last_activity = self.store().tasks(Some(project.id), false).map(|ts| ts.iter().map(|t| t.last_activity_at).max().unwrap_or(0)).unwrap_or(0);
+                let last_activity = self
+                    .store()
+                    .tasks(Some(project.id), false)
+                    .map(|ts| ts.iter().map(|t| t.last_activity_at).max().unwrap_or(0))
+                    .unwrap_or(0);
                 let due = {
                     let status = lock(&self.pr_status);
-                    pr_status::is_due(now, status.polled.get(&project.id).copied(), last_activity, status.rate_limited.contains(&project.id))
+                    pr_status::is_due(
+                        now,
+                        status.polled.get(&project.id).copied(),
+                        last_activity,
+                        status.rate_limited.contains(&project.id),
+                    )
                 };
                 if due {
                     let _ = self.refresh_prs(project.id).await;
@@ -1181,15 +1802,23 @@ impl Daemon {
         let worktree = PathBuf::from(&task.worktree_path);
         let repo = self.project_path(task.project_id)?;
         if worktree.exists() {
-            let listed = git::worktrees(&repo)?.iter().any(|w| same_path(&w.path, &task.worktree_path));
+            let listed = git::worktrees(&repo)?
+                .iter()
+                .any(|w| same_path(&w.path, &task.worktree_path));
             if !listed {
                 return Err(Error::new(
                     ErrorKind::InvalidParams,
-                    format!("{} exists but is not a worktree of this project; move it away to restore", task.worktree_path),
+                    format!(
+                        "{} exists but is not a worktree of this project; move it away to restore",
+                        task.worktree_path
+                    ),
                 ));
             }
         } else if !git::branch_exists(&repo, &task.branch) {
-            return Err(Error::new(ErrorKind::NotFound, format!("branch {} no longer exists", task.branch)));
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                format!("branch {} no longer exists", task.branch),
+            ));
         } else {
             // Tasks archived before archiving kept worktrees get theirs back from the branch.
             git::add_existing_worktree(&repo, &worktree, &task.branch)?;
@@ -1212,7 +1841,11 @@ impl Daemon {
         let branch_exists = git::branch_exists(&repo, &task.branch);
         Ok(TaskDeleteCheck {
             dirty: worktree.exists() && git::is_dirty(worktree).unwrap_or(false),
-            unmerged_commits: if branch_exists { git::unmerged_commits(&repo, &self.effective_base(&repo, &task), &task.branch) } else { 0 },
+            unmerged_commits: if branch_exists {
+                git::unmerged_commits(&repo, &self.effective_base(&repo, &task), &task.branch)
+            } else {
+                0
+            },
             branch: task.branch,
             branch_exists,
         })
@@ -1236,6 +1869,7 @@ impl Daemon {
                 warnings.push(e.message);
             }
         }
+        self.tidy_worktree_parents(task.project_id, &repo, worktree);
         if delete_branch && git::branch_exists(&repo, &task.branch) {
             if let Err(e) = git::delete_branch(&repo, &task.branch) {
                 warnings.push(e.message);
@@ -1247,11 +1881,15 @@ impl Daemon {
             store.delete_task(task_id)?;
         }
         for stored in sessions {
-            self.emit(Event::SessionRemoved { session_id: stored.session.id });
+            self.emit(Event::SessionRemoved {
+                session_id: stored.session.id,
+            });
         }
         self.drop_pr(task_id);
         self.emit(Event::TaskRemoved { task_id });
-        Ok(TaskDeleteResult { warning: (!warnings.is_empty()).then(|| warnings.join("; ")) })
+        Ok(TaskDeleteResult {
+            warning: (!warnings.is_empty()).then(|| warnings.join("; ")),
+        })
     }
 
     pub fn project_worktrees(&self, project_id: i64) -> Result<Vec<Worktree>> {
@@ -1260,7 +1898,9 @@ impl Daemon {
         Ok(git::worktrees(&repo)?
             .into_iter()
             .map(|entry| {
-                let task = tasks.iter().find(|t| same_path(&t.worktree_path, &entry.path));
+                let task = tasks
+                    .iter()
+                    .find(|t| same_path(&t.worktree_path, &entry.path));
                 Worktree {
                     task_id: task.map(|t| t.id),
                     base_branch: task.map(|t| t.base_branch.clone()),
@@ -1279,7 +1919,10 @@ impl Daemon {
         let repo = self.project_path(project_id)?;
         Ok(git::worktrees(&repo)?
             .into_iter()
-            .map(|entry| WorktreeSize { bytes: git::dir_size(Path::new(&entry.path)), path: entry.path })
+            .map(|entry| WorktreeSize {
+                bytes: git::dir_size(Path::new(&entry.path)),
+                path: entry.path,
+            })
             .collect())
     }
 
@@ -1287,12 +1930,28 @@ impl Daemon {
         let repo = self.project_path(project_id)?;
         let listed = self.project_worktrees(project_id)?;
         let Some(worktree) = listed.iter().find(|w| same_path(&w.path, path)) else {
-            return Err(Error::new(ErrorKind::InvalidParams, format!("{path} is not a worktree of this project")));
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                format!("{path} is not a worktree of this project"),
+            ));
         };
         if worktree.is_main || worktree.task_id.is_some() {
-            return Err(Error::new(ErrorKind::InvalidParams, format!("{path} is the main checkout or belongs to a task")));
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                format!("{path} is the main checkout or belongs to a task"),
+            ));
         }
-        git::remove_worktree(&repo, Path::new(&worktree.path), true)
+        git::remove_worktree(&repo, Path::new(&worktree.path), true)?;
+        self.tidy_worktree_parents(project_id, &repo, Path::new(&worktree.path));
+        Ok(())
+    }
+
+    fn tidy_worktree_parents(&self, project_id: i64, repo: &Path, worktree: &Path) {
+        if let Ok(Some(project)) = self.store().project(project_id) {
+            if let Ok(root) = self.worktree_root(repo, &project) {
+                remove_empty_parents(worktree, &root);
+            }
+        }
     }
 
     pub fn prune_worktrees(&self, project_id: i64) -> Result<()> {
@@ -1300,14 +1959,19 @@ impl Daemon {
     }
 
     fn project_path(&self, project_id: i64) -> Result<PathBuf> {
-        let project = self.store().project(project_id)?.ok_or_else(|| not_found("project", project_id))?;
+        let project = self
+            .store()
+            .project(project_id)?
+            .ok_or_else(|| not_found("project", project_id))?;
         Ok(PathBuf::from(project.path))
     }
 
     pub fn diff(&self, task_id: i64) -> Result<TaskDiffResult> {
         let task = self.task(task_id)?;
         let base = self.effective_base(&self.project_path(task.project_id)?, &task);
-        Ok(TaskDiffResult { patch: git::diff(Path::new(&task.worktree_path), &base)? })
+        Ok(TaskDiffResult {
+            patch: git::diff(Path::new(&task.worktree_path), &base)?,
+        })
     }
 
     /// The task's base, or the project's default once that base is gone (e.g. a pruned remote branch).
@@ -1316,13 +1980,20 @@ impl Daemon {
             return task.base_branch.clone();
         }
         let project = self.store().project(task.project_id).ok().flatten();
-        project.and_then(|p| default_base(repo, &p)).unwrap_or_else(|| task.base_branch.clone())
+        project
+            .and_then(|p| default_base(repo, &p))
+            .unwrap_or_else(|| task.base_branch.clone())
     }
 
     pub fn file(&self, params: TaskFileParams) -> Result<TaskFileResult> {
         let task = self.task(params.task_id)?;
         let home = std::env::var_os("HOME").map(PathBuf::from);
-        files::read(Path::new(&task.worktree_path), home.as_deref(), &params.path, params.known_mtime)
+        files::read(
+            Path::new(&task.worktree_path),
+            home.as_deref(),
+            &params.path,
+            params.known_mtime,
+        )
     }
 
     pub fn agent_infos(&self) -> Vec<AgentInfo> {
@@ -1341,10 +2012,12 @@ impl Daemon {
 
     fn agent_decl(&self, name: &str) -> Result<(String, AgentDecl)> {
         let set = self.plugin_set();
-        let (plugin, decl) = set
-            .registry
-            .agent(name)
-            .ok_or_else(|| Error::new(ErrorKind::AgentUnavailable, format!("agent {name} is not installed on this node")))?;
+        let (plugin, decl) = set.registry.agent(name).ok_or_else(|| {
+            Error::new(
+                ErrorKind::AgentUnavailable,
+                format!("agent {name} is not installed on this node"),
+            )
+        })?;
         Ok((plugin.name.clone(), decl.clone()))
     }
 
@@ -1353,7 +2026,10 @@ impl Daemon {
         if agents::on_path(&decl.binary) {
             Ok(())
         } else {
-            Err(Error::new(ErrorKind::AgentUnavailable, format!("agent {name} is not installed on this node")))
+            Err(Error::new(
+                ErrorKind::AgentUnavailable,
+                format!("agent {name} is not installed on this node"),
+            ))
         }
     }
 
@@ -1367,9 +2043,15 @@ impl Daemon {
         cwd: &Path,
     ) -> Result<Option<(Vec<String>, Vec<(String, String)>)>> {
         let (plugin, decl) = self.agent_decl(name)?;
-        let settings = agent_settings::launch_settings(&self.paths, name, mode == LaunchMode::Resume)?;
+        let settings =
+            agent_settings::launch_settings(&self.paths, name, mode == LaunchMode::Resume)?;
         match decl.launch {
-            LaunchKind::Static => Ok(agents::static_argv(&decl, mode, &settings.args, prompt, agent_ref).map(|argv| (argv, Vec::new()))),
+            LaunchKind::Static => {
+                Ok(
+                    agents::static_argv(&decl, mode, &settings.args, prompt, agent_ref)
+                        .map(|argv| (argv, Vec::new())),
+                )
+            }
             LaunchKind::Backend => {
                 if mode == LaunchMode::Resume && agent_ref.is_none() {
                     return Ok(None);
@@ -1382,12 +2064,27 @@ impl Daemon {
                     settings,
                     cwd: cwd.display().to_string(),
                 };
-                let params = serde_json::to_value(params).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
-                let reply = self.plugin_call(&plugin, protocol::method::AGENT_PREPARE, params, Some(self.call_timeout())).await?;
-                let prepared: PrepareResult = serde_json::from_value(reply)
-                    .map_err(|e| Error::new(ErrorKind::PluginError, format!("{plugin}: unexpected agent.prepare reply: {e}")))?;
+                let params = serde_json::to_value(params)
+                    .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+                let reply = self
+                    .plugin_call(
+                        &plugin,
+                        protocol::method::AGENT_PREPARE,
+                        params,
+                        Some(self.call_timeout()),
+                    )
+                    .await?;
+                let prepared: PrepareResult = serde_json::from_value(reply).map_err(|e| {
+                    Error::new(
+                        ErrorKind::PluginError,
+                        format!("{plugin}: unexpected agent.prepare reply: {e}"),
+                    )
+                })?;
                 if prepared.argv.is_empty() {
-                    return Err(Error::new(ErrorKind::PluginError, format!("{plugin}: agent.prepare returned an empty command")));
+                    return Err(Error::new(
+                        ErrorKind::PluginError,
+                        format!("{plugin}: agent.prepare returned an empty command"),
+                    ));
                 }
                 Ok(Some((prepared.argv, prepared.env)))
             }
@@ -1397,21 +2094,45 @@ impl Daemon {
     pub async fn start_session(self: &Arc<Self>, params: SessionStartParams) -> Result<Session> {
         let task = self.task(params.task_id)?;
         if task.archived {
-            return Err(Error::new(ErrorKind::InvalidParams, format!("task {} is archived", task.id)));
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                format!("task {} is archived", task.id),
+            ));
         }
         let (argv, extra_env) = match &params.kind {
             SessionKind::Agent { name } => {
                 self.ensure_agent_available(name)?;
-                let launched = self.agent_argv(name, LaunchMode::Start, params.prompt.as_deref(), None, Path::new(&task.worktree_path)).await?;
-                launched.ok_or_else(|| Error::new(ErrorKind::PluginError, format!("agent {name} has no start command")))?
+                let launched = self
+                    .agent_argv(
+                        name,
+                        LaunchMode::Start,
+                        params.prompt.as_deref(),
+                        None,
+                        Path::new(&task.worktree_path),
+                    )
+                    .await?;
+                launched.ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::PluginError,
+                        format!("agent {name} has no start command"),
+                    )
+                })?
             }
-            SessionKind::Shell => (vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())], Vec::new()),
+            SessionKind::Shell => (
+                vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())],
+                Vec::new(),
+            ),
             SessionKind::Command { argv } if !argv.is_empty() => (argv.clone(), Vec::new()),
             SessionKind::Command { .. } => {
-                return Err(Error::new(ErrorKind::InvalidParams, "command argv must not be empty"));
+                return Err(Error::new(
+                    ErrorKind::InvalidParams,
+                    "command argv must not be empty",
+                ));
             }
         };
-        let id = self.store().insert_session(task.id, &params.kind, SessionStatus::Working)?;
+        let id = self
+            .store()
+            .insert_session(task.id, &params.kind, SessionStatus::Working)?;
         if let Err(e) = self.spawn_live(id, &task, argv, extra_env, &params.kind) {
             self.store().set_session_status(id, SessionStatus::Exited)?;
             return Err(e);
@@ -1440,13 +2161,23 @@ impl Daemon {
         let (bin_dir, path) = tool_path()?;
         let fixed = [
             ("PATH".to_string(), path),
-            ("ASTERISM_HOME".to_string(), self.paths.home.display().to_string()),
-            ("ASTERISM_SOCKET".to_string(), self.paths.socket().display().to_string()),
-            ("ASTERISM_CLI".to_string(), bin_dir.join("asterism").display().to_string()),
+            (
+                "ASTERISM_HOME".to_string(),
+                self.paths.home.display().to_string(),
+            ),
+            (
+                "ASTERISM_SOCKET".to_string(),
+                self.paths.socket().display().to_string(),
+            ),
+            (
+                "ASTERISM_CLI".to_string(),
+                bin_dir.join("asterism").display().to_string(),
+            ),
             ("ASTERISM_TASK".to_string(), task.id.to_string()),
             ("ASTERISM_SESSION".to_string(), id.to_string()),
         ];
-        let inherited = std::env::vars_os().filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)));
+        let inherited = std::env::vars_os()
+            .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)));
         let env = config::session_env(inherited, &policy, &fixed);
         let pty = Pty::spawn(SpawnSpec {
             argv,
@@ -1463,10 +2194,19 @@ impl Daemon {
         });
         lock(&self.live).insert(id, live.clone());
         let waiting_patterns: Arc<[String]> = match kind {
-            SessionKind::Agent { name } => self.agent_decl(name).map(|(_, d)| d.waiting_patterns).unwrap_or_default().into(),
+            SessionKind::Agent { name } => self
+                .agent_decl(name)
+                .map(|(_, d)| d.waiting_patterns)
+                .unwrap_or_default()
+                .into(),
             _ => Arc::from(Vec::new()),
         };
-        tokio::spawn(status::track(pty.clone(), waiting_patterns, live.status.clone(), live.hooks_active.clone()));
+        tokio::spawn(status::track(
+            pty.clone(),
+            waiting_patterns,
+            live.status.clone(),
+            live.hooks_active.clone(),
+        ));
 
         let daemon = self.clone();
         let task_id = task.id;
@@ -1483,7 +2223,10 @@ impl Daemon {
                     }
                 }
                 let _ = daemon.store().set_session_status(id, status);
-                daemon.emit(Event::SessionStatusChanged { session_id: id, status });
+                daemon.emit(Event::SessionStatusChanged {
+                    session_id: id,
+                    status,
+                });
                 daemon.touch_task(task_id);
                 if status == SessionStatus::Exited {
                     break;
@@ -1512,31 +2255,54 @@ impl Daemon {
     }
 
     pub fn stats(&self, params: NodeStatsParams) -> NodeStats {
-        let sessions: Vec<(i64, u32)> =
-            lock(&self.live).iter().filter_map(|(id, live)| Some((*id, live.pty.pid()?))).collect();
+        let sessions: Vec<(i64, u32)> = lock(&self.live)
+            .iter()
+            .filter_map(|(id, live)| Some((*id, live.pty.pid()?)))
+            .collect();
         let mut cpu = lock(&self.cpu);
         let mut measure = |pids: &[u32]| {
             let (memory_bytes, cpu_percent) = cpu.measure(pids);
-            ProcStats { memory_bytes, cpu_percent }
+            ProcStats {
+                memory_bytes,
+                cpu_percent,
+            }
         };
         let stats = NodeStats {
             daemon: measure(&[std::process::id()]),
             sessions: sessions
                 .into_iter()
-                .map(|(session_id, pid)| SessionStats { session_id, stats: measure(&proc_stats::tree(pid)) })
+                .map(|(session_id, pid)| SessionStats {
+                    session_id,
+                    stats: measure(&proc_stats::tree(pid)),
+                })
                 .collect(),
-            processes: params.pids.into_iter().map(|pid| PidStats { pid, stats: measure(&[pid]) }).collect(),
+            processes: params
+                .pids
+                .into_iter()
+                .map(|pid| PidStats {
+                    pid,
+                    stats: measure(&[pid]),
+                })
+                .collect(),
         };
         cpu.finish();
         stats
     }
 
     pub fn session(&self, id: i64) -> Result<Session> {
-        self.store().session(id)?.map(|s| s.session).ok_or_else(|| not_found("session", id))
+        self.store()
+            .session(id)?
+            .map(|s| s.session)
+            .ok_or_else(|| not_found("session", id))
     }
 
     pub fn sessions(&self, task_id: Option<i64>) -> Result<Vec<Session>> {
-        Ok(self.store().sessions(task_id)?.into_iter().map(|s| s.session).collect())
+        Ok(self
+            .store()
+            .sessions(task_id)?
+            .into_iter()
+            .map(|s| s.session)
+            .collect())
     }
 
     pub fn agent_config(&self, agent: &str) -> Result<AgentConfig> {
@@ -1559,9 +2325,12 @@ impl Daemon {
         if let Some(live) = live {
             let mut status = live.status.subscribe();
             let _ = live.pty.kill();
-            let exited = tokio::time::timeout(REMOVE_GRACE, status.wait_for(|s| *s == SessionStatus::Exited))
-                .await
-                .is_ok_and(|r| r.is_ok());
+            let exited = tokio::time::timeout(
+                REMOVE_GRACE,
+                status.wait_for(|s| *s == SessionStatus::Exited),
+            )
+            .await
+            .is_ok_and(|r| r.is_ok());
             if !exited && !*live.pty.exited().borrow() {
                 let _ = live.pty.force_kill();
             }
@@ -1591,18 +2360,30 @@ impl Daemon {
 
     pub fn resize(&self, params: SessionResizeParams) -> Result<()> {
         if params.rows == 0 || params.cols == 0 {
-            return Err(Error::new(ErrorKind::InvalidParams, "rows and cols must be at least 1"));
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                "rows and cols must be at least 1",
+            ));
         }
-        Ok(self.live(params.session_id)?.pty.resize(params.rows, params.cols)?)
+        Ok(self
+            .live(params.session_id)?
+            .pty
+            .resize(params.rows, params.cols)?)
     }
 
     pub fn read(&self, params: SessionReadParams) -> Result<SessionReadResult> {
         let id = params.session_id;
         let text = match self.live(id) {
             Ok(live) => live.pty.history(),
-            Err(_) => self.store().session_last_text(id)?.ok_or_else(|| not_found("session", id))?.unwrap_or_default(),
+            Err(_) => self
+                .store()
+                .session_last_text(id)?
+                .ok_or_else(|| not_found("session", id))?
+                .unwrap_or_default(),
         };
-        Ok(SessionReadResult { text: last_lines(&text, params.lines) })
+        Ok(SessionReadResult {
+            text: last_lines(&text, params.lines),
+        })
     }
 
     pub fn attach(&self, session_id: i64) -> Result<(Snapshot, broadcast::Receiver<Vec<u8>>)> {
@@ -1617,12 +2398,17 @@ impl Daemon {
         let until = params.until;
         let reached = rx.wait_for(|s| *s == until || *s == SessionStatus::Exited);
         let outcome = match params.timeout_ms {
-            Some(ms) => tokio::time::timeout(Duration::from_millis(ms), reached).await.map_err(|_| {
-                Error::new(
-                    ErrorKind::Timeout,
-                    format!("session {} did not reach {until:?} within {ms} ms", params.session_id),
-                )
-            })?,
+            Some(ms) => tokio::time::timeout(Duration::from_millis(ms), reached)
+                .await
+                .map_err(|_| {
+                    Error::new(
+                        ErrorKind::Timeout,
+                        format!(
+                            "session {} did not reach {until:?} within {ms} ms",
+                            params.session_id
+                        ),
+                    )
+                })?,
             None => reached.await,
         };
         Ok(outcome.map(|s| *s).unwrap_or(SessionStatus::Exited))
@@ -1635,7 +2421,8 @@ impl Daemon {
             set_unless_exited(&live.status, next);
         }
         if let Some(agent_ref) = params.agent_ref {
-            self.store().set_session_agent_ref(params.session_id, &agent_ref)?;
+            self.store()
+                .set_session_agent_ref(params.session_id, &agent_ref)?;
         }
         Ok(())
     }
@@ -1649,14 +2436,27 @@ impl Daemon {
             let resumed = match self.task(session.task_id) {
                 Ok(task) if !task.archived => {
                     let resume = match &session.kind {
-                        SessionKind::Agent { name } => self.agent_argv(name, LaunchMode::Resume, None, agent_ref.as_deref(), Path::new(&task.worktree_path)).await,
+                        SessionKind::Agent { name } => {
+                            self.agent_argv(
+                                name,
+                                LaunchMode::Resume,
+                                None,
+                                agent_ref.as_deref(),
+                                Path::new(&task.worktree_path),
+                            )
+                            .await
+                        }
                         _ => Ok(None),
                     };
                     match resume {
                         Ok(Some((argv, env))) => {
-                            let spawned = self.spawn_live(session.id, &task, argv, env, &session.kind);
+                            let spawned =
+                                self.spawn_live(session.id, &task, argv, env, &session.kind);
                             if let Err(e) = &spawned {
-                                eprintln!("asterismd: could not resume session {}: {e}", session.id);
+                                eprintln!(
+                                    "asterismd: could not resume session {}: {e}",
+                                    session.id
+                                );
                             }
                             spawned.is_ok()
                         }
@@ -1669,12 +2469,16 @@ impl Daemon {
                 }
                 Ok(_) => false,
                 Err(e) => {
-                    eprintln!("asterismd: could not resume session {}: task lookup failed: {e}", session.id);
+                    eprintln!(
+                        "asterismd: could not resume session {}: task lookup failed: {e}",
+                        session.id
+                    );
                     false
                 }
             };
             if !resumed {
-                self.store().set_session_status(session.id, SessionStatus::Exited)?;
+                self.store()
+                    .set_session_status(session.id, SessionStatus::Exited)?;
             }
         }
         Ok(())
@@ -1713,7 +2517,11 @@ fn automatic_base(repo: &Path) -> Option<String> {
 }
 
 fn default_base(repo: &Path, project: &Project) -> Option<String> {
-    project.default_base.clone().filter(|b| git::resolves(repo, b)).or_else(|| automatic_base(repo))
+    project
+        .default_base
+        .clone()
+        .filter(|b| git::resolves(repo, b))
+        .or_else(|| automatic_base(repo))
 }
 
 fn slug_text(text: &str) -> String {
@@ -1728,6 +2536,30 @@ fn slug_text(text: &str) -> String {
     slug.trim_end_matches('-').to_string()
 }
 
+/// Removes the directories `branch/with/slashes` left between a removed worktree and `root`, while they are empty.
+fn remove_empty_parents(worktree: &Path, root: &Path) {
+    for dir in worktree
+        .ancestors()
+        .skip(1)
+        .take_while(|d| *d != root && d.starts_with(root))
+    {
+        if std::fs::remove_dir(dir).is_err() {
+            break;
+        }
+    }
+}
+
+fn checked_out_elsewhere(branch: &str, e: Error) -> Error {
+    if e.message.contains("already checked out") || e.message.contains("already used by worktree") {
+        Error::new(
+            ErrorKind::BranchExists,
+            format!("branch `{branch}` is already checked out in another worktree"),
+        )
+    } else {
+        e
+    }
+}
+
 pub fn slugify(id: i64, title: &str) -> String {
     let slug: String = slug_text(title).chars().take(SLUG_MAX).collect();
     let slug = slug.trim_end_matches('-');
@@ -1740,7 +2572,11 @@ pub fn slugify(id: i64, title: &str) -> String {
 
 /// `<key>-<title>` as a branch-safe slug; empty when neither has letters or digits.
 pub fn issue_name(key: &str, title: &str) -> String {
-    let joined = [slug_text(key), slug_text(title)].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("-");
+    let joined = [slug_text(key), slug_text(title)]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
     let cut: String = joined.chars().take(ISSUE_NAME_MAX).collect();
     cut.trim_end_matches('-').to_string()
 }
@@ -1782,19 +2618,32 @@ mod tests {
         std::env::set_var("CLAUDE_ASTERISM_ENV_TEST", "1");
         std::env::set_var("ANTHROPIC_ASTERISM_ENV_TEST", "1");
         let home = tempfile::tempdir().unwrap();
-        let paths = Paths { home: home.path().to_path_buf() };
+        let paths = Paths {
+            home: home.path().to_path_buf(),
+        };
         let env = plugin_env(&paths, &[("EXTRA".into(), "1".into())]).unwrap();
         std::env::remove_var("CLAUDE_ASTERISM_ENV_TEST");
         std::env::remove_var("ANTHROPIC_ASTERISM_ENV_TEST");
 
-        let get = |key: &str| env.iter().filter(|(k, _)| k == key).map(|(_, v)| v.clone()).collect::<Vec<_>>();
-        assert!(get("CLAUDE_ASTERISM_ENV_TEST").is_empty() && get("ANTHROPIC_ASTERISM_ENV_TEST").is_empty());
+        let get = |key: &str| {
+            env.iter()
+                .filter(|(k, _)| k == key)
+                .map(|(_, v)| v.clone())
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            get("CLAUDE_ASTERISM_ENV_TEST").is_empty()
+                && get("ANTHROPIC_ASTERISM_ENV_TEST").is_empty()
+        );
         let path = get("PATH");
         assert_eq!(path.len(), 1);
         let bin_dir = tool_path().unwrap().0;
         assert_eq!(std::env::split_paths(&path[0]).next().unwrap(), bin_dir);
         assert_eq!(get("ASTERISM_HOME"), [paths.home.display().to_string()]);
-        assert_eq!(get("ASTERISM_SOCKET"), [paths.socket().display().to_string()]);
+        assert_eq!(
+            get("ASTERISM_SOCKET"),
+            [paths.socket().display().to_string()]
+        );
         assert!(get("ASTERISM_CLI")[0].ends_with("/asterism"));
         let position = |key: &str| env.iter().position(|(k, _)| k == key).unwrap();
         assert_eq!(get("EXTRA"), ["1"]);
@@ -1810,7 +2659,10 @@ mod tests {
         assert_eq!(slugify(5, "a/b..c~d^e:f"), "5-a-b-c-d-e-f");
         let long = slugify(6, &"x".repeat(200));
         assert_eq!(long.len(), "6-".len() + SLUG_MAX);
-        assert_eq!(slugify(7, &format!("{}-tail", "y".repeat(39))), format!("7-{}", "y".repeat(39)));
+        assert_eq!(
+            slugify(7, &format!("{}-tail", "y".repeat(39))),
+            format!("7-{}", "y".repeat(39))
+        );
     }
 
     #[test]
@@ -1833,7 +2685,16 @@ mod forge_clone_tests {
     #[test]
     fn only_a_signed_out_status_falls_back() {
         assert!(!forge_clone_wanted(Ok(ForgeStatus::default())).unwrap());
-        assert!(forge_clone_wanted(Ok(ForgeStatus { authenticated: true, ..Default::default() })).unwrap());
-        assert_eq!(forge_clone_wanted(Err(Error::new(ErrorKind::Timeout, "slow"))).unwrap_err().kind, ErrorKind::Timeout);
+        assert!(forge_clone_wanted(Ok(ForgeStatus {
+            authenticated: true,
+            ..Default::default()
+        }))
+        .unwrap());
+        assert_eq!(
+            forge_clone_wanted(Err(Error::new(ErrorKind::Timeout, "slow")))
+                .unwrap_err()
+                .kind,
+            ErrorKind::Timeout
+        );
     }
 }

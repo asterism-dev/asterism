@@ -16,7 +16,12 @@ pub struct Request {
 
 impl Request {
     pub fn new(id: u64, method: &str, params: Value) -> Self {
-        Self { jsonrpc: JSONRPC.into(), id, method: method.into(), params }
+        Self {
+            jsonrpc: JSONRPC.into(),
+            id,
+            method: method.into(),
+            params,
+        }
     }
 }
 
@@ -32,11 +37,21 @@ pub struct Response {
 
 impl Response {
     pub fn ok(id: u64, result: Value) -> Self {
-        Self { jsonrpc: JSONRPC.into(), id, result: Some(result), error: None }
+        Self {
+            jsonrpc: JSONRPC.into(),
+            id,
+            result: Some(result),
+            error: None,
+        }
     }
 
     pub fn err(id: u64, error: RpcError) -> Self {
-        Self { jsonrpc: JSONRPC.into(), id, result: None, error: Some(error) }
+        Self {
+            jsonrpc: JSONRPC.into(),
+            id,
+            result: None,
+            error: Some(error),
+        }
     }
 }
 
@@ -49,7 +64,11 @@ pub struct Notification {
 
 impl Notification {
     pub fn new(method: &str, params: Value) -> Self {
-        Self { jsonrpc: JSONRPC.into(), method: method.into(), params }
+        Self {
+            jsonrpc: JSONRPC.into(),
+            method: method.into(),
+            params,
+        }
     }
 }
 
@@ -116,7 +135,9 @@ pub struct ErrorData {
 
 impl Default for ErrorData {
     fn default() -> Self {
-        Self { kind: ErrorKind::Unknown }
+        Self {
+            kind: ErrorKind::Unknown,
+        }
     }
 }
 
@@ -130,7 +151,11 @@ pub struct RpcError {
 
 impl RpcError {
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
-        Self { code: kind.code(), message: message.into(), data: ErrorData { kind } }
+        Self {
+            code: kind.code(),
+            message: message.into(),
+            data: ErrorData { kind },
+        }
     }
 
     pub fn kind(&self) -> ErrorKind {

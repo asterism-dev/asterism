@@ -62,13 +62,31 @@ onMounted(load);
     </div>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-else-if="patch === ''" class="muted">No changes against {{ task.base_branch }}.</p>
+    <!-- eslint-disable-next-line vue/no-v-html -- diff2html escapes file contents -->
     <div v-else class="diff" v-html="rendered"></div>
   </div>
 </template>
 
 <style scoped>
-.diff-view { position: absolute; inset: 0; overflow: auto; padding: 10px 14px; }
-.diff-toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
-.diff-toolbar label { display: flex; gap: 6px; align-items: center; width: auto; }
-.diff-toolbar input { width: auto; }
+.diff-view {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 10px 14px;
+}
+.diff-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.diff-toolbar label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: auto;
+}
+.diff-toolbar input {
+  width: auto;
+}
 </style>

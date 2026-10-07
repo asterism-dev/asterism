@@ -10,9 +10,11 @@ pub struct Paths {
 
 impl Paths {
     pub fn from_env() -> Self {
-        let home = std::env::var_os("ASTERISM_HOME").map(PathBuf::from).unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".asterism")
-        });
+        let home = std::env::var_os("ASTERISM_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".asterism")
+            });
         Self { home }
     }
 
@@ -42,7 +44,10 @@ impl Paths {
 
     pub fn ensure_dirs(&self) -> io::Result<()> {
         // The socket grants full control over this user's sessions, so only the owner may reach it.
-        DirBuilder::new().recursive(true).mode(0o700).create(&self.home)?;
+        DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&self.home)?;
         fs::set_permissions(&self.home, Permissions::from_mode(0o700))?;
         fs::create_dir_all(self.worktrees())
     }

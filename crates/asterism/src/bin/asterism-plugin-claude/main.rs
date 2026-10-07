@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use asterism_plugin::protocol::{method, InitializeParams, InitializeResult, PrepareParams, SettingsChangedParams};
+use asterism_plugin::protocol::{
+    method, InitializeParams, InitializeResult, PrepareParams, SettingsChangedParams,
+};
 use asterism_plugin::{params, serve, to_value, ErrorKind, Host, RpcError};
 use serde_json::{Map, Value};
 
@@ -17,14 +19,19 @@ struct State {
 
 impl State {
     fn apply(&self, settings: &Map<String, Value>) {
-        let trust = settings.get("trust_workspaces").and_then(Value::as_bool).unwrap_or(false);
+        let trust = settings
+            .get("trust_workspaces")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         self.trust_workspaces.store(trust, Ordering::Relaxed);
     }
 }
 
 /// Where Claude Code keeps its global config, including per-folder trust.
 fn claude_config() -> Option<PathBuf> {
-    std::env::var_os("CLAUDE_CONFIG_DIR").or_else(|| std::env::var_os("HOME")).map(|dir| PathBuf::from(dir).join(".claude.json"))
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(|dir| PathBuf::from(dir).join(".claude.json"))
 }
 
 fn handle(state: &State, method_name: &str, raw: Value) -> Result<Value, RpcError> {
@@ -33,7 +40,9 @@ fn handle(state: &State, method_name: &str, raw: Value) -> Result<Value, RpcErro
             let p: InitializeParams = params(raw)?;
             let _ = state.data_dir.set(PathBuf::from(p.data_dir));
             state.apply(&p.settings);
-            to_value(InitializeResult { capabilities: vec!["agent".into()] })
+            to_value(InitializeResult {
+                capabilities: vec!["agent".into()],
+            })
         }
         method::SETTINGS_CHANGED => {
             state.apply(&params::<SettingsChangedParams>(raw)?.settings);
@@ -49,14 +58,24 @@ fn handle(state: &State, method_name: &str, raw: Value) -> Result<Value, RpcErro
                             eprintln!("asterism-plugin-claude: could not trust {}: {e}", p.cwd);
                         }
                     }
-                    None => eprintln!("asterism-plugin-claude: HOME is not set, cannot trust {}", p.cwd),
+                    None => eprintln!(
+                        "asterism-plugin-claude: HOME is not set, cannot trust {}",
+                        p.cwd
+                    ),
                 }
             }
-            let dir = state.data_dir.get().ok_or_else(|| RpcError::new(ErrorKind::Internal, "not initialized"))?;
-            let exe = std::env::current_exe().map_err(|e| RpcError::new(ErrorKind::Internal, e.to_string()))?;
+            let dir = state
+                .data_dir
+                .get()
+                .ok_or_else(|| RpcError::new(ErrorKind::Internal, "not initialized"))?;
+            let exe = std::env::current_exe()
+                .map_err(|e| RpcError::new(ErrorKind::Internal, e.to_string()))?;
             to_value(launch::prepare(dir, &exe, &p)?)
         }
-        other => Err(RpcError::new(ErrorKind::MethodNotFound, format!("unknown method {other}"))),
+        other => Err(RpcError::new(
+            ErrorKind::MethodNotFound,
+            format!("unknown method {other}"),
+        )),
     }
 }
 

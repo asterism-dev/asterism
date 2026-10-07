@@ -8,8 +8,8 @@ use asterism_proto::client::{Client, ClientError};
 use asterism_proto::paths::Paths;
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::{
-    method, ClientKind, Event, HelloParams, HelloResult, Session, SessionAttachResult, SessionIdParams,
-    SessionListParams, SessionStatus,
+    method, ClientKind, Event, HelloParams, HelloResult, Session, SessionAttachResult,
+    SessionIdParams, SessionListParams, SessionStatus,
 };
 use asterism_proto::PROTO_VERSION;
 use serde::Serialize;
@@ -36,10 +36,20 @@ pub trait NodeSink: Send + Sync + 'static {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum NodeStatus {
     Connecting,
-    Connected { hello: HelloResult },
-    UpdateAvailable { hello: HelloResult, bundled_version: String, bundled_build: String },
-    Incompatible { message: String },
-    Disconnected { reason: String },
+    Connected {
+        hello: HelloResult,
+    },
+    UpdateAvailable {
+        hello: HelloResult,
+        bundled_version: String,
+        bundled_build: String,
+    },
+    Incompatible {
+        message: String,
+    },
+    Disconnected {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -50,25 +60,37 @@ pub struct CallError {
 
 impl CallError {
     fn not_connected() -> Self {
-        Self { kind: "not_connected".into(), message: "the node is not connected".into() }
+        Self {
+            kind: "not_connected".into(),
+            message: "the node is not connected".into(),
+        }
     }
 
     fn connection(message: impl Into<String>) -> Self {
-        Self { kind: "connection".into(), message: message.into() }
+        Self {
+            kind: "connection".into(),
+            message: message.into(),
+        }
     }
 }
 
 impl From<ClientError> for CallError {
     fn from(e: ClientError) -> Self {
         match e {
-            ClientError::Rpc(err) => Self { kind: kind_name(err.kind()), message: err.message },
+            ClientError::Rpc(err) => Self {
+                kind: kind_name(err.kind()),
+                message: err.message,
+            },
             other => Self::connection(other.to_string()),
         }
     }
 }
 
 fn kind_name(kind: ErrorKind) -> String {
-    serde_json::to_value(kind).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_else(|| "unknown".into())
+    serde_json::to_value(kind)
+        .ok()
+        .and_then(|v| v.as_str().map(String::from))
+        .unwrap_or_else(|| "unknown".into())
 }
 
 pub enum PathEnv {
@@ -93,7 +115,10 @@ enum Outcome {
 }
 
 fn retry(reason: impl ToString) -> Outcome {
-    Outcome::Retry { reason: reason.to_string(), was_connected: false }
+    Outcome::Retry {
+        reason: reason.to_string(),
+        was_connected: false,
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -137,18 +162,26 @@ impl LocalNode {
     }
 
     fn client(&self) -> Result<Arc<Client>, CallError> {
-        lock(&self.client).clone().ok_or_else(CallError::not_connected)
+        lock(&self.client)
+            .clone()
+            .ok_or_else(CallError::not_connected)
     }
 
     pub async fn call(&self, method: &str, params: Value) -> Result<Value, CallError> {
         Ok(self.client()?.call(method, params).await?)
     }
 
-    pub async fn attach(&self, session_id: i64, on_output: OutputSink) -> Result<SessionAttachResult, CallError> {
+    pub async fn attach(
+        &self,
+        session_id: i64,
+        on_output: OutputSink,
+    ) -> Result<SessionAttachResult, CallError> {
         let client = self.client()?;
         let token = self.attach_token.fetch_add(1, Ordering::Relaxed);
         lock(&self.outputs).insert(session_id, (token, on_output));
-        let attached = client.call(method::SESSION_ATTACH, SessionIdParams { session_id }).await;
+        let attached = client
+            .call(method::SESSION_ATTACH, SessionIdParams { session_id })
+            .await;
         if attached.is_err() {
             // A newer overlapping attach may own the entry by now; only drop our own.
             let mut outputs = lock(&self.outputs);
@@ -161,7 +194,10 @@ impl LocalNode {
 
     pub async fn detach(&self, session_id: i64) -> Result<(), CallError> {
         lock(&self.outputs).remove(&session_id);
-        Ok(self.client()?.call(method::SESSION_DETACH, SessionIdParams { session_id }).await?)
+        Ok(self
+            .client()?
+            .call(method::SESSION_DETACH, SessionIdParams { session_id })
+            .await?)
     }
 
     /// Stops whatever daemon owns the socket; the connection loop then starts the bundled one.
@@ -170,7 +206,8 @@ impl LocalNode {
         if let Some(client) = client {
             return Ok(client.call::<_, ()>(method::SHUTDOWN, ()).await?);
         }
-        let stopped = tokio::time::timeout(RAW_SHUTDOWN_TIMEOUT, shutdown_raw(&self.config.paths)).await;
+        let stopped =
+            tokio::time::timeout(RAW_SHUTDOWN_TIMEOUT, shutdown_raw(&self.config.paths)).await;
         // A daemon that is gone or unresponsive is as good as stopped; the loop respawns either way.
         let result = match stopped {
             Ok(Err(ShutdownError::Io(e))) => Err(CallError::connection(e.to_string())),
@@ -192,7 +229,10 @@ impl LocalNode {
                     backoff = BACKOFF_START;
                     continue;
                 }
-                Outcome::Retry { reason, was_connected } => {
+                Outcome::Retry {
+                    reason,
+                    was_connected,
+                } => {
                     self.set_status(NodeStatus::Disconnected { reason });
                     if was_connected {
                         backoff = BACKOFF_START;
@@ -229,7 +269,9 @@ impl LocalNode {
             Ok(stream) => stream,
             Err(_) => {
                 let path = self.spawn_path().await;
-                match daemon::spawn_and_connect(&config.paths, &config.daemon_bin, path.as_deref()).await {
+                match daemon::spawn_and_connect(&config.paths, &config.daemon_bin, path.as_deref())
+                    .await
+                {
                     Ok(stream) => stream,
                     Err(e) => return retry(format!("could not start the daemon: {e}")),
                 }
@@ -237,8 +279,13 @@ impl LocalNode {
         };
         let (reader, writer) = stream.into_split();
         let client = Arc::new(Client::new(reader, writer));
-        let Some(mut events) = client.take_events() else { return retry("event stream unavailable") };
-        let hello_params = HelloParams { proto_version: PROTO_VERSION, client_kind: ClientKind::App };
+        let Some(mut events) = client.take_events() else {
+            return retry("event stream unavailable");
+        };
+        let hello_params = HelloParams {
+            proto_version: PROTO_VERSION,
+            client_kind: ClientKind::App,
+        };
         let hello: HelloResult = match client.call(method::HELLO, hello_params).await {
             Ok(hello) => hello,
             Err(ClientError::Rpc(e)) if e.kind() == ErrorKind::IncompatibleVersion => {
@@ -247,7 +294,12 @@ impl LocalNode {
             Err(e) => return retry(e),
         };
 
-        let outdated = daemon_outdated(&hello.daemon_version, &hello.daemon_build, &config.bundled_version, &config.bundled_build);
+        let outdated = daemon_outdated(
+            &hello.daemon_version,
+            &hello.daemon_build,
+            &config.bundled_version,
+            &config.bundled_build,
+        );
         let silent_restart = outdated
             && !self.restarted_for_update.load(Ordering::SeqCst)
             && !has_running_sessions(&client).await;
@@ -255,7 +307,9 @@ impl LocalNode {
             self.restarted_for_update.store(true, Ordering::SeqCst);
             if client.call::<_, ()>(method::SHUTDOWN, ()).await.is_ok() {
                 // The connection closes when the old daemon exits, which also releases its lock.
-                let closed = tokio::time::timeout(REPLACE_EXIT_TIMEOUT, async { while events.recv().await.is_some() {} });
+                let closed = tokio::time::timeout(REPLACE_EXIT_TIMEOUT, async {
+                    while events.recv().await.is_some() {}
+                });
                 return match closed.await {
                     Ok(()) => Outcome::Replaced,
                     Err(_) => retry("the old daemon did not exit after shutdown"),
@@ -288,7 +342,10 @@ impl LocalNode {
         }
         *lock(&self.client) = None;
         lock(&self.outputs).clear();
-        Outcome::Retry { reason: "connection to the daemon closed".into(), was_connected: true }
+        Outcome::Retry {
+            reason: "connection to the daemon closed".into(),
+            was_connected: true,
+        }
     }
 }
 
@@ -306,7 +363,10 @@ fn daemon_outdated(daemon: &str, daemon_build: &str, bundled: &str, bundled_buil
 }
 
 async fn has_running_sessions(client: &Client) -> bool {
-    match client.call::<_, Vec<Session>>(method::SESSION_LIST, SessionListParams::default()).await {
+    match client
+        .call::<_, Vec<Session>>(method::SESSION_LIST, SessionListParams::default())
+        .await
+    {
         Ok(sessions) => sessions.iter().any(|s| s.status != SessionStatus::Exited),
         Err(_) => true,
     }
@@ -319,10 +379,18 @@ enum ShutdownError {
 
 /// Raw JSON so a daemon speaking another protocol version still understands it.
 async fn shutdown_raw(paths: &Paths) -> Result<(), ShutdownError> {
-    let stream = UnixStream::connect(paths.socket()).await.map_err(|_| ShutdownError::Unreachable)?;
+    let stream = UnixStream::connect(paths.socket())
+        .await
+        .map_err(|_| ShutdownError::Unreachable)?;
     let (reader, mut writer) = stream.into_split();
-    writer.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"shutdown\",\"params\":null}\n").await.map_err(ShutdownError::Io)?;
-    BufReader::new(reader).read_line(&mut String::new()).await.map_err(ShutdownError::Io)?;
+    writer
+        .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"shutdown\",\"params\":null}\n")
+        .await
+        .map_err(ShutdownError::Io)?;
+    BufReader::new(reader)
+        .read_line(&mut String::new())
+        .await
+        .map_err(ShutdownError::Io)?;
     Ok(())
 }
 

@@ -10,8 +10,13 @@ use serde_json::Value;
 
 /// Decodes request params; `null` counts as an empty object.
 pub fn params<T: DeserializeOwned>(value: Value) -> Result<T, RpcError> {
-    let value = if value.is_null() { Value::Object(Default::default()) } else { value };
-    serde_json::from_value(value).map_err(|e| RpcError::new(ErrorKind::InvalidParams, e.to_string()))
+    let value = if value.is_null() {
+        Value::Object(Default::default())
+    } else {
+        value
+    };
+    serde_json::from_value(value)
+        .map_err(|e| RpcError::new(ErrorKind::InvalidParams, e.to_string()))
 }
 
 pub fn to_value<T: Serialize>(value: T) -> Result<Value, RpcError> {

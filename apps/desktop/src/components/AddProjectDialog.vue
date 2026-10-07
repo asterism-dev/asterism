@@ -56,17 +56,31 @@ async function chooseFolder() {
           :class="{ active: state.projectDialog === t.id }"
           :disabled="busy && state.projectDialog !== t.id"
           @click="select(t.id)"
-        >{{ t.label }}</button>
+        >
+          {{ t.label }}
+        </button>
       </div>
       <div v-if="state.projectDialog === 'folder'" class="add-form">
         <p class="muted">Add a git repository that already exists on this computer.</p>
         <p v-if="error" class="error">{{ error }}</p>
         <div class="actions">
           <button type="button" :disabled="busy" @click="close">Cancel</button>
-          <button ref="chooseButton" type="button" class="primary" :disabled="busy" @click="chooseFolder">{{ busy ? 'Adding…' : 'Choose folder…' }}</button>
+          <button
+            ref="chooseButton"
+            type="button"
+            class="primary"
+            :disabled="busy"
+            @click="chooseFolder"
+          >
+            {{ busy ? 'Adding…' : 'Choose folder…' }}
+          </button>
         </div>
       </div>
-      <CloneForm v-else-if="state.projectDialog === 'clone'" @busy="busy = $event" @close="state.projectDialog = null" />
+      <CloneForm
+        v-else-if="state.projectDialog === 'clone'"
+        @busy="busy = $event"
+        @close="state.projectDialog = null"
+      />
       <CreateRepoForm v-else @busy="busy = $event" @close="state.projectDialog = null" />
     </div>
   </div>

@@ -24,7 +24,12 @@ fn invalid(message: String) -> Error {
 fn load_secrets(paths: &Paths) -> Result<Secrets> {
     let path = paths.secrets();
     match std::fs::read_to_string(&path) {
-        Ok(text) => toml::from_str(&text).map_err(|_| Error::new(ErrorKind::Internal, format!("{} is not valid TOML; fix or remove it", path.display()))),
+        Ok(text) => toml::from_str(&text).map_err(|_| {
+            Error::new(
+                ErrorKind::Internal,
+                format!("{} is not valid TOML; fix or remove it", path.display()),
+            )
+        }),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Secrets::new()),
         Err(e) => Err(e.into()),
     }
@@ -32,13 +37,22 @@ fn load_secrets(paths: &Paths) -> Result<Secrets> {
 
 /// Atomic like `write_atomic`, but the file is never readable by others, not even briefly.
 pub fn write_private(path: &Path, contents: &str) -> Result<()> {
-    let dir = path.parent().ok_or_else(|| Error::new(ErrorKind::Internal, "path has no parent"))?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| Error::new(ErrorKind::Internal, "path has no parent"))?;
     std::fs::create_dir_all(dir)?;
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let unique = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     let temp = dir.join(format!(".{name}.{}.{unique}.tmp", std::process::id()));
     let result = (|| -> io::Result<()> {
-        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&temp)?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temp)?;
         file.write_all(contents.as_bytes())?;
         file.sync_all()?;
         std::fs::rename(&temp, path)
@@ -51,13 +65,18 @@ pub fn write_private(path: &Path, contents: &str) -> Result<()> {
 
 /// Every value the plugin receives: stored values and secrets, defaults for the rest.
 pub fn resolved(paths: &Paths, plugin: &str, schema: &[SettingSpec]) -> Result<Map<String, Value>> {
-    let stored = Config::load(&paths.config())?.plugins.remove(plugin).unwrap_or_default();
+    let stored = Config::load(&paths.config())?
+        .plugins
+        .remove(plugin)
+        .unwrap_or_default();
     let secrets = load_secrets(paths)?.remove(plugin).unwrap_or_default();
     let mut values = Map::new();
     for spec in schema {
         let value = match spec.kind {
             SettingType::Secret => secrets.get(&spec.key).map(|s| Value::String(s.clone())),
-            _ => stored.get(&spec.key).and_then(|v| serde_json::to_value(v).ok()),
+            _ => stored
+                .get(&spec.key)
+                .and_then(|v| serde_json::to_value(v).ok()),
         };
         if let Some(value) = value.or_else(|| spec.default.clone()) {
             values.insert(spec.key.clone(), value);
@@ -67,8 +86,16 @@ pub fn resolved(paths: &Paths, plugin: &str, schema: &[SettingSpec]) -> Result<M
 }
 
 pub fn view(paths: &Paths, plugin: &str, schema: &[SettingSpec]) -> Result<PluginSettings> {
-    let is_secret = |key: &str| schema.iter().any(|s| s.key == key && s.kind == SettingType::Secret);
-    let mut settings = PluginSettings { schema: schema.to_vec(), values: BTreeMap::new(), secrets_set: Vec::new() };
+    let is_secret = |key: &str| {
+        schema
+            .iter()
+            .any(|s| s.key == key && s.kind == SettingType::Secret)
+    };
+    let mut settings = PluginSettings {
+        schema: schema.to_vec(),
+        values: BTreeMap::new(),
+        secrets_set: Vec::new(),
+    };
     for (key, value) in resolved(paths, plugin, schema)? {
         if is_secret(&key) {
             settings.secrets_set.push(key);
@@ -82,7 +109,11 @@ pub fn view(paths: &Paths, plugin: &str, schema: &[SettingSpec]) -> Result<Plugi
 /// Titles of required settings without a value.
 pub fn missing(paths: &Paths, plugin: &str, schema: &[SettingSpec]) -> Result<Vec<String>> {
     let values = resolved(paths, plugin, schema)?;
-    Ok(schema.iter().filter(|s| s.required && !values.contains_key(&s.key)).map(|s| s.title.clone()).collect())
+    Ok(schema
+        .iter()
+        .filter(|s| s.required && !values.contains_key(&s.key))
+        .map(|s| s.title.clone())
+        .collect())
 }
 
 pub(crate) fn check(spec: &SettingSpec, value: &Value) -> Result<()> {
@@ -97,7 +128,11 @@ pub(crate) fn check(spec: &SettingSpec, value: &Value) -> Result<()> {
     if valid {
         Ok(())
     } else if spec.kind == SettingType::Enum {
-        Err(invalid(format!("{}: expected one of {}", spec.title, spec.options.join(", "))))
+        Err(invalid(format!(
+            "{}: expected one of {}",
+            spec.title,
+            spec.options.join(", ")
+        )))
     } else {
         let expected = match spec.kind {
             SettingType::Bool => "true or false",
@@ -109,10 +144,18 @@ pub(crate) fn check(spec: &SettingSpec, value: &Value) -> Result<()> {
 }
 
 /// Applies updates; `null` restores the default or clears a secret.
-pub fn save(paths: &Paths, plugin: &str, schema: &[SettingSpec], updates: &BTreeMap<String, Value>) -> Result<()> {
+pub fn save(
+    paths: &Paths,
+    plugin: &str,
+    schema: &[SettingSpec],
+    updates: &BTreeMap<String, Value>,
+) -> Result<()> {
     let mut checked = Vec::new();
     for (key, value) in updates {
-        let spec = schema.iter().find(|s| &s.key == key).ok_or_else(|| invalid(format!("unknown setting {key:?}")))?;
+        let spec = schema
+            .iter()
+            .find(|s| &s.key == key)
+            .ok_or_else(|| invalid(format!("unknown setting {key:?}")))?;
         check(spec, value)?;
         checked.push((spec, value));
     }
@@ -131,16 +174,19 @@ pub fn save(paths: &Paths, plugin: &str, schema: &[SettingSpec], updates: &BTree
                 stored_secrets.insert(spec.key.clone(), secret.clone());
             }
             (_, value) => {
-                let value = toml::Value::try_from(value).map_err(|e| invalid(format!("{}: {e}", spec.title)))?;
+                let value = toml::Value::try_from(value)
+                    .map_err(|e| invalid(format!("{}: {e}", spec.title)))?;
                 stored.insert(spec.key.clone(), value);
             }
         }
     }
     config.plugins.retain(|_, values| !values.is_empty());
     secrets.retain(|_, values| !values.is_empty());
-    let text = toml::to_string(&secrets).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+    let text =
+        toml::to_string(&secrets).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
     write_private(&paths.secrets(), &text)?;
-    let text = toml::to_string(&config).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+    let text =
+        toml::to_string(&config).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
     write_atomic(&paths.config(), &text)
 }
 
@@ -163,7 +209,9 @@ mod tests {
 
     fn temp_paths() -> (tempfile::TempDir, Paths) {
         let dir = tempfile::tempdir().unwrap();
-        let paths = Paths { home: dir.path().join("h") };
+        let paths = Paths {
+            home: dir.path().join("h"),
+        };
         paths.ensure_dirs().unwrap();
         (dir, paths)
     }
@@ -183,9 +231,18 @@ mod tests {
     #[test]
     fn secrets_are_masked_and_private() {
         let (_dir, paths) = temp_paths();
-        save(&paths, "echo", &schema(), &updates(json!({"token": "s3cret", "region": "us", "verbose": true, "limit": 5}))).unwrap();
+        save(
+            &paths,
+            "echo",
+            &schema(),
+            &updates(json!({"token": "s3cret", "region": "us", "verbose": true, "limit": 5})),
+        )
+        .unwrap();
 
-        assert_eq!(resolved(&paths, "echo", &schema()).unwrap().get("token"), Some(&json!("s3cret")));
+        assert_eq!(
+            resolved(&paths, "echo", &schema()).unwrap().get("token"),
+            Some(&json!("s3cret"))
+        );
         let shown = view(&paths, "echo", &schema()).unwrap();
         assert_eq!(shown.secrets_set, ["token"]);
         assert!(!shown.values.contains_key("token"));
@@ -193,20 +250,47 @@ mod tests {
         assert!(missing(&paths, "echo", &schema()).unwrap().is_empty());
 
         let config = std::fs::read_to_string(paths.config()).unwrap();
-        assert!(config.contains("[plugins.echo]") && !config.contains("s3cret"), "{config}");
-        let mode = std::fs::metadata(paths.secrets()).unwrap().permissions().mode() & 0o777;
+        assert!(
+            config.contains("[plugins.echo]") && !config.contains("s3cret"),
+            "{config}"
+        );
+        let mode = std::fs::metadata(paths.secrets())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
         assert_eq!(mode, 0o600);
     }
 
     #[test]
     fn null_clears_and_invalid_values_are_rejected() {
         let (_dir, paths) = temp_paths();
-        save(&paths, "echo", &schema(), &updates(json!({"token": "x", "region": "us"}))).unwrap();
-        save(&paths, "echo", &schema(), &updates(json!({"token": null, "region": null}))).unwrap();
+        save(
+            &paths,
+            "echo",
+            &schema(),
+            &updates(json!({"token": "x", "region": "us"})),
+        )
+        .unwrap();
+        save(
+            &paths,
+            "echo",
+            &schema(),
+            &updates(json!({"token": null, "region": null})),
+        )
+        .unwrap();
         let values = resolved(&paths, "echo", &schema()).unwrap();
-        assert_eq!((values.get("token"), values.get("region")), (None, Some(&json!("eu"))));
+        assert_eq!(
+            (values.get("token"), values.get("region")),
+            (None, Some(&json!("eu")))
+        );
 
-        for bad in [json!({"region": "mars"}), json!({"verbose": "yes"}), json!({"limit": "5"}), json!({"nope": 1})] {
+        for bad in [
+            json!({"region": "mars"}),
+            json!({"verbose": "yes"}),
+            json!({"limit": "5"}),
+            json!({"nope": 1}),
+        ] {
             let err = save(&paths, "echo", &schema(), &updates(bad.clone())).unwrap_err();
             assert_eq!(err.kind, ErrorKind::InvalidParams, "{bad}");
         }
@@ -227,8 +311,18 @@ mod tests {
         let (_dir, paths) = temp_paths();
         std::fs::write(paths.secrets(), "").unwrap();
         std::fs::set_permissions(paths.secrets(), std::fs::Permissions::from_mode(0o644)).unwrap();
-        save(&paths, "echo", &schema(), &updates(json!({"token": "s3cret"}))).unwrap();
-        let mode = std::fs::metadata(paths.secrets()).unwrap().permissions().mode() & 0o777;
+        save(
+            &paths,
+            "echo",
+            &schema(),
+            &updates(json!({"token": "s3cret"})),
+        )
+        .unwrap();
+        let mode = std::fs::metadata(paths.secrets())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
         assert_eq!(mode, 0o600);
     }
 }

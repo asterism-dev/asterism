@@ -9,24 +9,48 @@ const report = (e: unknown) => toast(errorMessage(e));
 const closing = new Set<number>();
 
 export function startSession(taskId: number, kind: SessionKind, placement?: Placement) {
-  api.startSession(taskId, kind).then((s) => {
-    if (placement) placeNext(s.id, placement);
-    addSession(state, s);
-  }).catch(report);
+  api
+    .startSession(taskId, kind)
+    .then((s) => {
+      if (placement) placeNext(s.id, placement);
+      addSession(state, s);
+    })
+    .catch(report);
 }
 
-export function newSessionMenu(e: MouseEvent, taskId: number, groupId?: string, extra: MenuItem[] = [], floating = false) {
+export function newSessionMenu(
+  e: MouseEvent,
+  taskId: number,
+  groupId?: string,
+  extra: MenuItem[] = [],
+  floating = false,
+) {
   const agents = state.agents.filter((a) => a.available);
   const shell: SessionKind = { type: 'shell' };
-  const here: Placement | undefined = groupId ? { referenceGroup: groupId, direction: 'within' } : undefined;
+  const here: Placement | undefined = groupId
+    ? { referenceGroup: groupId, direction: 'within' }
+    : undefined;
   showMenu(e, [
-    ...agents.map((a) => ({ label: a.display_name || a.name, action: () => startSession(taskId, { type: 'agent', name: a.name }, here) })),
+    ...agents.map((a) => ({
+      label: a.display_name || a.name,
+      action: () => startSession(taskId, { type: 'agent', name: a.name }, here),
+    })),
     { label: 'Terminal', action: () => startSession(taskId, shell, here) },
     // A floating window holds a single group, so there is no below/right inside it.
-    ...(groupId && !floating ? [
-      { label: 'Terminal below', action: () => startSession(taskId, shell, { referenceGroup: groupId, direction: 'below' }) },
-      { label: 'Terminal right', action: () => startSession(taskId, shell, { referenceGroup: groupId, direction: 'right' }) },
-    ] : []),
+    ...(groupId && !floating
+      ? [
+          {
+            label: 'Terminal below',
+            action: () =>
+              startSession(taskId, shell, { referenceGroup: groupId, direction: 'below' }),
+          },
+          {
+            label: 'Terminal right',
+            action: () =>
+              startSession(taskId, shell, { referenceGroup: groupId, direction: 'right' }),
+          },
+        ]
+      : []),
     ...extra,
   ]);
 }
@@ -36,7 +60,10 @@ export async function closeSession(s: Session) {
   closing.add(s.id);
   try {
     if (s.kind.type === 'agent' && s.status !== 'exited') {
-      const stop = await ask(`Stop the running ${sessionLabel(s)} session and close it?`, { title: 'Close session', kind: 'warning' });
+      const stop = await ask(`Stop the running ${sessionLabel(s)} session and close it?`, {
+        title: 'Close session',
+        kind: 'warning',
+      });
       if (!stop) return;
     }
     await api.removeSession(s.id);

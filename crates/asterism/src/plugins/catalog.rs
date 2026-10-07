@@ -42,32 +42,54 @@ pub struct IndexEntry {
 }
 
 pub enum EntrySource<'a> {
-    Local { path: &'a str },
-    Git { url: &'a str, git_ref: &'a str, path: &'a str },
+    Local {
+        path: &'a str,
+    },
+    Git {
+        url: &'a str,
+        git_ref: &'a str,
+        path: &'a str,
+    },
 }
 
 impl IndexEntry {
     /// Valid after `parse_index`, which guarantees exactly one of the two shapes.
     pub fn source(&self) -> EntrySource<'_> {
         match (&self.git, &self.git_ref) {
-            (Some(url), Some(git_ref)) => EntrySource::Git { url, git_ref, path: self.path.as_deref().unwrap_or(".") },
-            _ => EntrySource::Local { path: self.path.as_deref().unwrap_or(".") },
+            (Some(url), Some(git_ref)) => EntrySource::Git {
+                url,
+                git_ref,
+                path: self.path.as_deref().unwrap_or("."),
+            },
+            _ => EntrySource::Local {
+                path: self.path.as_deref().unwrap_or("."),
+            },
         }
     }
 }
 
 /// A relative path that stays inside its root: no absolute prefix and no `..`.
 pub fn safe_relative(path: &str) -> bool {
-    !path.is_empty() && Path::new(path).components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+    !path.is_empty()
+        && Path::new(path)
+            .components()
+            .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
 }
 
 pub fn parse_index(text: &str) -> std::result::Result<StoreIndex, String> {
-    let index: StoreIndex = serde_json::from_str(text).map_err(|e| format!("invalid store.json: {e}"))?;
+    let index: StoreIndex =
+        serde_json::from_str(text).map_err(|e| format!("invalid store.json: {e}"))?;
     if index.format != INDEX_FORMAT {
-        return Err(format!("unsupported store.json format {} (this asterism reads {INDEX_FORMAT})", index.format));
+        return Err(format!(
+            "unsupported store.json format {} (this asterism reads {INDEX_FORMAT})",
+            index.format
+        ));
     }
     if !is_slug(&index.name) {
-        return Err(format!("invalid store name {:?}: use a-z, 0-9 and '-'", index.name));
+        return Err(format!(
+            "invalid store name {:?}: use a-z, 0-9 and '-'",
+            index.name
+        ));
     }
     let mut seen = BTreeSet::new();
     for entry in &index.plugins {
@@ -80,12 +102,20 @@ pub fn parse_index(text: &str) -> std::result::Result<StoreIndex, String> {
         match (entry.git.is_some(), entry.git_ref.is_some()) {
             (true, false) => return Err(format!("{}: a git entry needs a ref", entry.name)),
             (false, true) => return Err(format!("{}: ref is only valid with git", entry.name)),
-            (false, false) if entry.path.is_none() => return Err(format!("{}: needs either a path or a git source", entry.name)),
+            (false, false) if entry.path.is_none() => {
+                return Err(format!(
+                    "{}: needs either a path or a git source",
+                    entry.name
+                ))
+            }
             _ => {}
         }
         if let Some(path) = &entry.path {
             if !safe_relative(path) {
-                return Err(format!("{}: path {path:?} must be relative and stay inside the repository", entry.name));
+                return Err(format!(
+                    "{}: path {path:?} must be relative and stay inside the repository",
+                    entry.name
+                ));
             }
         }
     }
@@ -126,7 +156,11 @@ pub fn load_stores(path: &Path) -> std::result::Result<StoresFile, String> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(StoresFile {
             auto_update: false,
             stores: official_source()
-                .map(|source| StoreConfig { name: OFFICIAL_NAME.into(), source, official: true })
+                .map(|source| StoreConfig {
+                    name: OFFICIAL_NAME.into(),
+                    source,
+                    official: true,
+                })
                 .into_iter()
                 .collect(),
         }),
@@ -190,12 +224,19 @@ pub fn search<'a>(
     capability: Option<CapabilityKind>,
     store: Option<&str>,
 ) -> Vec<(&'a str, &'a IndexEntry)> {
-    let needle = query.map(str::trim).filter(|q| !q.is_empty()).map(str::to_lowercase);
+    let needle = query
+        .map(str::trim)
+        .filter(|q| !q.is_empty())
+        .map(str::to_lowercase);
     let mut by_name = Vec::new();
     let mut by_text = Vec::new();
-    for (store_name, index) in indexes.iter().filter(|(name, _)| store.is_none_or(|s| s == name)) {
+    for (store_name, index) in indexes
+        .iter()
+        .filter(|(name, _)| store.is_none_or(|s| s == name))
+    {
         for entry in &index.plugins {
-            if capability.is_some_and(|kind| !entry.tags.iter().any(|t| t == capability_tag(kind))) {
+            if capability.is_some_and(|kind| !entry.tags.iter().any(|t| t == capability_tag(kind)))
+            {
                 continue;
             }
             let Some(needle) = &needle else {
@@ -204,7 +245,9 @@ pub fn search<'a>(
             };
             if entry.name.to_lowercase().contains(needle) {
                 by_name.push((store_name.as_str(), entry));
-            } else if entry.description.to_lowercase().contains(needle) || entry.tags.iter().any(|t| t.to_lowercase().contains(needle)) {
+            } else if entry.description.to_lowercase().contains(needle)
+                || entry.tags.iter().any(|t| t.to_lowercase().contains(needle))
+            {
                 by_text.push((store_name.as_str(), entry));
             }
         }
@@ -230,19 +273,47 @@ mod tests {
     fn parses_path_and_git_entries() {
         let index = parse_index(INDEX).unwrap();
         assert_eq!(index.name, "acme");
-        assert!(matches!(index.plugins[0].source(), EntrySource::Local { path: "plugins/gitlab" }));
-        assert!(matches!(index.plugins[1].source(), EntrySource::Git { url: "https://example.com/linear.git", git_ref: "v0.3.0", path: "." }));
+        assert!(matches!(
+            index.plugins[0].source(),
+            EntrySource::Local {
+                path: "plugins/gitlab"
+            }
+        ));
+        assert!(matches!(
+            index.plugins[1].source(),
+            EntrySource::Git {
+                url: "https://example.com/linear.git",
+                git_ref: "v0.3.0",
+                path: "."
+            }
+        ));
     }
 
     #[test]
     fn rejects_bad_indexes() {
         let replace = |from: &str, to: &str| parse_index(&INDEX.replace(from, to));
-        assert!(replace("\"format\": 1", "\"format\": 2").unwrap_err().contains("format"));
-        assert!(replace("\"name\": \"acme\"", "\"name\": \"Acme Inc\"").unwrap_err().contains("store name"));
-        assert!(replace("\"ref\": \"v0.3.0\", ", "").unwrap_err().contains("ref"));
-        assert!(replace("\"path\": \"plugins/gitlab\"", "\"path\": \"../gitlab\"").unwrap_err().contains("path"));
-        assert!(replace("\"path\": \"plugins/gitlab\"", "\"path\": \"/abs\"").unwrap_err().contains("path"));
-        assert!(replace("\"name\": \"linear\"", "\"name\": \"gitlab\"").unwrap_err().contains("duplicate"));
+        assert!(replace("\"format\": 1", "\"format\": 2")
+            .unwrap_err()
+            .contains("format"));
+        assert!(replace("\"name\": \"acme\"", "\"name\": \"Acme Inc\"")
+            .unwrap_err()
+            .contains("store name"));
+        assert!(replace("\"ref\": \"v0.3.0\", ", "")
+            .unwrap_err()
+            .contains("ref"));
+        assert!(
+            replace("\"path\": \"plugins/gitlab\"", "\"path\": \"../gitlab\"")
+                .unwrap_err()
+                .contains("path")
+        );
+        assert!(
+            replace("\"path\": \"plugins/gitlab\"", "\"path\": \"/abs\"")
+                .unwrap_err()
+                .contains("path")
+        );
+        assert!(replace("\"name\": \"linear\"", "\"name\": \"gitlab\"")
+            .unwrap_err()
+            .contains("duplicate"));
         let neither = INDEX.replace("\"path\": \"plugins/gitlab\", ", "");
         assert!(parse_index(&neither).unwrap_err().contains("either"));
         assert!(parse_index("not json").is_err());
@@ -251,10 +322,28 @@ mod tests {
     #[test]
     fn search_puts_name_matches_first_and_filters() {
         let indexes = vec![("acme".to_string(), parse_index(INDEX).unwrap())];
-        let names = |hits: Vec<(&str, &IndexEntry)>| hits.into_iter().map(|(_, e)| e.name.clone()).collect::<Vec<_>>();
-        assert_eq!(names(search(&indexes, Some("GITLAB"), None, None)), ["gitlab", "lab-tools"]);
-        assert_eq!(names(search(&indexes, None, Some(CapabilityKind::TaskSource), None)), ["linear"]);
-        assert_eq!(names(search(&indexes, Some("issues"), None, None)), ["linear"]);
+        let names = |hits: Vec<(&str, &IndexEntry)>| {
+            hits.into_iter()
+                .map(|(_, e)| e.name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names(search(&indexes, Some("GITLAB"), None, None)),
+            ["gitlab", "lab-tools"]
+        );
+        assert_eq!(
+            names(search(
+                &indexes,
+                None,
+                Some(CapabilityKind::TaskSource),
+                None
+            )),
+            ["linear"]
+        );
+        assert_eq!(
+            names(search(&indexes, Some("issues"), None, None)),
+            ["linear"]
+        );
         assert!(search(&indexes, None, None, Some("other")).is_empty());
         assert_eq!(search(&indexes, None, None, None).len(), 3);
     }
@@ -265,11 +354,18 @@ mod tests {
         let path = dir.path().join("stores.toml");
         let file = load_stores(&path).unwrap();
         if official_source().is_some() {
-            assert_eq!((file.stores[0].name.as_str(), file.stores[0].official), (OFFICIAL_NAME, true));
+            assert_eq!(
+                (file.stores[0].name.as_str(), file.stores[0].official),
+                (OFFICIAL_NAME, true)
+            );
         }
         let custom = StoresFile {
             auto_update: true,
-            stores: vec![StoreConfig { name: "acme".into(), source: "/srv/acme".into(), official: false }],
+            stores: vec![StoreConfig {
+                name: "acme".into(),
+                source: "/srv/acme".into(),
+                official: false,
+            }],
         };
         save_stores(&path, &custom).unwrap();
         assert_eq!(load_stores(&path).unwrap(), custom);
@@ -285,7 +381,12 @@ mod tests {
         let mut file = InstalledFile::default();
         file.plugins.insert(
             "linear".into(),
-            InstalledEntry { version: "0.3.0".into(), store: "acme".into(), git_ref: Some("v0.3.0".into()), previous: Some("0.2.0".into()) },
+            InstalledEntry {
+                version: "0.3.0".into(),
+                store: "acme".into(),
+                git_ref: Some("v0.3.0".into()),
+                previous: Some("0.2.0".into()),
+            },
         );
         file.disabled.insert("github".into());
         save_installed(&path, &file).unwrap();

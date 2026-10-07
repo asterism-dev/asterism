@@ -7,7 +7,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use asterism_plugin::protocol::{method, InitializeParams, InitializeResult, SettingsChangedParams, HOST_PREFIX, PROTOCOL};
+use asterism_plugin::protocol::{
+    method, InitializeParams, InitializeResult, SettingsChangedParams, HOST_PREFIX, PROTOCOL,
+};
 use asterism_proto::rpc::{ErrorKind, Request, Response, RpcError};
 use serde_json::{Map, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -23,7 +25,13 @@ const CRASH_LIMIT: usize = 3;
 const CRASH_WINDOW: Duration = Duration::from_secs(60);
 
 pub type HostFn = Arc<
-    dyn Fn(String, String, Value) -> Pin<Box<dyn Future<Output = std::result::Result<Value, RpcError>> + Send>> + Send + Sync,
+    dyn Fn(
+            String,
+            String,
+            Value,
+        ) -> Pin<Box<dyn Future<Output = std::result::Result<Value, RpcError>> + Send>>
+        + Send
+        + Sync,
 >;
 
 pub struct BackendConfig {
@@ -99,7 +107,9 @@ impl Drop for CallGuard {
     fn drop(&mut self) {
         self.backend.in_flight.fetch_sub(1, Ordering::SeqCst);
         *lock(&self.backend.last_used) = Instant::now();
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
         let backend = self.backend.clone();
         match (self.done, self.kill_on_cancel, self.generation) {
             (false, true, Some(generation)) => {
@@ -109,7 +119,8 @@ impl Drop for CallGuard {
                 let idle = backend.config.idle;
                 runtime.spawn(async move {
                     tokio::time::sleep(idle).await;
-                    let quiet = backend.in_flight.load(Ordering::SeqCst) == 0 && lock(&backend.last_used).elapsed() >= idle;
+                    let quiet = backend.in_flight.load(Ordering::SeqCst) == 0
+                        && lock(&backend.last_used).elapsed() >= idle;
                     if quiet {
                         backend.stop().await;
                     }
@@ -144,18 +155,33 @@ impl Backend {
     }
 
     fn error(&self, message: impl std::fmt::Display) -> Error {
-        Error::new(ErrorKind::PluginError, format!("plugin {}: {message}", self.config.plugin))
+        Error::new(
+            ErrorKind::PluginError,
+            format!("plugin {}: {message}", self.config.plugin),
+        )
     }
 
-    pub async fn call(self: &Arc<Self>, method: &str, params: Value, timeout: Option<Duration>) -> Result<Value> {
+    pub async fn call(
+        self: &Arc<Self>,
+        method: &str,
+        params: Value,
+        timeout: Option<Duration>,
+    ) -> Result<Value> {
         if let Some(reason) = self.failing() {
             return Err(self.error(reason));
         }
         self.in_flight.fetch_add(1, Ordering::SeqCst);
-        let mut guard = CallGuard { backend: self.clone(), generation: None, kill_on_cancel: timeout.is_none(), done: false };
+        let mut guard = CallGuard {
+            backend: self.clone(),
+            generation: None,
+            kill_on_cancel: timeout.is_none(),
+            done: false,
+        };
         let (out, pending, generation, alive) = self.ensure_running().await?;
         guard.generation = Some(generation);
-        let result = self.request(&out, &pending, &alive, method, params, timeout).await;
+        let result = self
+            .request(&out, &pending, &alive, method, params, timeout)
+            .await;
         guard.done = true;
         result
     }
@@ -178,7 +204,15 @@ impl Backend {
             return;
         }
         let params = serde_json::to_value(SettingsChangedParams { settings }).unwrap_or_default();
-        if self.call(method::SETTINGS_CHANGED, params, Some(self.config.call_timeout)).await.is_err() {
+        if self
+            .call(
+                method::SETTINGS_CHANGED,
+                params,
+                Some(self.config.call_timeout),
+            )
+            .await
+            .is_err()
+        {
             self.stop().await;
         }
     }
@@ -190,10 +224,20 @@ impl Backend {
             return Err(self.error(reason));
         }
         if let Some(r) = running.as_ref().filter(|r| r.alive.load(Ordering::SeqCst)) {
-            return Ok((r.out.clone(), r.pending.clone(), r.generation, r.alive.clone()));
+            return Ok((
+                r.out.clone(),
+                r.pending.clone(),
+                r.generation,
+                r.alive.clone(),
+            ));
         }
         let started = self.spawn()?;
-        let handles = (started.out.clone(), started.pending.clone(), started.generation, started.alive.clone());
+        let handles = (
+            started.out.clone(),
+            started.pending.clone(),
+            started.generation,
+            started.alive.clone(),
+        );
         if let Err(e) = self.handshake(&handles.0, &handles.1, &handles.3).await {
             // A process that already exited was counted by its reader.
             let still_alive = handles.3.load(Ordering::SeqCst);
@@ -209,7 +253,11 @@ impl Backend {
 
     fn spawn(self: &Arc<Self>) -> Result<Running> {
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        let (program, args) = self.config.argv.split_first().ok_or_else(|| self.error("empty backend command"))?;
+        let (program, args) = self
+            .config
+            .argv
+            .split_first()
+            .ok_or_else(|| self.error("empty backend command"))?;
         let mut child = Command::new(program)
             .args(args)
             .current_dir(&self.config.dir)
@@ -242,15 +290,36 @@ impl Backend {
                 }
             });
         }
-        let (alive, stopped) = (Arc::new(AtomicBool::new(true)), Arc::new(AtomicBool::new(false)));
+        let (alive, stopped) = (
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(AtomicBool::new(false)),
+        );
         if let Some(stdout) = child.stdout.take() {
-            let reader = Reader { out: out.clone(), pending: pending.clone(), generation, alive: alive.clone(), stopped: stopped.clone() };
+            let reader = Reader {
+                out: out.clone(),
+                pending: pending.clone(),
+                generation,
+                alive: alive.clone(),
+                stopped: stopped.clone(),
+            };
             tokio::spawn(self.clone().read_loop(stdout, reader));
         }
-        Ok(Running { generation, out, pending, child, alive, stopped })
+        Ok(Running {
+            generation,
+            out,
+            pending,
+            child,
+            alive,
+            stopped,
+        })
     }
 
-    async fn handshake(&self, out: &mpsc::UnboundedSender<String>, pending: &Pending, alive: &AtomicBool) -> Result<()> {
+    async fn handshake(
+        &self,
+        out: &mpsc::UnboundedSender<String>,
+        pending: &Pending,
+        alive: &AtomicBool,
+    ) -> Result<()> {
         std::fs::create_dir_all(&self.config.data_dir)?;
         let params = InitializeParams {
             protocol: PROTOCOL,
@@ -259,13 +328,26 @@ impl Backend {
             asterism_version: env!("CARGO_PKG_VERSION").into(),
             settings: lock(&self.settings).clone(),
         };
-        let params = serde_json::to_value(params).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
-        let reply = self.request(out, pending, alive, method::INITIALIZE, params, Some(self.config.call_timeout)).await?;
-        let result: InitializeResult =
-            serde_json::from_value(reply).map_err(|e| self.error(format!("invalid initialize reply: {e}")))?;
+        let params = serde_json::to_value(params)
+            .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+        let reply = self
+            .request(
+                out,
+                pending,
+                alive,
+                method::INITIALIZE,
+                params,
+                Some(self.config.call_timeout),
+            )
+            .await?;
+        let result: InitializeResult = serde_json::from_value(reply)
+            .map_err(|e| self.error(format!("invalid initialize reply: {e}")))?;
         let reported: BTreeSet<String> = result.capabilities.into_iter().collect();
         if reported != self.config.capabilities {
-            let reason = format!("backend reports capabilities {reported:?} but plugin.toml declares {:?}", self.config.capabilities);
+            let reason = format!(
+                "backend reports capabilities {reported:?} but plugin.toml declares {:?}",
+                self.config.capabilities
+            );
             *lock(&self.failing) = Some(reason.clone());
             return Err(self.error(reason));
         }
@@ -285,7 +367,8 @@ impl Backend {
         let (tx, rx) = oneshot::channel();
         lock(pending).insert(id, tx);
         // Checked after inserting: a reader that already drained the waiters has cleared `alive` first.
-        let line = serde_json::to_string(&Request::new(id, method, params)).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+        let line = serde_json::to_string(&Request::new(id, method, params))
+            .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
         if !alive.load(Ordering::SeqCst) || out.send(line).is_err() {
             lock(pending).remove(&id);
             return Err(self.error("exited"));
@@ -295,7 +378,10 @@ impl Backend {
                 Ok(reply) => reply,
                 Err(_) => {
                     lock(pending).remove(&id);
-                    let message = format!("plugin {} did not answer {method} within {limit:?}", self.config.plugin);
+                    let message = format!(
+                        "plugin {} did not answer {method} within {limit:?}",
+                        self.config.plugin
+                    );
                     return Err(Error::new(ErrorKind::Timeout, message));
                 }
             },
@@ -304,19 +390,35 @@ impl Backend {
         match reply {
             Ok(Ok(value)) => Ok(value),
             Ok(Err(e)) => Err(match e.kind() {
-                ErrorKind::InvalidParams | ErrorKind::Git | ErrorKind::NotFound | ErrorKind::Timeout => Error::new(e.kind(), e.message),
-                _ => Error::new(ErrorKind::PluginError, format!("{}: {}", self.config.plugin, e.message)),
+                ErrorKind::InvalidParams
+                | ErrorKind::Git
+                | ErrorKind::NotFound
+                | ErrorKind::Timeout => Error::new(e.kind(), e.message),
+                _ => Error::new(
+                    ErrorKind::PluginError,
+                    format!("{}: {}", self.config.plugin, e.message),
+                ),
             }),
             Err(_) => Err(self.error("exited")),
         }
     }
 
     async fn read_loop(self: Arc<Self>, stdout: ChildStdout, reader: Reader) {
-        let Reader { out, pending, generation, alive, stopped } = reader;
+        let Reader {
+            out,
+            pending,
+            generation,
+            alive,
+            stopped,
+        } = reader;
         let mut lines = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = lines.next_line().await {
             let Ok(message) = serde_json::from_str::<Value>(&line) else {
-                eprintln!("plugin {}: ignoring non-JSON output: {}", self.config.plugin, crate::git::truncate(&line));
+                eprintln!(
+                    "plugin {}: ignoring non-JSON output: {}",
+                    self.config.plugin,
+                    crate::git::truncate(&line)
+                );
                 continue;
             };
             if message.get("method").is_some() {
@@ -334,7 +436,10 @@ impl Backend {
         }
         alive.store(false, Ordering::SeqCst);
         // Waiters learn first, so a handshake holding `running` never blocks this task.
-        let exited = RpcError::new(ErrorKind::PluginError, format!("plugin {} exited", self.config.plugin));
+        let exited = RpcError::new(
+            ErrorKind::PluginError,
+            format!("plugin {} exited", self.config.plugin),
+        );
         for (_, tx) in lock(&pending).drain() {
             let _ = tx.send(Err(exited.clone()));
         }
@@ -354,7 +459,10 @@ impl Backend {
             let id = request.id;
             let result = match request.method.strip_prefix(HOST_PREFIX) {
                 Some(method) => host(plugin, method.to_string(), request.params).await,
-                None => Err(RpcError::new(ErrorKind::MethodNotFound, format!("unknown method {}", request.method))),
+                None => Err(RpcError::new(
+                    ErrorKind::MethodNotFound,
+                    format!("unknown method {}", request.method),
+                )),
             };
             let response = match result {
                 Ok(value) => Response::ok(id, value),
@@ -370,11 +478,16 @@ impl Backend {
         let now = Instant::now();
         let mut crashes = lock(&self.crashes);
         crashes.push_back(now);
-        while crashes.front().is_some_and(|t| now.duration_since(*t) > CRASH_WINDOW) {
+        while crashes
+            .front()
+            .is_some_and(|t| now.duration_since(*t) > CRASH_WINDOW)
+        {
             crashes.pop_front();
         }
         if crashes.len() >= CRASH_LIMIT {
-            *lock(&self.failing) = Some(format!("crashed {CRASH_LIMIT} times within a minute; reload the plugin to retry"));
+            *lock(&self.failing) = Some(format!(
+                "crashed {CRASH_LIMIT} times within a minute; reload the plugin to retry"
+            ));
         }
     }
 }

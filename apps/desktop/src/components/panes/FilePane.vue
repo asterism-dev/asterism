@@ -4,7 +4,9 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../../api';
 import { renderCode } from '../../fileView';
 
-const props = defineProps<{ params: { params: { taskId: number; path: string; line?: number }; api: DockviewPanelApi } }>();
+const props = defineProps<{
+  params: { params: { taskId: number; path: string; line?: number }; api: DockviewPanelApi };
+}>();
 
 const POLL_MS = 1500;
 const LINE_HEIGHT = 18;
@@ -13,8 +15,12 @@ const file = computed(() => props.params.params);
 const content = ref<string | null>(null);
 const error = ref<string | null>(null);
 const scroller = ref<HTMLDivElement>();
-const html = computed(() => (content.value === null ? '' : renderCode(file.value.path, content.value)));
-const lineCount = computed(() => (content.value === null ? 0 : content.value.replace(/\n$/, '').split('\n').length));
+const html = computed(() =>
+  content.value === null ? '' : renderCode(file.value.path, content.value),
+);
+const lineCount = computed(() =>
+  content.value === null ? 0 : content.value.replace(/\n$/, '').split('\n').length,
+);
 let mtime: number | null = null;
 let loading = false;
 let timer: number | undefined;
@@ -86,9 +92,16 @@ onUnmounted(() => {
     <p v-if="error" class="error">{{ error }}</p>
     <div v-else ref="scroller" class="scroller" @scroll="rememberScroll">
       <div class="body">
-        <div class="gutter"><span v-for="n in lineCount" :key="n">{{ n }}</span></div>
+        <div class="gutter">
+          <span v-for="n in lineCount" :key="n">{{ n }}</span>
+        </div>
         <div class="code-wrap">
-          <div v-if="file.line" class="mark" :style="{ top: `${(file.line - 1) * LINE_HEIGHT}px` }"></div>
+          <div
+            v-if="file.line"
+            class="mark"
+            :style="{ top: `${(file.line - 1) * LINE_HEIGHT}px` }"
+          ></div>
+          <!-- eslint-disable-next-line vue/no-v-html -- highlight.js escapes the source -->
           <pre class="code"><code v-html="html"></code></pre>
         </div>
       </div>
@@ -97,20 +110,101 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.file-pane { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); color: var(--text); }
-.path { padding: 4px 10px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.error { padding: 12px; color: var(--danger); }
-.scroller { flex: 1; overflow: auto; }
-.body { display: flex; min-width: max-content; font: 12px/18px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.gutter { position: sticky; left: 0; display: flex; flex-direction: column; padding: 0 8px; text-align: right; color: var(--muted); background: var(--bg); user-select: none; }
-.code-wrap { position: relative; flex: 1; }
-.mark { position: absolute; left: 0; right: 0; height: 18px; background: color-mix(in srgb, var(--accent) 18%, transparent); pointer-events: none; }
-.code { margin: 0; padding: 0 12px; font: inherit; white-space: pre; }
-.code :deep(.hljs-keyword), .code :deep(.hljs-literal), .code :deep(.hljs-selector-tag) { color: var(--hl-keyword); }
-.code :deep(.hljs-string), .code :deep(.hljs-regexp) { color: var(--hl-string); }
-.code :deep(.hljs-comment), .code :deep(.hljs-quote), .code :deep(.hljs-meta) { color: var(--hl-comment); font-style: italic; }
-.code :deep(.hljs-number), .code :deep(.hljs-symbol) { color: var(--hl-number); }
-.code :deep(.hljs-title), .code :deep(.hljs-section) { color: var(--hl-title); }
-.code :deep(.hljs-type), .code :deep(.hljs-built_in) { color: var(--hl-type); }
-.code :deep(.hljs-attr), .code :deep(.hljs-attribute), .code :deep(.hljs-variable), .code :deep(.hljs-tag), .code :deep(.hljs-name) { color: var(--hl-attr); }
+.file-pane {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+}
+.path {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.error {
+  padding: 12px;
+  color: var(--danger);
+}
+.scroller {
+  flex: 1;
+  overflow: auto;
+}
+.body {
+  display: flex;
+  min-width: max-content;
+  font:
+    12px/18px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+.gutter {
+  position: sticky;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 8px;
+  text-align: right;
+  color: var(--muted);
+  background: var(--bg);
+  user-select: none;
+}
+.code-wrap {
+  position: relative;
+  flex: 1;
+}
+.mark {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 18px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  pointer-events: none;
+}
+.code {
+  margin: 0;
+  padding: 0 12px;
+  font: inherit;
+  white-space: pre;
+}
+.code :deep(.hljs-keyword),
+.code :deep(.hljs-literal),
+.code :deep(.hljs-selector-tag) {
+  color: var(--hl-keyword);
+}
+.code :deep(.hljs-string),
+.code :deep(.hljs-regexp) {
+  color: var(--hl-string);
+}
+.code :deep(.hljs-comment),
+.code :deep(.hljs-quote),
+.code :deep(.hljs-meta) {
+  color: var(--hl-comment);
+  font-style: italic;
+}
+.code :deep(.hljs-number),
+.code :deep(.hljs-symbol) {
+  color: var(--hl-number);
+}
+.code :deep(.hljs-title),
+.code :deep(.hljs-section) {
+  color: var(--hl-title);
+}
+.code :deep(.hljs-type),
+.code :deep(.hljs-built_in) {
+  color: var(--hl-type);
+}
+.code :deep(.hljs-attr),
+.code :deep(.hljs-attribute),
+.code :deep(.hljs-variable),
+.code :deep(.hljs-tag),
+.code :deep(.hljs-name) {
+  color: var(--hl-attr);
+}
 </style>

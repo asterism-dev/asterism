@@ -1,13 +1,55 @@
 import { describe, expect, it } from 'vitest';
-import { capabilityChips, draftFrom, hitAction, newPermissions, originLabel, permissionText, pluginTabs, settingsPatch, stateDetail, stateLabel, statusLabel, updateCount } from './pluginsView';
+import {
+  capabilityChips,
+  draftFrom,
+  hitAction,
+  newPermissions,
+  originLabel,
+  permissionText,
+  pluginTabs,
+  settingsPatch,
+  stateDetail,
+  stateLabel,
+  statusLabel,
+  updateCount,
+} from './pluginsView';
 import type { AgentInfo, PluginInfo, PluginSettings, SearchHit } from './types';
 
 const settings: PluginSettings = {
   schema: [
-    { key: 'token', title: 'Token', type: 'secret', required: true, description: null, default: null },
-    { key: 'region', title: 'Region', type: 'enum', required: false, description: null, default: 'eu', options: ['eu', 'us'] },
-    { key: 'verbose', title: 'Verbose', type: 'bool', required: false, description: null, default: null },
-    { key: 'limit', title: 'Limit', type: 'number', required: false, description: null, default: null },
+    {
+      key: 'token',
+      title: 'Token',
+      type: 'secret',
+      required: true,
+      description: null,
+      default: null,
+    },
+    {
+      key: 'region',
+      title: 'Region',
+      type: 'enum',
+      required: false,
+      description: null,
+      default: 'eu',
+      options: ['eu', 'us'],
+    },
+    {
+      key: 'verbose',
+      title: 'Verbose',
+      type: 'bool',
+      required: false,
+      description: null,
+      default: null,
+    },
+    {
+      key: 'limit',
+      title: 'Limit',
+      type: 'number',
+      required: false,
+      description: null,
+      default: null,
+    },
   ],
   values: { region: 'eu' },
   secrets_set: ['token'],
@@ -15,10 +57,23 @@ const settings: PluginSettings = {
 
 describe('plugin view helpers', () => {
   it('gives usable plugins with settings or agents a tab', () => {
-    const plugin = (name: string, state: PluginInfo['state'] = { state: 'ok' }) => ({ name, state }) as PluginInfo;
-    const agent = (name: string, display_name: string, owner: string) => ({ name, display_name, plugin: owner }) as AgentInfo;
-    const plugins = [plugin('claude'), plugin('linear', { state: 'needs_setup', missing: ['API key'] }), plugin('github'), plugin('multi'), plugin('off', { state: 'disabled' })];
-    const agents = [agent('claude', 'Claude Code', 'claude'), agent('a', 'A', 'multi'), agent('b', 'B', 'multi'), agent('x', 'X', 'off')];
+    const plugin = (name: string, state: PluginInfo['state'] = { state: 'ok' }) =>
+      ({ name, state }) as PluginInfo;
+    const agent = (name: string, display_name: string, owner: string) =>
+      ({ name, display_name, plugin: owner }) as AgentInfo;
+    const plugins = [
+      plugin('claude'),
+      plugin('linear', { state: 'needs_setup', missing: ['API key'] }),
+      plugin('github'),
+      plugin('multi'),
+      plugin('off', { state: 'disabled' }),
+    ];
+    const agents = [
+      agent('claude', 'Claude Code', 'claude'),
+      agent('a', 'A', 'multi'),
+      agent('b', 'B', 'multi'),
+      agent('x', 'X', 'off'),
+    ];
     expect(pluginTabs(plugins, ['linear', 'off'], agents)).toEqual([
       { name: 'claude', title: 'Claude Code' },
       { name: 'linear', title: 'Linear' },
@@ -29,12 +84,19 @@ describe('plugin view helpers', () => {
   it('labels only meaningful states', () => {
     expect(stateLabel({ state: 'ok' })).toBeNull();
     expect(stateLabel({ state: 'needs_setup', missing: ['Token'] })).toBe('needs setup');
-    expect(stateDetail({ state: 'needs_setup', missing: ['Token', 'Team'] })).toBe('Missing: Token, Team');
+    expect(stateDetail({ state: 'needs_setup', missing: ['Token', 'Team'] })).toBe(
+      'Missing: Token, Team',
+    );
     expect(stateDetail({ state: 'broken', reason: 'bad manifest' })).toBe('bad manifest');
   });
 
   it('names capabilities', () => {
-    const plugin = { capabilities: [{ kind: 'forge', id: 'github', description: '' }, { kind: 'task_source', id: 'issues', description: '' }] } as PluginInfo;
+    const plugin = {
+      capabilities: [
+        { kind: 'forge', id: 'github', description: '' },
+        { kind: 'task_source', id: 'issues', description: '' },
+      ],
+    } as PluginInfo;
     expect(capabilityChips(plugin)).toEqual(['Forge: github', 'Task source: issues']);
   });
 
@@ -54,8 +116,19 @@ describe('plugin view helpers', () => {
 
 function plugin(over: Partial<PluginInfo>): PluginInfo {
   return {
-    name: 'one', version: '1.0.0', description: '', origin: 'installed', path: '/p', capabilities: [], permissions: [],
-    state: { state: 'ok' }, backend: null, store: 'acme', update_available: false, previous_version: null, ...over,
+    name: 'one',
+    version: '1.0.0',
+    description: '',
+    origin: 'installed',
+    path: '/p',
+    capabilities: [],
+    permissions: [],
+    state: { state: 'ok' },
+    backend: null,
+    store: 'acme',
+    update_available: false,
+    previous_version: null,
+    ...over,
   };
 }
 
@@ -63,7 +136,9 @@ describe('store helpers', () => {
   it('shows status only when meaningful', () => {
     expect(statusLabel(plugin({}))).toBeNull();
     expect(statusLabel(plugin({ update_available: true }))).toBe('update available');
-    expect(statusLabel(plugin({ state: { state: 'disabled' }, update_available: true }))).toBe('disabled');
+    expect(statusLabel(plugin({ state: { state: 'disabled' }, update_available: true }))).toBe(
+      'disabled',
+    );
     expect(stateDetail({ state: 'disabled' })).toBeNull();
   });
 
@@ -71,7 +146,13 @@ describe('store helpers', () => {
     expect(originLabel(plugin({}))).toBe('acme');
     expect(originLabel(plugin({ origin: 'linked' }))).toBe('linked (dev)');
     expect(originLabel(plugin({ origin: 'builtin', store: null }))).toBe('built-in');
-    expect(updateCount([plugin({ update_available: true }), plugin({}), plugin({ update_available: true, state: { state: 'disabled' } })])).toBe(2);
+    expect(
+      updateCount([
+        plugin({ update_available: true }),
+        plugin({}),
+        plugin({ update_available: true, state: { state: 'disabled' } }),
+      ]),
+    ).toBe(2);
   });
 
   it('explains permissions and finds new ones', () => {
@@ -82,9 +163,19 @@ describe('store helpers', () => {
   });
 
   it('picks the action for a search hit', () => {
-    const hit: SearchHit = { store: 'acme', name: 'one', description: '', tags: [], installed_version: null, update_available: false, linked: false };
+    const hit: SearchHit = {
+      store: 'acme',
+      name: 'one',
+      description: '',
+      tags: [],
+      installed_version: null,
+      update_available: false,
+      linked: false,
+    };
     expect(hitAction(hit)).toBe('install');
     expect(hitAction({ ...hit, installed_version: '1.0.0' })).toBe('installed');
-    expect(hitAction({ ...hit, installed_version: '1.0.0', update_available: true })).toBe('update');
+    expect(hitAction({ ...hit, installed_version: '1.0.0', update_available: true })).toBe(
+      'update',
+    );
   });
 });

@@ -26,7 +26,11 @@ export function fileTaskOf(panelId: string): number | null {
 }
 
 /** Panels to drop and sessions to add so a saved layout shows exactly the task's sessions; tool panes and the task's own file panes stay. */
-export function reconcile(panelIds: string[], sessionIds: number[], taskId: number): { remove: string[]; add: number[] } {
+export function reconcile(
+  panelIds: string[],
+  sessionIds: number[],
+  taskId: number,
+): { remove: string[]; add: number[] } {
   const wanted = new Set(sessionIds);
   const shown = new Set<number>();
   const remove = panelIds.filter((id) => {
@@ -51,7 +55,11 @@ export function toggleAction(state: PaneState): 'open' | 'activate' | 'close' {
 export function parseWorkspace(raw: string | null): SerializedDockview | null {
   try {
     const value: unknown = JSON.parse(raw ?? 'null');
-    const isLayout = typeof value === 'object' && value !== null && !Array.isArray(value) && typeof (value as { grid?: unknown }).grid === 'object';
+    const isLayout =
+      typeof value === 'object' &&
+      value !== null &&
+      !Array.isArray(value) &&
+      typeof (value as { grid?: unknown }).grid === 'object';
     return isLayout ? (value as SerializedDockview) : null;
   } catch {
     return null;
@@ -60,10 +68,15 @@ export function parseWorkspace(raw: string | null): SerializedDockview | null {
 
 export function staleKeys(keys: string[], taskIds: number[]): string[] {
   const live = new Set(taskIds.flatMap((id) => [workspaceKey(id), floatKey(id)]));
-  return keys.filter((key) => (key.startsWith(WORKSPACE_PREFIX) || key.startsWith(FLOAT_PREFIX)) && !live.has(key));
+  return keys.filter(
+    (key) => (key.startsWith(WORKSPACE_PREFIX) || key.startsWith(FLOAT_PREFIX)) && !live.has(key),
+  );
 }
 
-export type Placement = { referenceGroup: string; direction: 'within' | 'left' | 'right' | 'below' };
+export type Placement = {
+  referenceGroup: string;
+  direction: 'within' | 'left' | 'right' | 'below';
+};
 
 /** Where a new session goes: the requested spot, else the focused group, a session group, or left of the tools. */
 export function placementPosition(
@@ -73,24 +86,33 @@ export function placementPosition(
 ): Placement | undefined {
   const ids = groups.map((g) => g.id);
   if (placement && ids.includes(placement.referenceGroup)) return placement;
-  if (lastFocused !== null && ids.includes(lastFocused)) return { referenceGroup: lastFocused, direction: 'within' };
+  if (lastFocused !== null && ids.includes(lastFocused))
+    return { referenceGroup: lastFocused, direction: 'within' };
   const sessionGroup = groups.find((g) => g.hasSession);
   if (sessionGroup) return { referenceGroup: sessionGroup.id, direction: 'within' };
   return groups[0] ? { referenceGroup: groups[0].id, direction: 'left' } : undefined;
 }
 
-export interface GroupSize { id: string; width: number; height: number }
+export interface GroupSize {
+  id: string;
+  width: number;
+  height: number;
+}
 
 /** Sizes to restore after a removal, which dockview follows by spreading space evenly; the largest group absorbs it. */
 export function keptSizes(before: GroupSize[], remaining: string[]): GroupSize[] {
   const surviving = before.filter((g) => remaining.includes(g.id));
-  const largest = surviving.reduce<GroupSize | null>((big, g) => (!big || g.width * g.height > big.width * big.height ? g : big), null);
+  const largest = surviving.reduce<GroupSize | null>(
+    (big, g) => (!big || g.width * g.height > big.width * big.height ? g : big),
+    null,
+  );
   return surviving.filter((g) => g !== largest);
 }
 
 export const SIDEBAR = { initial: 260, min: 180, max: 480 };
 
-export const clampWidth = (width: number) => Math.round(Math.min(SIDEBAR.max, Math.max(SIDEBAR.min, width)));
+export const clampWidth = (width: number) =>
+  Math.round(Math.min(SIDEBAR.max, Math.max(SIDEBAR.min, width)));
 
 export function parseSidebar(raw: string | null): { width: number; open: boolean } {
   try {
