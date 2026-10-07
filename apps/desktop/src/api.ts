@@ -1,7 +1,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type {
-  AgentConfig, AgentConfigRaw, AgentInfo, CapabilityKind, PluginDetails, PluginInfo, SearchHit, StoreInfo, StoreList, PluginSettings, SettingValue, ForgeInfo, ForgeRepo, ForgeStatus, NodeConfig, NodeConfigInfo, NodeStats, NodeStatus, PrList, Project, ProjectBranches, ProjectCreateResult, RemoteTarget, Session, SessionAttachResult, SessionKind,
-  SessionReadResult, IssueDetails, IssueHit, Task, TaskCreateResult, TaskIssue, TaskSourceInfo, TaskDeleteCheck, TaskDeleteResult, TaskDiffResult, TaskFileResult, Worktree, WorktreeSize,
+  AgentConfig, AgentConfigRaw, AgentInfo, CapabilityKind, PluginDetails, PluginInfo, SearchHit, StoreInfo, StoreList, PluginSettings, SettingValue, ForgeInfo, ForgeRepo, ForgeStatus, NodeConfig, NodeConfigInfo, NodeStats, NodeStatus, PrList, PrListState, PrSearchResult, Project, ProjectBranches, ProjectCreateResult, RemoteTarget, Session, SessionAttachResult, SessionKind,
+  SessionReadResult, IssueDetails, IssueHit, Task, TaskCreateRequest, TaskCreateResult, TaskSourceInfo, TaskDeleteCheck, TaskDeleteResult, TaskDiffResult, TaskFileResult, Worktree, WorktreeSize,
 } from './types';
 
 export class RpcError extends Error {
@@ -72,8 +72,9 @@ export const api = {
   removeProject: (projectId: number) => call<null>('project.remove', { project_id: projectId }),
   tasks: () => call<Task[]>('task.list', { include_archived: false }),
   allTasks: () => call<Task[]>('task.list', { include_archived: true }),
-  createTask: (p: { project_id: number; title: string; prompt: string | null; agent: string | null; base: string | null; issue?: TaskIssue | null }) =>
-    call<TaskCreateResult>('task.create', p),
+  createTask: (p: TaskCreateRequest) => call<TaskCreateResult>('task.create', p),
+  searchPullRequests: (projectId: number, query: string, state: PrListState) =>
+    call<PrSearchResult>('pr.search', { project_id: projectId, query, state }),
   taskSources: (projectId: number) => call<TaskSourceInfo[]>('task_source.list', { project_id: projectId }),
   searchIssues: (projectId: number, source: string, query: string, assignedToMe: boolean) =>
     call<IssueHit[]>('task_source.search', { project_id: projectId, source, query, assigned_to_me: assignedToMe }),

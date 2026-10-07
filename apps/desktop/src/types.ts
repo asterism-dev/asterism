@@ -17,6 +17,7 @@ export interface ProjectBranches {
   automatic: string | null;
   configured: string | null;
   fetch_error: string | null;
+  worktree_root: string | null;
 }
 export interface Task {
   id: number;
@@ -82,7 +83,14 @@ export interface Worktree {
   task_id: number | null; base_branch: string | null;
 }
 export interface WorktreeSize { path: string; bytes: number }
-export interface TaskCreateResult { task: Task; session: Session | null }
+export interface TaskCreateResult { task: Task; session: Session | null; warning: string | null }
+export type PrListState = 'open' | 'closed';
+export interface PrHit { number: number; title: string; url: string; author: string; head_branch: string; draft: boolean; from_fork: boolean }
+export interface PrSearchResult { forge: string; repo: string; hits: PrHit[] }
+export type TaskCreateRequest = {
+  project_id: number; title: string; prompt: string | null; agent: string | null; base: string | null;
+  issue: TaskIssue | null; branch: string | null; checkout: string | null; push: boolean;
+};
 export interface TaskDiffResult { patch: string }
 export interface TaskFileResult { path: string; mtime: number; content: string | null }
 export interface SessionAttachResult { snapshot: string; rows: number; cols: number }
