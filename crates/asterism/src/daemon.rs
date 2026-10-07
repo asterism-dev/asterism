@@ -723,6 +723,7 @@ impl Daemon {
             automatic: automatic_base(&repo),
             configured: project.default_base,
             fetch_error,
+            worktree_root: None,
         })
     }
 
@@ -1031,7 +1032,7 @@ impl Daemon {
             }).await?),
             None => None,
         };
-        Ok(TaskCreateResult { task, session })
+        Ok(TaskCreateResult { task, session, warning: None })
     }
 
     pub fn task(&self, id: i64) -> Result<Task> {

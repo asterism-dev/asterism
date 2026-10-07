@@ -1,4 +1,4 @@
-use asterism_proto::types::{PullRequest, Visibility};
+use asterism_proto::types::{PrListState, PullRequest, Visibility};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -18,6 +18,7 @@ pub mod method {
     pub const FORGE_CLONE: &str = "forge.clone";
     pub const FORGE_CREATE_REMOTE: &str = "forge.create_remote";
     pub const FORGE_PULL_REQUESTS: &str = "forge.pull_requests";
+    pub const FORGE_SEARCH_PULL_REQUESTS: &str = "forge.search_pull_requests";
     pub const AGENT_PREPARE: &str = "agent.prepare";
 }
 
@@ -153,4 +154,14 @@ pub struct PullRequestsParams {
 pub struct BranchPr {
     pub branch: String,
     pub pr: PullRequest,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SearchPullRequestsParams {
+    pub forge: String,
+    pub project_path: String,
+    #[serde(default)]
+    pub query: String,
+    #[serde(default)]
+    pub state: PrListState,
 }

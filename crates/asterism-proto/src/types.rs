@@ -71,6 +71,7 @@ pub mod method {
     pub const PR_REFRESH: &str = "pr.refresh";
     pub const PROJECT_BRANCHES: &str = "project.branches";
     pub const PROJECT_UPDATE: &str = "project.update";
+    pub const PR_SEARCH: &str = "pr.search";
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -164,6 +165,9 @@ pub struct ProjectBranches {
     pub automatic: Option<String>,
     pub configured: Option<String>,
     pub fetch_error: Option<String>,
+    /// Directory new task worktrees of this project are created in.
+    #[serde(default)]
+    pub worktree_root: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -564,7 +568,7 @@ pub struct TaskListParams {
     pub include_archived: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskCreateParams {
     pub project_id: i64,
     #[serde(default)]
@@ -577,6 +581,14 @@ pub struct TaskCreateParams {
     pub base: Option<String>,
     #[serde(default)]
     pub issue: Option<TaskIssue>,
+    /// Name of the new branch; derived from the title or issue when absent.
+    #[serde(default)]
+    pub branch: Option<String>,
+    /// Check out this existing branch instead of creating one; excludes `base` and `branch`.
+    #[serde(default)]
+    pub checkout: Option<String>,
+    #[serde(default)]
+    pub push: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -633,6 +645,43 @@ pub struct IssueDetails {
     pub name: String,
     pub branch: String,
     pub prompt: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PrListState {
+    #[default]
+    Open,
+    Closed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrHit {
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    pub author: String,
+    pub head_branch: String,
+    pub draft: bool,
+    pub from_fork: bool,
+    pub head_deleted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrSearchParams {
+    pub project_id: i64,
+    #[serde(default)]
+    pub query: String,
+    #[serde(default)]
+    pub state: PrListState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrSearchResult {
+    pub forge: String,
+    /// `owner/name` of the origin repository.
+    pub repo: String,
+    pub hits: Vec<PrHit>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -741,6 +790,8 @@ pub struct TaskSourceGetParams {
 pub struct TaskCreateResult {
     pub task: Task,
     pub session: Option<Session>,
+    #[serde(default)]
+    pub warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -990,5 +1041,19 @@ impl Event {
 
     pub fn from_notification(notification: &Notification) -> Option<Self> {
         serde_json::from_value(json!({"method": notification.method, "params": notification.params})).ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_task_create_requests_still_parse() {
+        let p: TaskCreateParams = serde_json::from_value(serde_json::json!({"project_id": 1, "title": "t"})).unwrap();
+        assert_eq!((p.branch, p.checkout, p.push), (None, None, false));
+        let s: PrSearchParams = serde_json::from_value(serde_json::json!({"project_id": 1})).unwrap();
+        assert_eq!((s.query.as_str(), s.state), ("", PrListState::Open));
+        assert_eq!(serde_json::to_value(PrListState::Closed).unwrap(), "closed");
     }
 }

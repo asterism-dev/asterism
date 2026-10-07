@@ -415,11 +415,12 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
                             url: details.url,
                             branch: Some(details.branch).filter(|b| !b.is_empty()),
                         }),
+                        ..Default::default()
                     }
                 }
                 None => {
                     let title = title.ok_or_else(|| invalid("give the task a title or --issue <source>:<key>".into()))?;
-                    TaskCreateParams { project_id, title, prompt, agent, base, issue: None }
+                    TaskCreateParams { project_id, title, prompt, agent, base, issue: None, ..Default::default() }
                 }
             };
             let created: TaskCreateResult = client.call(method::TASK_CREATE, params).await?;

@@ -49,7 +49,7 @@ async fn static_agents_start_from_their_template_with_configured_args() {
     let config = AgentConfig { args: vec!["hello".into()], ..Default::default() };
     daemon.set_agent_config("echo-agent", &config).unwrap();
     let project = daemon.add_project(&repo.path().display().to_string()).unwrap();
-    let params = TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: Some("echo-agent".into()), base: None, issue: None };
+    let params = TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: Some("echo-agent".into()), base: None, issue: None, ..Default::default() };
     let session = daemon.create_task(params).await.unwrap().session.unwrap();
     let mut text = String::new();
     for _ in 0..100 {
@@ -81,7 +81,7 @@ async fn sessions_of_a_removed_agent_plugin_are_marked_exited_on_recover() {
     init_repo(repo.path());
     let first = daemon(home.path());
     let project = first.add_project(&repo.path().display().to_string()).unwrap();
-    let params = TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: Some("echo-agent".into()), base: None, issue: None };
+    let params = TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: Some("echo-agent".into()), base: None, issue: None, ..Default::default() };
     let session = first.create_task(params).await.unwrap().session.unwrap();
 
     let paths = Paths { home: home.path().join("h") };

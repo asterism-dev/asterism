@@ -140,7 +140,7 @@ async fn worktrees_are_grouped_by_owner_and_root_changes_keep_existing_tasks() {
     let url = bare_origin(env.home.path());
     let project = env.daemon.clone_project(&url, None).await.unwrap();
     let create = |title: &str| {
-        let params = TaskCreateParams { project_id: project.id, title: title.into(), prompt: None, agent: None, base: None, issue: None };
+        let params = TaskCreateParams { project_id: project.id, title: title.into(), prompt: None, agent: None, base: None, issue: None, ..Default::default() };
         async { env.daemon.create_task(params).await.unwrap().task }
     };
     let first = create("first").await;
@@ -168,7 +168,7 @@ async fn local_projects_without_remote_use_local_owner() {
     let project = env.daemon.add_project(&repo.display().to_string()).unwrap();
     let task = env
         .daemon
-        .create_task(TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: None, base: None, issue: None })
+        .create_task(TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: None, base: None, issue: None, ..Default::default() })
         .await
         .unwrap()
         .task;
@@ -245,7 +245,7 @@ async fn broken_config_leaves_no_orphan_task() {
     init_repo(&repo);
     let project = env.daemon.add_project(&repo.display().to_string()).unwrap();
     std::fs::write(env.home.path().join("h/config.toml"), "[paths\n").unwrap();
-    let params = TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: None, base: None, issue: None };
+    let params = TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: None, base: None, issue: None, ..Default::default() };
     assert!(env.daemon.create_task(params).await.is_err());
     assert!(env.daemon.tasks(TaskListParams { project_id: Some(project.id), include_archived: true }).unwrap().is_empty());
 }
@@ -278,6 +278,7 @@ async fn create(env: &Env, project_id: i64, title: &str, base: Option<&str>) -> 
         agent: None,
         base: base.map(Into::into),
         issue: None,
+        ..Default::default()
     })
     .await
 }
