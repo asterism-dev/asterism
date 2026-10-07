@@ -1,3 +1,9 @@
+## v0.9.1 (2026-10-07)
+
+### Fix
+
+- **github**: query pull requests per branch in parallel (#13)
+
 ## v0.9.0 (2026-10-07)
 
 ### Feat
