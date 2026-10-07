@@ -88,6 +88,9 @@ Right-click a **task** for:
 
 ## Create a task
 
+![The Create Task dialog](../assets/screenshots/new-task-light.png#only-light)
+![The Create Task dialog](../assets/screenshots/new-task-dark.png#only-dark)
+
 Open the **Create Task** dialog in any of these ways:
 
 - hover a project in the sidebar and click **+ Task**,

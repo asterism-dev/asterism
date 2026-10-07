@@ -30,6 +30,9 @@ The Claude Code agent also has the agent settings described in [Settings](settin
 
 ## Installed
 
+![The Installed plugins tab](../assets/screenshots/plugins-light.png#only-light)
+![The Installed plugins tab](../assets/screenshots/plugins-dark.png#only-dark)
+
 Lists every plugin with its version, origin (**built-in**, the store it came from, or **linked (dev)**) and
 the capabilities it provides. A status appears next to the name when something needs attention:
 

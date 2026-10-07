@@ -84,6 +84,9 @@ The top bar also shows the project and branch of the selected task; click the br
 
 ## Diff
 
+![The diff pane](../assets/screenshots/diff-light.png#only-light)
+![The diff pane](../assets/screenshots/diff-dark.png#only-dark)
+
 **Diff** (top bar, or ++cmd+alt+b++) shows the task's changes against its base branch: everything since the
 branch point, including uncommitted and untracked files. It reloads when the task's sessions stop working; click
 **Refresh** to reload it yourself. **Side by side** switches between unified and split view.

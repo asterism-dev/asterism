@@ -30,6 +30,9 @@ if a session needs them. Click **Save**; changes apply to newly started sessions
 
 ## Agent and plugin settings
 
+![Claude Code agent settings](../assets/screenshots/settings-agents-light.png#only-light)
+![Claude Code agent settings](../assets/screenshots/settings-agents-dark.png#only-dark)
+
 Every enabled plugin that has settings or provides an agent gets its own section, named after its agent (for
 example **Claude Code**) or the plugin (for example **Linear**). It shows the plugin's own settings with a
 **Save** button, followed by the agent's settings:
