@@ -27,6 +27,7 @@ const kind = ref<'issue' | 'pr'>('issue');
 const issue = ref<TaskIssue | null>(null);
 const prBranch = ref<string | null>(null);
 const prefilled = ref(false);
+const promptPrefilled = ref(false);
 const mode = ref<'new' | 'checkout'>('new');
 const base = ref('');
 const branch = ref(defaultBranch(placeholder, suffix));
@@ -60,6 +61,7 @@ async function loadProject() {
   }
 }
 watch(projectId, () => {
+  error.value = null;
   issue.value = null;
   prBranch.value = null;
   mode.value = 'new';
@@ -79,11 +81,12 @@ function clearPrefill() {
   // Title and prompt came from the pick; keep them only for that pick.
   if (prefilled.value) {
     title.value = '';
-    prompt.value = '';
+    if (promptPrefilled.value) prompt.value = '';
     branchTouched.value = false;
     branch.value = defaultBranch(placeholder, suffix);
   }
   prefilled.value = false;
+  promptPrefilled.value = false;
 }
 
 function onIssue(d: IssueDetails | null) {
@@ -92,6 +95,7 @@ function onIssue(d: IssueDetails | null) {
   if (!d) return;
   title.value = finalSlug(d.name);
   prompt.value = d.prompt;
+  promptPrefilled.value = true;
   if (d.branch) {
     branch.value = d.branch;
     branchTouched.value = true;
@@ -124,6 +128,7 @@ function onEsc() {
 onMounted(() => titleInput.value?.focus());
 
 async function submit() {
+  if (busy.value || loadingBranches.value || !canCreate.value) return;
   if (mode.value === 'checkout' && !checkout.value) {
     error.value = 'Choose a branch to check out.';
     tab.value = 'workspace';
