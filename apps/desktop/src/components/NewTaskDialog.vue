@@ -71,7 +71,13 @@ watch(projectId, () => {
 }, { immediate: true });
 
 function onTitle(e: Event) {
-  title.value = liveSlug((e.target as HTMLInputElement).value);
+  const el = e.target as HTMLInputElement;
+  const raw = el.value;
+  const slug = liveSlug(raw);
+  const pos = Math.min(Math.max(slug.length - (raw.length - (el.selectionStart ?? raw.length)), 0), slug.length);
+  title.value = slug;
+  el.value = slug;
+  el.setSelectionRange(pos, pos);
 }
 watch(title, (t) => {
   if (!branchTouched.value) branch.value = defaultBranch(finalSlug(t) || placeholder, suffix);
