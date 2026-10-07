@@ -18,6 +18,8 @@ export interface ProjectBranches {
   configured: string | null;
   fetch_error: string | null;
   worktree_root: string | null;
+  local: string[];
+  remote: string[];
 }
 export interface Task {
   id: number;

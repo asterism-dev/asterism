@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  checkoutChoices, createRequest, defaultBranch, finalSlug, issueStateClass, liveSlug, prDisabledReason,
+  createRequest, filterBranches, defaultBranch, finalSlug, issueStateClass, liveSlug, prDisabledReason,
   randomSlug, randomSuffix, worktreeDir, type TaskForm,
 } from './taskForm';
 import type { PrHit } from './types';
@@ -28,11 +28,17 @@ describe('taskForm', () => {
     expect(randomSuffix(() => 0.999)).toMatch(/^[a-z0-9]{5}$/);
   });
 
-  it('derives branch, worktree directory and checkout choices', () => {
+  it('derives branch and worktree directory', () => {
     expect(defaultBranch('fix-login', 'x8d4t')).toBe('asterism/fix-login-x8d4t');
     expect(worktreeDir('asterism/fix-login-x8d4t')).toBe('fix-login-x8d4t');
     expect(worktreeDir('main')).toBe('main');
-    expect(checkoutChoices(['main', 'origin/main', 'origin/feature/x', 'dev'])).toEqual(['main', 'feature/x', 'dev']);
+  });
+
+  it('filters branches by a case-insensitive substring', () => {
+    const list = ['main', 'origin/feature/TRA-12-login', 'origin/develop'];
+    expect(filterBranches(list, '  ')).toEqual(list);
+    expect(filterBranches(list, 'tra-12')).toEqual(['origin/feature/TRA-12-login']);
+    expect(filterBranches(list, 'xyz')).toEqual([]);
   });
 
   it('explains why a PR cannot be picked', () => {

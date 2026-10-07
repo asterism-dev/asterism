@@ -724,6 +724,8 @@ impl Daemon {
             configured: project.default_base.clone(),
             fetch_error,
             worktree_root: self.worktree_root(&repo, &project).ok().map(|p| p.display().to_string()),
+            local: git::local_branches(&repo)?,
+            remote: git::remote_branches(&repo, "origin")?,
         })
     }
 

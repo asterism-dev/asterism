@@ -44,21 +44,28 @@ const loadingBranches = ref(false);
 const sources = ref<TaskSourceInfo[]>([]);
 const canCreate = computed(() => mode.value === 'checkout' ? !!checkout.value : baseChoice(branches.value).canCreate);
 
-async function loadProject() {
+async function loadBranches() {
   const id = projectId.value;
-  branches.value = null;
   loadingBranches.value = true;
-  api.taskSources(id).then((s) => { if (id === projectId.value) sources.value = s; }, () => { if (id === projectId.value) sources.value = []; });
   try {
     const result = await api.projectBranches(id);
     if (id !== projectId.value) return;
     branches.value = result;
-    base.value = baseChoice(result).selected;
+    // A refresh keeps the chosen base while it still exists.
+    if (![...result.local, ...result.remote].includes(base.value)) base.value = baseChoice(result).selected;
   } catch (e) {
     if (id === projectId.value) error.value = errorMessage(e);
   } finally {
     if (id === projectId.value) loadingBranches.value = false;
   }
+}
+
+function loadProject() {
+  const id = projectId.value;
+  branches.value = null;
+  base.value = '';
+  api.taskSources(id).then((s) => { if (id === projectId.value) sources.value = s; }, () => { if (id === projectId.value) sources.value = []; });
+  loadBranches();
 }
 watch(projectId, () => {
   error.value = null;
@@ -201,7 +208,7 @@ async function submit() {
 
       <WorkspaceSettings v-show="tab === 'workspace'" v-model:mode="mode" v-model:base="base" v-model:branch="branch"
         v-model:checkout="checkout" v-model:push="push" :branches="branches" :loading="loadingBranches" :pr-branch="prBranch"
-        @touch-branch="branchTouched = true" />
+        @touch-branch="branchTouched = true" @refresh="loadBranches" />
 
       <p v-if="error" class="error">{{ error }}</p>
       <footer class="actions">

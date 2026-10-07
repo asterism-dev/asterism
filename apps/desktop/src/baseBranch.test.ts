@@ -3,7 +3,7 @@ import { baseChoice, staleDefault } from './baseBranch';
 import type { ProjectBranches } from './types';
 
 const branches = (over: Partial<ProjectBranches> = {}): ProjectBranches => ({
-  branches: ['main', 'origin/main'], default: 'origin/main', automatic: 'origin/main', configured: null, fetch_error: null, worktree_root: null, ...over,
+  branches: ['main', 'origin/main'], default: 'origin/main', automatic: 'origin/main', configured: null, fetch_error: null, worktree_root: null, local: [], remote: [], ...over,
 });
 
 describe('baseChoice', () => {

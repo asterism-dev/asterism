@@ -102,3 +102,15 @@ fn push_upstream_publishes_and_tracks_the_branch() {
     run_git(repo.path(), &["remote", "set-url", "origin", "/nonexistent/origin.git"]);
     assert!(git::push_upstream(&wt, "origin", "asterism/x", &[]).is_err());
 }
+
+#[test]
+fn branches_split_into_local_and_one_remote() {
+    let (_origin, repo) = repo_with_origin();
+    git::fetch(repo.path(), "origin", &[]).unwrap();
+    run_git(repo.path(), &["branch", "feature/local"]);
+    run_git(repo.path(), &["remote", "add", "upstream", "/nonexistent"]);
+    run_git(repo.path(), &["update-ref", "refs/remotes/upstream/main", "HEAD"]);
+    run_git(repo.path(), &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+    assert_eq!(git::local_branches(repo.path()).unwrap(), ["feature/local", "main"]);
+    assert_eq!(git::remote_branches(repo.path(), "origin").unwrap(), ["origin/feature/pr", "origin/main"]);
+}

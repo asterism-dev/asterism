@@ -32,9 +32,9 @@ export function worktreeDir(branch: string): string {
   return branch.split('/').pop() ?? branch;
 }
 
-/** Local and `origin/` branches as names to check out, without duplicates. */
-export function checkoutChoices(branches: string[]): string[] {
-  return [...new Set(branches.map((b) => b.replace(/^origin\//, '')))];
+export function filterBranches(branches: string[], query: string): string[] {
+  const q = query.trim().toLowerCase();
+  return q ? branches.filter((b) => b.toLowerCase().includes(q)) : branches;
 }
 
 export function prDisabledReason(hit: PrHit): string | null {

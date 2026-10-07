@@ -113,7 +113,9 @@ async fn checkout_of_a_local_branch_works_offline() {
 #[tokio::test]
 async fn branches_report_the_worktree_root() {
     let env = setup();
-    let root = env.daemon.project_branches(env.project_id).unwrap().worktree_root.unwrap();
+    let branches = env.daemon.project_branches(env.project_id).unwrap();
+    assert_eq!((branches.local, branches.remote), (vec!["main".to_string()], vec!["origin/feature/pr".to_string(), "origin/main".to_string()]));
+    let root = branches.worktree_root.unwrap();
     let created = env.daemon.create_task(TaskCreateParams { branch: Some("asterism/a-11111".into()), ..params(&env, "a") }).await.unwrap();
     assert_eq!(created.task.worktree_path, format!("{root}/a-11111"));
 }

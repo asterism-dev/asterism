@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { FolderGit2, GitBranch } from '@lucide/vue';
+import { FolderGit2 } from '@lucide/vue';
 import { baseChoice } from '../baseBranch';
-import { checkoutChoices, worktreeDir } from '../taskForm';
+import { worktreeDir } from '../taskForm';
 import type { ProjectBranches } from '../types';
+import BranchPicker from './BranchPicker.vue';
 
 const props = defineProps<{ branches: ProjectBranches | null; loading: boolean; prBranch: string | null }>();
 const mode = defineModel<'new' | 'checkout'>('mode', { required: true });
@@ -11,10 +12,11 @@ const base = defineModel<string>('base', { required: true });
 const branch = defineModel<string>('branch', { required: true });
 const checkout = defineModel<string>('checkout', { required: true });
 const push = defineModel<boolean>('push', { required: true });
-const emit = defineEmits<{ touchBranch: [] }>();
+const emit = defineEmits<{ touchBranch: []; refresh: [] }>();
 
 const choice = computed(() => baseChoice(props.branches));
-const choices = computed(() => checkoutChoices(props.branches?.branches ?? []));
+const local = computed(() => props.branches?.local ?? []);
+const remote = computed(() => props.branches?.remote ?? []);
 const path = computed(() => {
   const dir = worktreeDir(mode.value === 'new' ? branch.value.trim() : checkout.value);
   const root = props.branches?.worktree_root;
@@ -30,15 +32,8 @@ const path = computed(() => {
     </div>
 
     <template v-if="mode === 'new'">
-      <label class="field">
-        <span class="muted">From branch</span>
-        <span class="with-icon"><GitBranch :size="14" />
-          <select v-model="base" :disabled="loading || !choice.canCreate">
-            <option v-if="loading" value="">Fetching…</option>
-            <option v-for="b in choice.options" :key="b" :value="b">{{ b }}</option>
-          </select>
-        </span>
-      </label>
+      <BranchPicker v-model="base" label="From branch" :local="local" :remote="remote"
+        :loading="loading" :disabled="!loading && !choice.canCreate" @refresh="emit('refresh')" />
       <p v-if="choice.hint" class="muted">{{ choice.hint }}</p>
       <div class="field">
         <label><span class="muted">Branch name</span>
@@ -47,18 +42,8 @@ const path = computed(() => {
         <label class="switch"><input v-model="push" type="checkbox" role="switch" /> Push branch to remote</label>
       </div>
     </template>
-    <label v-else class="field">
-      <span class="muted">Branch</span>
-      <span class="with-icon"><GitBranch :size="14" />
-        <select v-model="checkout" :disabled="!!prBranch || loading">
-          <option v-if="prBranch" :value="prBranch">{{ prBranch }}</option>
-          <option v-else value="" disabled>Choose a branch</option>
-          <template v-if="!prBranch">
-            <option v-for="b in choices" :key="b" :value="b">{{ b }}</option>
-          </template>
-        </select>
-      </span>
-    </label>
+    <BranchPicker v-else v-model="checkout" label="Branch" :local="local" :remote="remote" strip-remote
+      :loading="loading" :disabled="!!prBranch" @refresh="emit('refresh')" />
 
     <p class="muted path"><FolderGit2 :size="14" /> Worktree: <span class="mono">{{ path }}</span></p>
   </div>
@@ -68,8 +53,7 @@ const path = computed(() => {
 .workspace { display: flex; flex-direction: column; gap: 8px; }
 .segmented.small button { border: none; padding: 2px 8px; }
 .field { border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; gap: 6px; }
-.field input:not([type='checkbox']), .field select { border: none; padding: 2px 0; }
-.with-icon { display: flex; align-items: center; gap: 6px; }
+.field input:not([type='checkbox']) { border: none; padding: 2px 0; }
 .switch { flex-direction: row !important; align-items: center; gap: 8px !important; }
 .switch input { width: auto; }
 .path { display: flex; align-items: center; gap: 6px; font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

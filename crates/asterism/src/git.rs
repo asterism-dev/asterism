@@ -101,6 +101,25 @@ pub fn branches(repo: &Path) -> Result<Vec<String>> {
         .collect())
 }
 
+fn refs_under(repo: &Path, namespace: &str, strip: &str) -> Result<Vec<String>> {
+    let out = git(repo, &["for-each-ref", "--format=%(refname)", namespace])?;
+    Ok(out
+        .lines()
+        .filter(|r| !r.ends_with("/HEAD"))
+        .filter_map(|r| r.strip_prefix(strip))
+        .map(String::from)
+        .collect())
+}
+
+pub fn local_branches(repo: &Path) -> Result<Vec<String>> {
+    refs_under(repo, "refs/heads", "refs/heads/")
+}
+
+/// Branches of `remote` as `<remote>/<branch>`.
+pub fn remote_branches(repo: &Path, remote: &str) -> Result<Vec<String>> {
+    refs_under(repo, &format!("refs/remotes/{remote}"), "refs/remotes/")
+}
+
 pub fn remote_head(repo: &Path, remote: &str) -> Option<String> {
     git(repo, &["symbolic-ref", "--quiet", "--short", &format!("refs/remotes/{remote}/HEAD")])
         .ok()

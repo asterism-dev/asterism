@@ -168,6 +168,11 @@ pub struct ProjectBranches {
     /// Directory new task worktrees of this project are created in.
     #[serde(default)]
     pub worktree_root: Option<String>,
+    #[serde(default)]
+    pub local: Vec<String>,
+    /// Branches of `origin` as `origin/<branch>`, the only remote tasks check out from.
+    #[serde(default)]
+    pub remote: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
