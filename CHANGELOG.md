@@ -1,3 +1,9 @@
+## v0.10.0 (2026-10-07)
+
+### Feat
+
+- add documentation site and in-app docs link (#14)
+
 ## v0.9.1 (2026-10-07)
 
 ### Fix
