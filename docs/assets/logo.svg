@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- macOS icon grid: an 824px rounded square centred in the 1024px canvas. -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#1d1f27"/>
+  <g transform="translate(100 100) scale(0.8046875)">
+    <g fill="#f5c451">
+      <circle cx="512" cy="300" r="70"/>
+      <circle cx="320" cy="640" r="56"/>
+      <circle cx="704" cy="640" r="56"/>
+    </g>
+    <g stroke="#f5c451" stroke-width="18" opacity="0.6">
+      <line x1="512" y1="300" x2="320" y2="640"/>
+      <line x1="512" y1="300" x2="704" y2="640"/>
+      <line x1="320" y1="640" x2="704" y2="640"/>
+    </g>
+  </g>
+</svg>

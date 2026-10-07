@@ -5,7 +5,7 @@ DEV_HOME ?= $(HOME)/.asterism-dev
 DEV_PORT ?= 1420
 APP := target/release/bundle/macos/asterism.app
 
-.PHONY: dev dev-stop build open test lint
+.PHONY: dev dev-stop build open test lint docs
 
 dev:
 	@# tauri dev compiles the app while beforeDevCommand still builds the sidecars, so build them first.
@@ -30,3 +30,6 @@ lint:
 	cd $(DESKTOP) && npm run sidecars && npm run typecheck && npm run lint && npm run format:check
 	cargo fmt --all --check
 	cargo clippy --workspace --all-targets -- -D warnings
+
+docs:
+	uvx zensical==0.0.68 serve
