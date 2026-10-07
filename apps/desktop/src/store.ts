@@ -1,7 +1,7 @@
 import { reactive } from 'vue';
 import { api } from './api';
 import { updateCount } from './pluginsView';
-import type { AgentInfo, NodeEvent, NodeStatus, Project, Session, SessionStatus, Task } from './types';
+import type { AgentInfo, NodeEvent, NodeStatus, PrList, Project, PullRequest, Session, SessionStatus, Task } from './types';
 
 export type Tab = number | null;
 export type ProjectDialogTab = 'folder' | 'clone' | 'create';
@@ -30,6 +30,8 @@ export interface State {
   tasksVersion: number;
   collapsed: Record<number, boolean>;
   projectDialog: ProjectDialogTab | null;
+  prs: Record<number, PullRequest>;
+  prErrors: Record<number, string>;
 }
 
 export function initialState(): State {
@@ -55,6 +57,8 @@ export function initialState(): State {
     tasksVersion: 0,
     collapsed: {},
     projectDialog: null,
+    prs: {},
+    prErrors: {},
   };
 }
 
@@ -157,6 +161,10 @@ export function applyEvent(s: State, event: NodeEvent): Session | null {
     case 'stores.changed':
       s.storesVersion++;
       return null;
+    case 'pr.changed':
+      if (event.params.pr) s.prs[event.params.task_id] = event.params.pr;
+      else delete s.prs[event.params.task_id];
+      return null;
     case 'session.status_changed': {
       const session = s.sessions.find((x) => x.id === event.params.session_id);
       if (!session) return null;
@@ -196,6 +204,18 @@ export function applyEvent(s: State, event: NodeEvent): Session | null {
   }
 }
 
+/** A project list replaces only that project's error; the full list (`null`) replaces everything. */
+export function applyPrList(s: State, list: PrList, projectId: number | null) {
+  if (projectId === null) {
+    s.prs = {};
+    s.prErrors = {};
+  } else {
+    delete s.prErrors[projectId];
+  }
+  for (const p of list.prs) s.prs[p.task_id] = p.pr;
+  for (const e of list.errors) s.prErrors[e.project_id] = e.message;
+}
+
 export function showMenu(event: MouseEvent, items: MenuItem[]) {
   event.preventDefault();
   event.stopPropagation();
@@ -224,5 +244,6 @@ export async function refresh() {
   state.tasks = tasks;
   state.sessions = sessions;
   refreshPluginUpdates().catch(() => {});
+  api.prList().then((l) => applyPrList(state, l, null)).catch(() => {});
   if (state.selectedTaskId !== null && !tasks.some((t) => t.id === state.selectedTaskId)) state.selectedTaskId = null;
 }

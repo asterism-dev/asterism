@@ -55,7 +55,7 @@ def handle(request):
         if mode == "hang-init":
             time.sleep(60)
         record("init " + json.dumps(params.get("settings", {}), sort_keys=True))
-        caps = [c for c in os.environ.get("FIXTURE_CAPS", "command,forge,task_source").split(",") if c]
+        caps = [c for c in os.environ.get("FIXTURE_CAPS", "command,forge,task_source,pull_requests").split(",") if c]
         result = {"capabilities": caps}
     elif method == "forge.status":
         result = {"available": True, "authenticated": True, "account": "me", "owners": ["acme"], "error": None}
@@ -80,6 +80,14 @@ def handle(request):
             return
         result = {"key": params["key"], "title": issue["title"], "url": "https://echo.test/" + params["key"],
                   "description": issue["description"], "branch": issue["branch"]}
+    elif method == "forge.pull_requests":
+        record("prs " + ",".join(params["branches"]))
+        path = os.environ.get("FIXTURE_PRS")
+        data = json.load(open(path)) if path and os.path.exists(path) else {}
+        if "error" in data:
+            error(rid, -32008, "git", data["error"])
+            return
+        result = [{"branch": b, "pr": data[b]} for b in params["branches"] if b in data]
     elif method == "echo.sleep":
         time.sleep(params.get("ms", 0) / 1000)
         result = params

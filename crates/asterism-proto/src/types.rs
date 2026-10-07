@@ -67,6 +67,10 @@ pub mod method {
     pub const TASK_SOURCE_LIST: &str = "task_source.list";
     pub const TASK_SOURCE_SEARCH: &str = "task_source.search";
     pub const TASK_SOURCE_GET: &str = "task_source.get";
+    pub const PR_LIST: &str = "pr.list";
+    pub const PR_REFRESH: &str = "pr.refresh";
+    pub const PROJECT_BRANCHES: &str = "project.branches";
+    pub const PROJECT_UPDATE: &str = "project.update";
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -123,6 +127,9 @@ pub struct Project {
     pub path: String,
     #[serde(default)]
     pub created_at: i64,
+    /// Base for new tasks; `None` means automatic (origin's default branch).
+    #[serde(default)]
+    pub default_base: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -139,6 +146,24 @@ pub struct ProjectIdParams {
 pub struct ProjectWorktreeParams {
     pub project_id: i64,
     pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectUpdateParams {
+    pub project_id: i64,
+    #[serde(default)]
+    pub default_base: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectBranches {
+    pub branches: Vec<String>,
+    /// What `task.create` uses without an explicit base; `None` when the repository has no commits.
+    pub default: Option<String>,
+    /// The default when no base is configured.
+    pub automatic: Option<String>,
+    pub configured: Option<String>,
+    pub fetch_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -549,6 +574,8 @@ pub struct TaskCreateParams {
     #[serde(default)]
     pub agent: Option<String>,
     #[serde(default)]
+    pub base: Option<String>,
+    #[serde(default)]
     pub issue: Option<TaskIssue>,
 }
 
@@ -606,6 +633,75 @@ pub struct IssueDetails {
     pub name: String,
     pub branch: String,
     pub prompt: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PrState {
+    Open,
+    Draft,
+    Merged,
+    Closed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewState {
+    Approved,
+    ChangesRequested,
+    ReviewRequired,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChecksState {
+    Pending,
+    Success,
+    Failure,
+    None,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrChecks {
+    pub state: ChecksState,
+    #[serde(default)]
+    pub failing: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PullRequest {
+    pub number: u64,
+    pub url: String,
+    pub title: String,
+    pub state: PrState,
+    pub review: ReviewState,
+    pub checks: PrChecks,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskPr {
+    pub task_id: i64,
+    pub branch: String,
+    pub pr: PullRequest,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrProjectError {
+    pub project_id: i64,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrList {
+    pub prs: Vec<TaskPr>,
+    pub errors: Vec<PrProjectError>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrListParams {
+    #[serde(default)]
+    pub project_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -882,6 +978,8 @@ pub enum Event {
     PluginsChanged {},
     #[serde(rename = "stores.changed")]
     StoresChanged {},
+    #[serde(rename = "pr.changed")]
+    PrChanged { task_id: i64, pr: Option<PullRequest> },
 }
 
 impl Event {

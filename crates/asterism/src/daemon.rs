@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
-use asterism_plugin::protocol::{self, CloneParams, CreateRemoteParams, GetIssueParams, LaunchMode, ListReposParams, SearchIssuesParams, TaskSourceCheck, TaskSourceCheckParams, PrepareParams, PrepareResult, ResolveOwnerParams, ResolveOwnerResult};
+use asterism_plugin::protocol::{self, BranchPr, PullRequestsParams, CloneParams, CreateRemoteParams, GetIssueParams, LaunchMode, ListReposParams, SearchIssuesParams, TaskSourceCheck, TaskSourceCheckParams, PrepareParams, PrepareResult, ResolveOwnerParams, ResolveOwnerResult};
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
 use asterism_proto::PROTO_VERSION;
@@ -24,6 +24,7 @@ use crate::plugins::process::{self, HostFn};
 use crate::plugins::registry::{self, Plugin, Status};
 use crate::plugins::catalog::{self, EntrySource, StoreConfig};
 use crate::plugins::{install, settings, source, store_ops, PluginSet, Runtime, STORE_LOCK};
+use crate::pr_status::{self, ForgeCandidate, InFlight, PrStatus};
 use crate::proc_stats::{self, CpuTracker};
 use crate::session::{Pty, Snapshot, SpawnSpec, SCROLLBACK_LINES};
 use crate::store::Store;
@@ -96,6 +97,7 @@ fn plugin_env(paths: &Paths, extra: &[(String, String)]) -> Result<Vec<(String, 
 }
 
 pub const STORE_REFRESH_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+const PR_TICK: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, Default)]
 struct StoreStatus {
@@ -120,6 +122,7 @@ pub struct Daemon {
     runtime: Runtime,
     builtin_dir: PathBuf,
     store_status: Mutex<BTreeMap<String, StoreStatus>>,
+    pr_status: Mutex<PrStatus>,
 }
 
 impl Daemon {
@@ -158,6 +161,7 @@ impl Daemon {
                 runtime,
                 builtin_dir,
                 store_status: Mutex::new(BTreeMap::new()),
+                pr_status: Mutex::new(PrStatus::default()),
             }
         }))
     }
@@ -696,8 +700,41 @@ impl Daemon {
             }
             store.remove_project(project_id)?;
         }
+        {
+            let mut status = lock(&self.pr_status);
+            status.entries.retain(|_, e| e.project_id != project_id);
+            status.errors.remove(&project_id);
+            status.polled.remove(&project_id);
+            status.rate_limited.remove(&project_id);
+        }
         self.emit(Event::ProjectRemoved { project_id });
         Ok(())
+    }
+
+    pub fn project_branches(&self, project_id: i64) -> Result<ProjectBranches> {
+        let project = self.store().project(project_id)?.ok_or_else(|| not_found("project", project_id))?;
+        let repo = PathBuf::from(&project.path);
+        let fetch_error = git::remote_url(&repo, "origin")
+            .and_then(|_| git::fetch(&repo, "origin", &self.options.git_env).err())
+            .map(|e| e.message);
+        Ok(ProjectBranches {
+            branches: git::branches(&repo)?,
+            default: default_base(&repo, &project),
+            automatic: automatic_base(&repo),
+            configured: project.default_base,
+            fetch_error,
+        })
+    }
+
+    pub fn update_project(&self, params: ProjectUpdateParams) -> Result<Project> {
+        let base = params.default_base.as_deref().map(str::trim).filter(|b| !b.is_empty());
+        let project = {
+            let store = self.store();
+            store.set_project_default_base(params.project_id, base)?;
+            store.project(params.project_id)?.ok_or_else(|| not_found("project", params.project_id))?
+        };
+        self.emit(Event::ProjectChanged(project.clone()));
+        Ok(project)
     }
 
     pub fn node_config(&self) -> Result<NodeConfigInfo> {
@@ -932,7 +969,18 @@ impl Daemon {
         }
         let project = self.store().project(params.project_id)?.ok_or_else(|| not_found("project", params.project_id))?;
         let repo = PathBuf::from(&project.path);
-        let base = git::base_ref(&repo)?;
+        let base = match params.base.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+            Some(base) if git::resolves(&repo, base) => base.to_string(),
+            Some(base) => {
+                return Err(Error::new(
+                    ErrorKind::Git,
+                    format!("base `{base}` does not point to a commit — the repository may have no commits yet"),
+                ))
+            }
+            None => default_base(&repo, &project)
+                .ok_or_else(|| Error::new(ErrorKind::Git, "repository has no commits yet — create an initial commit first"))?,
+        };
+        let base = git::pin_base(&repo, &base)?;
         let origin = git::remote_url(&repo, "origin");
         let (owner, repo_name) = node_settings::layout_owner_repo(origin.as_deref(), &project.name);
         let worktree_root = node_settings::worktrees_dir(&self.paths)?.join(owner).join(repo_name);
@@ -994,6 +1042,119 @@ impl Daemon {
         Ok(self.store().tasks(params.project_id, params.include_archived)?)
     }
 
+    /// The PR-capable forge serving the repository's origin host, if any.
+    fn pr_forge(&self, repo: &Path) -> Option<String> {
+        let host = repo_source::url_host(&git::remote_url(repo, "origin")?)?;
+        let set = self.plugin_set();
+        let forges: Vec<ForgeCandidate> = set
+            .registry
+            .forges()
+            .map(|(_, f)| ForgeCandidate { id: &f.id, hosts: &f.hosts, pull_requests: f.pull_requests })
+            .collect();
+        pr_status::forge_for_host(&forges, &host)
+    }
+
+    pub fn pr_list(&self, project_id: Option<i64>) -> PrList {
+        let status = lock(&self.pr_status);
+        let mut prs: Vec<TaskPr> = status
+            .entries
+            .iter()
+            .filter(|(_, e)| project_id.is_none_or(|p| p == e.project_id))
+            .map(|(id, e)| TaskPr { task_id: *id, branch: e.branch.clone(), pr: e.pr.clone() })
+            .collect();
+        prs.sort_by_key(|p| p.task_id);
+        let errors = status
+            .errors
+            .iter()
+            .filter(|(id, _)| project_id.is_none_or(|p| p == **id))
+            .map(|(id, message)| PrProjectError { project_id: *id, message: message.clone() })
+            .collect();
+        PrList { prs, errors }
+    }
+
+    pub async fn refresh_prs(&self, project_id: i64) -> Result<PrList> {
+        let project = self.store().project(project_id)?.ok_or_else(|| not_found("project", project_id))?;
+        let Some(_guard) = InFlight::start(&self.pr_status, project_id) else {
+            return Ok(self.pr_list(Some(project_id)));
+        };
+        let result = self.poll_project(&project).await;
+        if self.store().project(project_id)?.is_none() {
+            return Ok(PrList::default());
+        }
+        let mut status = lock(&self.pr_status);
+        status.polled.insert(project_id, unix_now());
+        match result {
+            Ok(()) => {
+                status.errors.remove(&project_id);
+                status.rate_limited.remove(&project_id);
+            }
+            Err(e) => {
+                if pr_status::is_rate_limit(&e.message) {
+                    status.rate_limited.insert(project_id);
+                }
+                status.errors.insert(project_id, e.message);
+            }
+        }
+        drop(status);
+        Ok(self.pr_list(Some(project_id)))
+    }
+
+    async fn poll_project(&self, project: &Project) -> Result<()> {
+        let repo = PathBuf::from(&project.path);
+        let tasks: Vec<(i64, String)> = self.store().tasks(Some(project.id), false)?.into_iter().map(|t| (t.id, t.branch)).collect();
+        let (asked, reply) = match self.pr_forge(&repo) {
+            None => (Vec::new(), Vec::new()),
+            Some(forge) => {
+                let asked = pr_status::branches_to_ask(&tasks, &lock(&self.pr_status).entries);
+                let reply: Vec<BranchPr> = if asked.is_empty() {
+                    Vec::new()
+                } else {
+                    let params = PullRequestsParams { forge: forge.clone(), project_path: project.path.clone(), branches: asked.clone() };
+                    self.forge_call(&forge, protocol::method::FORGE_PULL_REQUESTS, params, Some(self.call_timeout())).await?
+                };
+                (asked, reply)
+            }
+        };
+        // Re-read under the pr_status lock so a concurrent archive/delete cannot be undone by the merge.
+        let mut status = lock(&self.pr_status);
+        let tasks: Vec<(i64, String)> = self.store().tasks(Some(project.id), false)?.into_iter().map(|t| (t.id, t.branch)).collect();
+        let changes = pr_status::merge(project.id, &tasks, &asked, reply, &mut status.entries);
+        drop(status);
+        for (task_id, pr) in changes {
+            self.emit(Event::PrChanged { task_id, pr });
+        }
+        Ok(())
+    }
+
+    fn drop_pr(&self, task_id: i64) {
+        if lock(&self.pr_status).entries.remove(&task_id).is_some() {
+            self.emit(Event::PrChanged { task_id, pr: None });
+        }
+    }
+
+    pub async fn pr_poll_loop(self: Arc<Self>) {
+        loop {
+            tokio::time::sleep(PR_TICK).await;
+            // Nobody is watching without a subscriber; avoid needless forge calls.
+            if self.events.receiver_count() == 0 {
+                continue;
+            }
+            let Ok(projects) = self.projects() else { continue };
+            let now = unix_now();
+            // ponytail: projects are polled sequentially, so one slow forge delays the others by up to call_timeout per tick.
+            for project in projects {
+                let last_activity = self.store().tasks(Some(project.id), false).map(|ts| ts.iter().map(|t| t.last_activity_at).max().unwrap_or(0)).unwrap_or(0);
+                let due = {
+                    let status = lock(&self.pr_status);
+                    pr_status::is_due(now, status.polled.get(&project.id).copied(), last_activity, status.rate_limited.contains(&project.id))
+                };
+                if due {
+                    let _ = self.refresh_prs(project.id).await;
+                }
+            }
+        }
+    }
+
     /// Stops the task's sessions; worktree, uncommitted changes and branch stay.
     pub fn archive_task(&self, task_id: i64) -> Result<Task> {
         let task = self.task(task_id)?;
@@ -1006,12 +1167,13 @@ impl Daemon {
             }
         }
         self.store().set_task_archived(task_id)?;
+        self.drop_pr(task_id);
         let task = self.task(task_id)?;
         self.emit(Event::TaskChanged(task.clone()));
         Ok(task)
     }
 
-    pub fn restore_task(&self, task_id: i64) -> Result<Task> {
+    pub fn restore_task(self: &Arc<Self>, task_id: i64) -> Result<Task> {
         let task = self.task(task_id)?;
         if !task.archived {
             return Ok(task);
@@ -1035,6 +1197,11 @@ impl Daemon {
         self.store().set_task_active(task_id)?;
         let task = self.task(task_id)?;
         self.emit(Event::TaskChanged(task.clone()));
+        let daemon = self.clone();
+        let project_id = task.project_id;
+        tokio::spawn(async move {
+            let _ = daemon.refresh_prs(project_id).await;
+        });
         Ok(task)
     }
 
@@ -1045,7 +1212,7 @@ impl Daemon {
         let branch_exists = git::branch_exists(&repo, &task.branch);
         Ok(TaskDeleteCheck {
             dirty: worktree.exists() && git::is_dirty(worktree).unwrap_or(false),
-            unmerged_commits: if branch_exists { git::unmerged_commits(&repo, &task.base_branch, &task.branch) } else { 0 },
+            unmerged_commits: if branch_exists { git::unmerged_commits(&repo, &self.effective_base(&repo, &task), &task.branch) } else { 0 },
             branch: task.branch,
             branch_exists,
         })
@@ -1082,6 +1249,7 @@ impl Daemon {
         for stored in sessions {
             self.emit(Event::SessionRemoved { session_id: stored.session.id });
         }
+        self.drop_pr(task_id);
         self.emit(Event::TaskRemoved { task_id });
         Ok(TaskDeleteResult { warning: (!warnings.is_empty()).then(|| warnings.join("; ")) })
     }
@@ -1138,7 +1306,17 @@ impl Daemon {
 
     pub fn diff(&self, task_id: i64) -> Result<TaskDiffResult> {
         let task = self.task(task_id)?;
-        Ok(TaskDiffResult { patch: git::diff(Path::new(&task.worktree_path), &task.base_branch)? })
+        let base = self.effective_base(&self.project_path(task.project_id)?, &task);
+        Ok(TaskDiffResult { patch: git::diff(Path::new(&task.worktree_path), &base)? })
+    }
+
+    /// The task's base, or the project's default once that base is gone (e.g. a pruned remote branch).
+    fn effective_base(&self, repo: &Path, task: &Task) -> String {
+        if git::resolves(repo, &task.base_branch) {
+            return task.base_branch.clone();
+        }
+        let project = self.store().project(task.project_id).ok().flatten();
+        project.and_then(|p| default_base(repo, &p)).unwrap_or_else(|| task.base_branch.clone())
     }
 
     pub fn file(&self, params: TaskFileParams) -> Result<TaskFileResult> {
@@ -1186,6 +1364,7 @@ impl Daemon {
         mode: LaunchMode,
         prompt: Option<&str>,
         agent_ref: Option<&str>,
+        cwd: &Path,
     ) -> Result<Option<(Vec<String>, Vec<(String, String)>)>> {
         let (plugin, decl) = self.agent_decl(name)?;
         let settings = agent_settings::launch_settings(&self.paths, name, mode == LaunchMode::Resume)?;
@@ -1201,6 +1380,7 @@ impl Daemon {
                     prompt: prompt.map(String::from),
                     agent_ref: agent_ref.map(String::from),
                     settings,
+                    cwd: cwd.display().to_string(),
                 };
                 let params = serde_json::to_value(params).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
                 let reply = self.plugin_call(&plugin, protocol::method::AGENT_PREPARE, params, Some(self.call_timeout())).await?;
@@ -1222,7 +1402,7 @@ impl Daemon {
         let (argv, extra_env) = match &params.kind {
             SessionKind::Agent { name } => {
                 self.ensure_agent_available(name)?;
-                let launched = self.agent_argv(name, LaunchMode::Start, params.prompt.as_deref(), None).await?;
+                let launched = self.agent_argv(name, LaunchMode::Start, params.prompt.as_deref(), None, Path::new(&task.worktree_path)).await?;
                 launched.ok_or_else(|| Error::new(ErrorKind::PluginError, format!("agent {name} has no start command")))?
             }
             SessionKind::Shell => (vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())], Vec::new()),
@@ -1239,6 +1419,11 @@ impl Daemon {
         let session = self.session(id)?;
         self.emit(Event::SessionChanged(session.clone()));
         self.touch_task(task.id);
+        let daemon = self.clone();
+        let project_id = task.project_id;
+        tokio::spawn(async move {
+            let _ = daemon.refresh_prs(project_id).await;
+        });
         Ok(session)
     }
 
@@ -1462,7 +1647,7 @@ impl Daemon {
             let resumed = match self.task(session.task_id) {
                 Ok(task) if !task.archived => {
                     let resume = match &session.kind {
-                        SessionKind::Agent { name } => self.agent_argv(name, LaunchMode::Resume, None, agent_ref.as_deref()).await,
+                        SessionKind::Agent { name } => self.agent_argv(name, LaunchMode::Resume, None, agent_ref.as_deref(), Path::new(&task.worktree_path)).await,
                         _ => Ok(None),
                     };
                     match resume {
@@ -1514,6 +1699,19 @@ async fn write_blocking(pty: &Arc<Pty>, data: Vec<u8>) -> Result<()> {
 
 fn not_found(what: &str, id: i64) -> Error {
     Error::new(ErrorKind::NotFound, format!("{what} {id} not found"))
+}
+
+/// origin's default branch, else the checked-out branch; `None` when nothing points to a commit.
+fn automatic_base(repo: &Path) -> Option<String> {
+    git::remote_head(repo, "origin")
+        .into_iter()
+        .chain(["origin/main".to_string(), "origin/master".to_string()])
+        .chain(git::base_ref(repo).ok())
+        .find(|b| git::resolves(repo, b))
+}
+
+fn default_base(repo: &Path, project: &Project) -> Option<String> {
+    project.default_base.clone().filter(|b| git::resolves(repo, b)).or_else(|| automatic_base(repo))
 }
 
 fn slug_text(text: &str) -> String {

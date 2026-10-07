@@ -1,3 +1,33 @@
+## v0.7.0 (2026-10-06)
+
+### Feat
+
+- **plugins**: show pull request and CI status per task (#9)
+
+## v0.6.0 (2026-10-06)
+
+### Feat
+
+- fetch and choose the base branch for new tasks (#2)
+
+## v0.5.0 (2026-10-06)
+
+### Feat
+
+- auto-trust task worktrees for Claude and per-plugin settings tabs (#8)
+
+## v0.4.0 (2026-10-06)
+
+### Feat
+
+- **desktop**: copy branch name from task menu, drop archive hover button (#7)
+
+## v0.3.1 (2026-10-06)
+
+### Fix
+
+- **desktop**: ad-hoc sign the whole app bundle (#6)
+
 ## v0.3.0 (2026-10-06)
 
 ### Feat

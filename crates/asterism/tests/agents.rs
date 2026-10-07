@@ -18,13 +18,13 @@ fn daemon(home: &std::path::Path) -> std::sync::Arc<Daemon> {
 async fn claude_argv_comes_from_the_claude_plugin() {
     let home = tempfile::tempdir().unwrap();
     let daemon = daemon(home.path());
-    let (argv, _env) = daemon.agent_argv("claude", LaunchMode::Start, Some("fix it"), None).await.unwrap().unwrap();
+    let (argv, _env) = daemon.agent_argv("claude", LaunchMode::Start, Some("fix it"), None, home.path()).await.unwrap().unwrap();
     let settings = home.path().join("h/plugins/data/claude/claude-settings.json");
     assert_eq!(argv[..3], ["claude".to_string(), "--settings".into(), settings.display().to_string()]);
     assert_eq!(argv[argv.len() - 2..], ["--".to_string(), "fix it".into()]);
     let written = std::fs::read_to_string(&settings).unwrap();
     assert!(written.contains("asterism-plugin-claude") && written.contains("hook stop"), "{written}");
-    assert_eq!(daemon.agent_argv("claude", LaunchMode::Resume, None, None).await.unwrap(), None);
+    assert_eq!(daemon.agent_argv("claude", LaunchMode::Resume, None, None, home.path()).await.unwrap(), None);
 }
 
 #[tokio::test]
@@ -49,7 +49,7 @@ async fn static_agents_start_from_their_template_with_configured_args() {
     let config = AgentConfig { args: vec!["hello".into()], ..Default::default() };
     daemon.set_agent_config("echo-agent", &config).unwrap();
     let project = daemon.add_project(&repo.path().display().to_string()).unwrap();
-    let params = TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: Some("echo-agent".into()), issue: None };
+    let params = TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: Some("echo-agent".into()), base: None, issue: None };
     let session = daemon.create_task(params).await.unwrap().session.unwrap();
     let mut text = String::new();
     for _ in 0..100 {
@@ -70,7 +70,7 @@ async fn static_agents_start_from_their_template_with_configured_args() {
 async fn claude_resume_argv_ends_with_the_agent_ref() {
     let home = tempfile::tempdir().unwrap();
     let daemon = daemon(home.path());
-    let (argv, _env) = daemon.agent_argv("claude", LaunchMode::Resume, None, Some("abc")).await.unwrap().unwrap();
+    let (argv, _env) = daemon.agent_argv("claude", LaunchMode::Resume, None, Some("abc"), home.path()).await.unwrap().unwrap();
     assert_eq!(argv[argv.len() - 2..], ["--resume".to_string(), "abc".into()]);
 }
 
@@ -81,7 +81,7 @@ async fn sessions_of_a_removed_agent_plugin_are_marked_exited_on_recover() {
     init_repo(repo.path());
     let first = daemon(home.path());
     let project = first.add_project(&repo.path().display().to_string()).unwrap();
-    let params = TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: Some("echo-agent".into()), issue: None };
+    let params = TaskCreateParams { project_id: project.id, title: "t".into(), prompt: None, agent: Some("echo-agent".into()), base: None, issue: None };
     let session = first.create_task(params).await.unwrap().session.unwrap();
 
     let paths = Paths { home: home.path().join("h") };

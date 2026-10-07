@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::Stdio;
 
-use common::Node;
+use common::{run_git, Node};
 
 fn stderr(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
@@ -196,4 +196,20 @@ fn autostarted_daemon_drops_the_callers_claude_env() {
     let read = node.json(&["read", &session, "--lines", "5"]);
     assert!(read["text"].as_str().unwrap().contains("[]"), "{read}");
     node.cmd(&["session", "kill", &session]);
+}
+
+#[test]
+fn task_new_takes_a_base_and_project_set_base_changes_the_default() {
+    let node = Node::new();
+    run_git(node.repo(), &["branch", "develop"]);
+    let created = node.json(&["task", "new", "on develop", "--base", "develop"]);
+    assert_eq!(created["task"]["base_branch"], "develop");
+
+    assert_eq!(node.json(&["project", "set-base", "develop"])["default_base"], "develop");
+    assert_eq!(node.json(&["task", "new", "by default"])["task"]["base_branch"], "develop");
+    assert!(node.json(&["project", "set-base", "auto"])["default_base"].is_null());
+
+    let out = node.cmd(&["task", "new", "bad", "--base", "nope"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stderr(&out).contains("does not point to a commit"), "{}", stderr(&out));
 }

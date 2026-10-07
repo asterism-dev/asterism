@@ -34,7 +34,7 @@ async fn plugins_reach_the_daemon_through_the_host_api() {
 async fn host_api_denies_plugin_management_and_streams() {
     let home = tempfile::tempdir().unwrap();
     let daemon = daemon(home.path(), true);
-    for method in ["plugin.reload", "store.add", "subscribe", "session.attach", "shutdown"] {
+    for method in ["plugin.reload", "store.add", "subscribe", "session.attach", "shutdown", "pr.list"] {
         let err = host_call(&daemon, method).await.unwrap_err();
         assert_eq!(err.kind, ErrorKind::PluginError, "{method}");
         assert!(err.message.contains("not available to plugins"), "{method}: {}", err.message);

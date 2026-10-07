@@ -13,6 +13,7 @@ pub mod git;
 pub mod node_settings;
 pub mod paths;
 pub mod plugins;
+pub mod pr_status;
 pub mod proc_stats;
 pub mod repo_source;
 pub mod rpc;
@@ -53,6 +54,7 @@ pub async fn run(paths: Paths) -> io::Result<()> {
         }
     });
     tokio::spawn(daemon.clone().store_refresh_loop());
+    tokio::spawn(daemon.clone().pr_poll_loop());
     tokio::select! {
         _ = rpc::serve(daemon.clone(), listener) => {}
         _ = daemon.shutdown_requested() => {}

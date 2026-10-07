@@ -5,7 +5,7 @@ use asterism_proto::types::{AgentSettingKind, Capability, CapabilityKind, Settin
 use serde::Deserialize;
 
 /// CLI subcommands a plugin command may not shadow.
-pub const BUILTIN_COMMANDS: &[&str] = &["project", "task", "session", "send", "read", "wait", "attach", "hook", "daemon", "plugin", "store", "issue", "help"];
+pub const BUILTIN_COMMANDS: &[&str] = &["project", "task", "session", "send", "read", "wait", "attach", "hook", "daemon", "plugin", "store", "issue", "pr", "help"];
 /// Built-in session kinds that share the agent namespace for settings.
 const SESSION_KINDS: &[&str] = &["shell", "command"];
 
@@ -52,6 +52,9 @@ pub struct ForgeDecl {
     pub display_name: String,
     #[serde(default)]
     pub hosts: Vec<String>,
+    /// The backend answers `forge.pull_requests`.
+    #[serde(default)]
+    pub pull_requests: bool,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -111,6 +114,7 @@ impl Manifest {
         let provides = &self.provides;
         [
             ("forge", !provides.forge.is_empty()),
+            ("pull_requests", provides.forge.iter().any(|f| f.pull_requests)),
             ("agent", provides.agent.iter().any(|a| a.launch == LaunchKind::Backend)),
             ("command", !provides.command.is_empty()),
             ("task_source", !provides.task_source.is_empty()),
@@ -301,6 +305,15 @@ required = true
         assert!(parse(&setting("secret", "\"s\"", "")).unwrap_err().contains("secret cannot have a default"));
         assert!(parse(&setting("enum", "\"a\"", "options = [\"a\"]")).is_ok());
         assert!(parse(&setting("number", "3", "")).is_ok());
+    }
+
+    #[test]
+    fn forges_with_pull_requests_must_confirm_them() {
+        let m = parse(&GITHUB.replace("hosts = [\"github.com\"]", "hosts = [\"github.com\"]\npull_requests = true")).unwrap();
+        assert!(m.provides.forge[0].pull_requests);
+        assert!(m.backend_capabilities().contains("pull_requests"));
+        let plain = parse(GITHUB).unwrap();
+        assert!(!plain.provides.forge[0].pull_requests && !plain.backend_capabilities().contains("pull_requests"));
     }
 
     #[test]

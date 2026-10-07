@@ -5,7 +5,7 @@ import { ArrowDownUp, ChevronDown, ChevronRight, Plus, Settings, SquarePlus } fr
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
 import {
-  isConnected, nextWaiting, selectSession, showMenu, state, taskStatus, toast,
+  applyPrList, isConnected, nextWaiting, selectSession, showMenu, state, taskStatus, toast,
   waitingSessions,
 } from '../store';
 import {
@@ -14,6 +14,7 @@ import {
 import { leaveSettings } from '../settingsGuard';
 import { startSession } from '../sessionActions';
 import { archiveTask, deleteTask } from '../taskActions';
+import PrBadge from './PrBadge.vue';
 import StatusIndicator from './StatusIndicator.vue';
 import { installUpdate, updateLabel, updater } from '../updater';
 import type { Project, Task } from '../types';
@@ -110,6 +111,7 @@ function projectMenu(e: MouseEvent, p: Project) {
   showMenu(e, [
     { label: 'Open project page', action: () => openProject(p) },
     { label: 'New task…', action: () => (state.newTaskFor = p.id) },
+    { label: 'Refresh PR status', action: () => api.refreshPrs(p.id).then((l) => applyPrList(state, l, p.id)).catch(report) },
     { label: 'Reveal in file manager', action: () => revealItemInDir(p.path).catch(report) },
     { label: 'Remove project', danger: true, action: () => removeProject(p) },
   ]);
@@ -121,6 +123,7 @@ function taskMenu(e: MouseEvent, t: Task) {
     ...agents.map((a) => ({ label: `New ${a.display_name || a.name} session`, action: () => startSession(t.id, { type: 'agent', name: a.name }) })),
     { label: 'New shell', action: () => startSession(t.id, { type: 'shell' }) },
     { label: 'Reveal worktree', action: () => revealItemInDir(t.worktree_path).catch(report) },
+    { label: 'Copy branch name', action: () => navigator.clipboard.writeText(t.branch).then(() => toast(`Copied ${t.branch}`), report) },
     { label: 'Archive task', action: () => archiveTask(t) },
     { label: 'Delete task', danger: true, action: () => deleteTask(t) },
   ]);
@@ -170,10 +173,10 @@ function taskMenu(e: MouseEvent, t: Task) {
             <span class="name">{{ t.title }}</span>
             <a v-if="t.issue" class="issue-key muted" :href="t.issue.url" :title="t.issue.url"
               @click.prevent.stop="openIssue(t.issue.url)">{{ t.issue.key }}</a>
+            <PrBadge v-if="state.prs[t.id]" :pr="state.prs[t.id]!" />
             <span class="age muted" :title="`Created ${formatDate(t.created_at)} · Last activity ${formatDate(t.last_activity_at)}`">
               {{ relativeTime(t.last_activity_at, now) }}
             </span>
-            <button class="hover-action" title="Archive task" @click.stop="archiveTask(t)">Archive</button>
             <StatusIndicator :status="taskStatus(state, t.id)" />
           </div>
         </template>

@@ -10,7 +10,14 @@ export interface AgentConfig {
 }
 export interface AgentConfigRaw { args: string[]; env: EnvSettings; mcp_text: string | null; hooks_text: string | null }
 
-export interface Project { id: number; name: string; path: string; created_at: number }
+export interface Project { id: number; name: string; path: string; created_at: number; default_base: string | null }
+export interface ProjectBranches {
+  branches: string[];
+  default: string | null;
+  automatic: string | null;
+  configured: string | null;
+  fetch_error: string | null;
+}
 export interface Task {
   id: number;
   project_id: number;
@@ -49,6 +56,13 @@ export type NodeStatus =
   | { state: 'incompatible'; message: string }
   | { state: 'disconnected'; reason: string };
 
+export type PrState = 'open' | 'draft' | 'merged' | 'closed';
+export type ReviewState = 'approved' | 'changes_requested' | 'review_required' | 'none';
+export type ChecksState = 'pending' | 'success' | 'failure' | 'none';
+export interface PullRequest { number: number; url: string; title: string; state: PrState; review: ReviewState; checks: { state: ChecksState; failing: string[] } }
+export interface TaskPr { task_id: number; branch: string; pr: PullRequest }
+export interface PrList { prs: TaskPr[]; errors: { project_id: number; message: string }[] }
+
 export type NodeEvent =
   | { method: 'session.status_changed'; params: { session_id: number; status: SessionStatus } }
   | { method: 'session.changed'; params: Session }
@@ -58,7 +72,8 @@ export type NodeEvent =
   | { method: 'project.changed'; params: Project }
   | { method: 'project.removed'; params: { project_id: number } }
   | { method: 'plugins.changed'; params: Record<string, never> }
-  | { method: 'stores.changed'; params: Record<string, never> };
+  | { method: 'stores.changed'; params: Record<string, never> }
+  | { method: 'pr.changed'; params: { task_id: number; pr: PullRequest | null } };
 
 export interface TaskDeleteCheck { dirty: boolean; branch: string; branch_exists: boolean; unmerged_commits: number }
 export interface TaskDeleteResult { warning: string | null }

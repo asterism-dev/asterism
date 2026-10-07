@@ -69,6 +69,8 @@ enum Cmd {
         agent_ref: Option<String>,
     },
     #[command(subcommand)]
+    Pr(PrCmd),
+    #[command(subcommand)]
     Issue(IssueCmd),
     #[command(subcommand)]
     Daemon(DaemonCmd),
@@ -187,6 +189,21 @@ enum ProjectCmd {
         #[arg(long)]
         project: Option<String>,
     },
+    /// Set the default base branch for new tasks; "auto" uses origin's default branch.
+    SetBase {
+        base: String,
+        #[arg(long)]
+        project: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum PrCmd {
+    /// Fetch the pull request status of a project's tasks now.
+    Refresh {
+        #[arg(long)]
+        project: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -219,6 +236,9 @@ enum TaskCmd {
         agent: Option<String>,
         #[arg(long)]
         prompt: Option<String>,
+        /// Branch or ref to start from (default: the project's default base).
+        #[arg(long)]
+        base: Option<String>,
         /// Create the task from an issue, e.g. linear:TRA-1343 or github-issues:#42.
         #[arg(long)]
         issue: Option<String>,
@@ -357,13 +377,25 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
                 })
             });
         }
+        Cmd::Project(ProjectCmd::SetBase { base, project }) => {
+            let project_id = resolve_project(&client, project).await?;
+            let default_base = (base != "auto").then_some(base);
+            let updated: Project = client.call(method::PROJECT_UPDATE, ProjectUpdateParams { project_id, default_base }).await?;
+            print(json, &updated, || format!("default base: {}", updated.default_base.as_deref().unwrap_or("auto")));
+        }
         Cmd::Project(ProjectCmd::Remove { id }) => {
             client.call::<_, ()>(method::PROJECT_REMOVE, ProjectIdParams { project_id: id }).await?;
             print_ok(json);
         }
-        Cmd::Task(TaskCmd::New { title, title_flag, project, agent, prompt, issue }) => {
+        Cmd::Task(TaskCmd::New { title, title_flag, project, agent, prompt, base, issue }) => {
             let title = title.or(title_flag);
             let project_id = resolve_project(&client, project).await?;
+            // Also fetches origin, so the default and `--base origin/…` see the remote's current state.
+            let branches: ProjectBranches = client.call(method::PROJECT_BRANCHES, ProjectIdParams { project_id }).await?;
+            if let Some(e) = &branches.fetch_error {
+                eprintln!("warning: could not fetch origin: {e}");
+            }
+            let base = base.or(branches.default);
             let params = match issue {
                 Some(spec) => {
                     let (source, key) = spec.split_once(':').ok_or_else(|| invalid("--issue takes <source>:<key>".into()))?;
@@ -375,6 +407,7 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
                         title: title.unwrap_or_default(),
                         prompt: prompt.or(Some(details.prompt)),
                         agent,
+                        base,
                         issue: Some(TaskIssue {
                             source: details.source,
                             key: details.key,
@@ -386,7 +419,7 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
                 }
                 None => {
                     let title = title.ok_or_else(|| invalid("give the task a title or --issue <source>:<key>".into()))?;
-                    TaskCreateParams { project_id, title, prompt, agent, issue: None }
+                    TaskCreateParams { project_id, title, prompt, agent, base, issue: None }
                 }
             };
             let created: TaskCreateResult = client.call(method::TASK_CREATE, params).await?;
@@ -414,7 +447,30 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
             };
             let tasks: Vec<Task> =
                 client.call(method::TASK_LIST, TaskListParams { project_id, include_archived: all }).await?;
-            print(json, &tasks, || lines(&tasks, task_line));
+            let prs: PrList = client.call(method::PR_LIST, PrListParams { project_id }).await.unwrap_or_default();
+            let pr_of = |id: i64| prs.prs.iter().find(|p| p.task_id == id).map(|p| &p.pr);
+            if json {
+                let rows: Vec<serde_json::Value> = tasks
+                    .iter()
+                    .map(|t| {
+                        let mut row = serde_json::to_value(t).unwrap_or_default();
+                        row["pr"] = serde_json::to_value(pr_of(t.id)).unwrap_or_default();
+                        row
+                    })
+                    .collect();
+                print(json, &rows, String::new);
+            } else {
+                print(json, &tasks, || lines(&tasks, |t| format!("{}{}", task_line(t), pr_suffix(pr_of(t.id)))));
+            }
+        }
+        Cmd::Pr(PrCmd::Refresh { project }) => {
+            let project_id = resolve_project(&client, project).await?;
+            let list: PrList = client.call(method::PR_REFRESH, ProjectIdParams { project_id }).await?;
+            print(json, &list, || {
+                let mut out: Vec<String> = list.prs.iter().map(|p| format!("{}\t{}{}", p.task_id, p.branch, pr_suffix(Some(&p.pr)))).collect();
+                out.extend(list.errors.iter().map(|e| format!("error\t{}", e.message)));
+                out.join("\n")
+            });
         }
         Cmd::Task(TaskCmd::Archive { id }) => {
             let task: Task = client.call(method::TASK_ARCHIVE, TaskArchiveParams { task_id: id, force: false }).await?;
@@ -898,6 +954,16 @@ async fn run_external(client: &Client, args: Vec<String>) -> Result<(), ClientEr
 
 fn project_line(p: &Project) -> String {
     format!("{}\t{}\t{}", p.id, p.name, p.path)
+}
+
+fn pr_suffix(pr: Option<&PullRequest>) -> String {
+    let Some(pr) = pr else { return String::new() };
+    let checks = match pr.checks.state {
+        ChecksState::Failure => ", checks failing",
+        ChecksState::Pending => ", checks running",
+        ChecksState::Success | ChecksState::None => "",
+    };
+    format!("\t#{} {}{checks}", pr.number, label(&pr.state))
 }
 
 fn task_line(t: &Task) -> String {

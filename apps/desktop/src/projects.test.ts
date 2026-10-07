@@ -49,7 +49,7 @@ describe('project helpers', () => {
   });
 });
 
-const proj = (id: number, name: string, created_at: number): Project => ({ id, name, path: `/p/${id}`, created_at });
+const proj = (id: number, name: string, created_at: number): Project => ({ id, name, path: `/p/${id}`, created_at, default_base: null });
 const tsk = (id: number, project_id: number, title: string, created_at: number, last_activity_at: number): Task => ({
   id, project_id, title, slug: `${id}`, branch: `b${id}`, base_branch: 'main', worktree_path: `/wt/${id}`, prompt: null,
   issue: null, archived: false, created_at, last_activity_at,

@@ -1,28 +1,18 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { ref } from 'vue';
 import { state } from '../store';
 import DiscoverTab from './plugins/DiscoverTab.vue';
 import InstalledTab from './plugins/InstalledTab.vue';
 import StoresTab from './plugins/StoresTab.vue';
 
 const tab = ref<'installed' | 'discover' | 'stores'>('installed');
-const configureRequest = ref<string | null>(null);
 const TABS = [
   { value: 'installed', label: 'Installed' },
   { value: 'discover', label: 'Discover' },
   { value: 'stores', label: 'Stores' },
 ] as const;
 
-function configure(name: string) {
-  tab.value = 'installed';
-  configureRequest.value = name;
-}
-
-watch(() => state.pluginSettingsRequest, (name) => {
-  if (!name) return;
-  configure(name);
-  state.pluginSettingsRequest = null;
-}, { immediate: true });
+const configure = (name: string) => (state.pluginSettingsRequest = name);
 </script>
 
 <template>
@@ -32,7 +22,7 @@ watch(() => state.pluginSettingsRequest, (name) => {
         {{ t.label }}
       </button>
     </div>
-    <InstalledTab v-if="tab === 'installed'" :configure-request="configureRequest" @configured="configureRequest = null" />
+    <InstalledTab v-if="tab === 'installed'" />
     <DiscoverTab v-else-if="tab === 'discover'" @configure="configure" />
     <StoresTab v-else />
   </section>
