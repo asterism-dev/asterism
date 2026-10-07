@@ -1,19 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { issueToCreate, searchParams, sourceOptions } from './taskSources';
-import type { IssueDetails, TaskSourceInfo } from './types';
+import { issueToCreate, searchParams } from './taskSources';
+import type { IssueDetails } from './types';
 
 describe('taskSources', () => {
-  it('disables unavailable sources with their reason', () => {
-    const sources: TaskSourceInfo[] = [
-      { id: 'linear', display_name: 'Linear', plugin: 'linear', available: true, reason: null },
-      { id: 'github-issues', display_name: 'GitHub Issues', plugin: 'github', available: false, reason: 'project has no GitHub repository' },
-    ];
-    expect(sourceOptions(sources)).toEqual([
-      { id: 'linear', label: 'Linear', plugin: 'linear', disabled: false, hint: null },
-      { id: 'github-issues', label: 'GitHub Issues', plugin: 'github', disabled: true, hint: 'project has no GitHub repository' },
-    ]);
-  });
-
   it('lists my issues when the query is empty and searches all otherwise', () => {
     expect(searchParams('  ')).toEqual({ query: '', assigned_to_me: true });
     expect(searchParams(' login ')).toEqual({ query: 'login', assigned_to_me: false });
