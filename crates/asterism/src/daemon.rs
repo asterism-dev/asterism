@@ -2417,7 +2417,9 @@ impl Daemon {
     pub fn hook(&self, params: SessionHookParams) -> Result<()> {
         let live = self.live(params.session_id)?;
         live.hooks_active.store(true, Ordering::Relaxed);
-        set_unless_exited(&live.status, status::hook_status(params.event));
+        if let Some(next) = status::hook_status(params.event) {
+            set_unless_exited(&live.status, next);
+        }
         if let Some(agent_ref) = params.agent_ref {
             self.store()
                 .set_session_agent_ref(params.session_id, &agent_ref)?;

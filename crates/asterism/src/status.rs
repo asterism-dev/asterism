@@ -19,15 +19,15 @@ pub fn idle_status(screen: &str, waiting_patterns: &[String]) -> SessionStatus {
     }
 }
 
-pub fn hook_status(event: HookEvent) -> SessionStatus {
+pub fn hook_status(event: HookEvent) -> Option<SessionStatus> {
     match event {
-        HookEvent::PromptSubmit | HookEvent::Tool => SessionStatus::Working,
-        HookEvent::Stop => SessionStatus::Idle,
-        HookEvent::Notification => SessionStatus::WaitingInput,
+        HookEvent::PromptSubmit | HookEvent::Tool => Some(SessionStatus::Working),
+        HookEvent::Stop => None,
+        HookEvent::Notification => Some(SessionStatus::WaitingInput),
     }
 }
 
-/// Derives status from PTY activity; once hooks report for a session, only the exit transition is applied here.
+/// Derives status from PTY activity; once hooks report for a session, only silence ending `Working` and exit are applied here.
 pub async fn track(
     pty: Arc<Pty>,
     waiting_patterns: Arc<[String]>,
@@ -59,6 +59,8 @@ pub async fn track(
                 idle_at = None;
                 if !hooks_active.load(Ordering::Relaxed) {
                     set(idle_status(&pty.text(), &waiting_patterns));
+                } else if *status.borrow() == SessionStatus::Working {
+                    set(SessionStatus::Idle);
                 }
             }
             _ = exited.wait_for(|done| *done) => {
