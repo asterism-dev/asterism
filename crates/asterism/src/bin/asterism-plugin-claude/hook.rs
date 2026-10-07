@@ -18,7 +18,13 @@ pub fn normalize(event: &str, payload: &Value) -> Option<(&'static str, Option<S
     let message = payload["message"].as_str().unwrap_or_default().to_lowercase();
     // ponytail: matches Claude's idle-prompt Notification text; verify against real Claude and update if it changes.
     let event = if event == "notification" && message.contains("waiting for your input") { "stop" } else { event };
+    let event = if event == "stop" && asks_question(payload["last_assistant_message"].as_str().unwrap_or_default()) { "notification" } else { event };
     Some((event, payload["session_id"].as_str().map(String::from)))
+}
+
+// ponytail: any `?` followed by space or end counts as a question (URL queries excluded); "let me know if…" is missed.
+fn asks_question(reply: &str) -> bool {
+    reply.split('?').skip(1).any(|after| after.trim_start_matches('*').chars().next().is_none_or(char::is_whitespace))
 }
 
 /// A hung stdin must not stall Claude's hook runner.
@@ -60,6 +66,19 @@ mod tests {
         assert_eq!(normalize("notification", &waiting), Some(("stop", Some("x".to_string()))));
         let asking = json!({"session_id": "x", "message": "Claude needs your permission to use Bash"});
         assert_eq!(normalize("notification", &asking), Some(("notification", Some("x".to_string()))));
+    }
+
+    #[test]
+    fn stops_with_a_question_mean_waiting() {
+        let asks = json!({"session_id": "x", "last_assistant_message": "Done.\n\n**Question:** should I commit?**\n"});
+        assert_eq!(normalize("stop", &asks), Some(("notification", Some("x".to_string()))));
+        let mid = json!({"last_assistant_message": "Danke!\n\nWoran arbeiten wir heute? Das Worktree ist sauber."});
+        assert_eq!(normalize("stop", &mid), Some(("notification", None)));
+        let url = json!({"last_assistant_message": "See https://x.io/pro?from=start for details."});
+        assert_eq!(normalize("stop", &url), Some(("stop", None)));
+        let earlier = json!({"last_assistant_message": "Should I?\n\nI did, done."});
+        assert_eq!(normalize("stop", &earlier), Some(("notification", None)));
+        assert_eq!(normalize("stop", &Value::Null), Some(("stop", None)));
     }
 
     #[test]
