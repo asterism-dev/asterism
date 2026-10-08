@@ -1,0 +1,11 @@
+name = "agents"
+version = "0.1.0"
+protocol = 1
+description = "Tree of a task's agent sessions and their subagents"
+permissions = ["ui:sessions"]
+
+[[provides.panel]]
+id = "agents"
+title = "Agents"
+entry = "ui/agents.html"
+slot = "task"

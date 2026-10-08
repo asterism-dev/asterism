@@ -97,7 +97,7 @@ async fn broken_links_file_does_not_stop_the_daemon() {
         .iter()
         .map(|p| p.name.clone())
         .collect();
-    assert_eq!(names, ["claude", "github", "linear"]);
+    assert_eq!(names, ["agents", "claude", "github", "linear"]);
     assert_eq!(
         daemon
             .plugin_call("nope", "x", json!({}), None)

@@ -1017,3 +1017,32 @@ async fn serves_plugin_ui_files_and_flags_missing_entries() {
         .unwrap();
     assert!(matches!(info.state, PluginState::Broken { reason } if reason.contains("cannot read")));
 }
+
+#[tokio::test]
+async fn the_agents_panel_is_built_in_and_served() {
+    let env = setup();
+    let info = env
+        .daemon
+        .plugin_list()
+        .unwrap()
+        .into_iter()
+        .find(|p| p.name == "agents")
+        .unwrap();
+    assert_eq!(info.state, PluginState::Ok);
+    assert_eq!(info.panels[0].entry, "ui/agents.html");
+    let file = env
+        .daemon
+        .plugin_ui_file(PluginUiFileParams {
+            plugin: "agents".into(),
+            path: "ui/tree.mjs".into(),
+        })
+        .unwrap();
+    assert_eq!(file.mime, "text/javascript; charset=utf-8");
+    assert!(env
+        .daemon
+        .plugin_ui_file(PluginUiFileParams {
+            plugin: "agents".into(),
+            path: "plugin.toml".into()
+        })
+        .is_err());
+}

@@ -26,6 +26,7 @@ open:
 
 test:
 	cargo test
+	node --test crates/asterism/plugins/agents/ui/tree.test.mjs
 	cd $(DESKTOP) && npm test
 
 lint:

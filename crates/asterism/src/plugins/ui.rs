@@ -5,7 +5,28 @@ use asterism_proto::types::PluginOrigin;
 use super::registry::Plugin;
 
 /// UI files of the built-in plugins, compiled in like their manifests: (plugin, path, contents).
-pub const BUILTIN_UI: &[(&str, &str, &str)] = &[];
+pub const BUILTIN_UI: &[(&str, &str, &str)] = &[
+    (
+        "agents",
+        "ui/agents.html",
+        include_str!("../../plugins/agents/ui/agents.html"),
+    ),
+    (
+        "agents",
+        "ui/agents.css",
+        include_str!("../../plugins/agents/ui/agents.css"),
+    ),
+    (
+        "agents",
+        "ui/agents.mjs",
+        include_str!("../../plugins/agents/ui/agents.mjs"),
+    ),
+    (
+        "agents",
+        "ui/tree.mjs",
+        include_str!("../../plugins/agents/ui/tree.mjs"),
+    ),
+];
 
 pub fn is_safe_path(path: &str) -> bool {
     !path.is_empty()
