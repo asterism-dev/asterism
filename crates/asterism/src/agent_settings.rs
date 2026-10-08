@@ -64,6 +64,7 @@ pub fn load(paths: &Paths, registry: &Registry, agent: &str) -> Result<AgentConf
         },
         mcp: read_json(&paths.agent_mcp(agent))?,
         hooks: read_json(&paths.agent_hooks(agent))?,
+        hibernate_after_min: entry.hibernate_after_min,
     })
 }
 
@@ -81,13 +82,17 @@ pub fn load_raw(paths: &Paths, registry: &Registry, agent: &str) -> Result<Agent
         },
         mcp_text: read_text(&paths.agent_mcp(agent))?,
         hooks_text: read_text(&paths.agent_hooks(agent))?,
+        hibernate_after_min: entry.hibernate_after_min,
     })
 }
 
 pub fn validate(registry: &Registry, agent: &str, config: &AgentConfig) -> Result<()> {
     check_agent(registry, agent)?;
     if BASE_AGENTS.contains(&agent)
-        && (!config.args.is_empty() || config.mcp.is_some() || config.hooks.is_some())
+        && (!config.args.is_empty()
+            || config.mcp.is_some()
+            || config.hooks.is_some()
+            || config.hibernate_after_min.is_some())
     {
         return Err(invalid(format!(
             "{agent} sessions only support environment settings"
@@ -109,6 +114,11 @@ pub fn validate(registry: &Registry, agent: &str, config: &AgentConfig) -> Resul
             ),
             (config.mcp.is_some(), AgentSettingKind::Mcp, "MCP servers"),
             (config.hooks.is_some(), AgentSettingKind::Hooks, "hooks"),
+            (
+                config.hibernate_after_min.is_some(),
+                AgentSettingKind::Hibernate,
+                "hibernation",
+            ),
         ] {
             if used && !decl.settings.contains(&kind) {
                 return Err(invalid(format!("{agent} does not support {what}")));
@@ -194,6 +204,7 @@ pub fn save(paths: &Paths, registry: &Registry, agent: &str, config: &AgentConfi
         remove: config.env.remove.clone(),
         set: config.env.set.clone(),
     };
+    entry.hibernate_after_min = config.hibernate_after_min;
     // ponytail: rewriting config.toml drops hand-written comments; switch to toml_edit if people hand-edit it.
     let text =
         toml::to_string(&file).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
@@ -296,6 +307,7 @@ mod tests {
             hooks: Some(
                 json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "say done"}]}]}}),
             ),
+            hibernate_after_min: Some(10),
         }
     }
 

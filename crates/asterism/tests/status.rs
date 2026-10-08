@@ -40,6 +40,7 @@ fn start_in(
         Arc::from(patterns),
         Arc::new(tx),
         Arc::new(AtomicBool::new(hooks)),
+        Arc::new(std::sync::Mutex::new(tokio::time::Instant::now())),
     ));
     rx
 }

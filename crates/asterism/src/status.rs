@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use asterism_proto::types::{HookEvent, SessionStatus};
@@ -33,6 +33,7 @@ pub async fn track(
     waiting_patterns: Arc<[String]>,
     status: Arc<watch::Sender<SessionStatus>>,
     hooks_active: Arc<AtomicBool>,
+    last_output: Arc<Mutex<Instant>>,
 ) {
     let set = |next: SessionStatus| {
         status.send_if_modified(|current| {
@@ -50,6 +51,7 @@ pub async fn track(
                 if matches!(received, Err(RecvError::Closed)) {
                     break;
                 }
+                *crate::lock(&last_output) = Instant::now();
                 if !hooks_active.load(Ordering::Relaxed) {
                     set(SessionStatus::Working);
                 }

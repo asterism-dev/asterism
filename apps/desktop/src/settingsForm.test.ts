@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { agentSections, commandPreview, emptyForm, fromForm, toForm } from './settingsForm';
 import type { AgentConfig } from './types';
 
-const ALL = { args: true, mcp: true, hooks: true };
-const NONE = { args: false, mcp: false, hooks: false };
+const ALL = { args: true, mcp: true, hooks: true, hibernate: true };
+const NONE = { args: false, mcp: false, hooks: false, hibernate: false };
 
 const config: AgentConfig = {
   args: ['--model', 'opus'],
   env: { remove: ['AWS_*'], set: { FOO: 'bar' } },
   mcp: { mcpServers: { fs: { command: 'npx' } } },
   hooks: null,
+  hibernate_after_min: null,
 };
 
 describe('settings form', () => {
@@ -28,7 +29,13 @@ describe('settings form', () => {
       set: [{ key: '', value: 'x' }],
     };
     expect(fromForm(form, ALL)).toEqual({
-      config: { args: ['--verbose'], env: { remove: ['X_*'], set: {} }, mcp: null, hooks: null },
+      config: {
+        args: ['--verbose'],
+        env: { remove: ['X_*'], set: {} },
+        mcp: null,
+        hooks: null,
+        hibernate_after_min: null,
+      },
     });
     const dup = {
       ...emptyForm(),
@@ -72,15 +79,16 @@ describe('settings form', () => {
       name: 'claude',
       available: true,
       display_name: 'Claude Code',
-      settings: ['args', 'mcp', 'hooks'],
+      settings: ['args', 'mcp', 'hooks', 'hibernate'],
       plugin: 'claude',
     } as const;
     expect(agentSections({ ...claude, settings: [...claude.settings] })).toEqual({
       args: true,
       mcp: true,
       hooks: true,
+      hibernate: true,
     });
-    expect(agentSections(undefined)).toEqual({ args: false, mcp: false, hooks: false });
+    expect(agentSections(undefined)).toEqual(NONE);
   });
 
   it('ignores options an agent does not support', () => {
@@ -93,5 +101,31 @@ describe('settings form', () => {
   it('previews the command line with quoting', () => {
     const form = { ...emptyForm(), args: ['--model', 'opus 4'], mcpText: '{"mcpServers":{}}' };
     expect(commandPreview('claude', form)).toBe("claude … --model 'opus 4'");
+  });
+});
+
+describe('hibernate setting', () => {
+  const sections = { ...NONE, hibernate: true };
+  const base: AgentConfig = { args: [], env: { remove: [], set: {} }, mcp: null, hooks: null };
+
+  it('round-trips minutes and keeps empty as default', () => {
+    const form = toForm({ ...base, hibernate_after_min: 5 });
+    expect(form.hibernateAfter).toBe('5');
+    expect(fromForm({ ...form, hibernateAfter: '' }, sections)).toMatchObject({
+      config: { hibernate_after_min: null },
+    });
+    expect(fromForm({ ...form, hibernateAfter: '0' }, sections)).toMatchObject({
+      config: { hibernate_after_min: 0 },
+    });
+  });
+
+  it('rejects non-integers', () => {
+    const form = { ...emptyForm(), hibernateAfter: '1.5' };
+    expect(fromForm(form, sections)).toMatchObject({ errors: { hibernate: expect.any(String) } });
+  });
+
+  it('drops the value for agents without the setting', () => {
+    const form = { ...emptyForm(), hibernateAfter: '5' };
+    expect(fromForm(form, NONE)).toMatchObject({ config: { hibernate_after_min: null } });
   });
 });

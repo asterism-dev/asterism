@@ -10,11 +10,13 @@ export interface AgentForm {
   remove: string[];
   mcpText: string;
   hooksText: string;
+  hibernateAfter: string;
 }
 export interface FormErrors {
   env?: string;
   mcp?: string;
   hooks?: string;
+  hibernate?: string;
   save?: string;
 }
 
@@ -30,6 +32,7 @@ export interface AgentSections {
   args: boolean;
   mcp: boolean;
   hooks: boolean;
+  hibernate: boolean;
 }
 
 export function agentSections(info: AgentInfo | undefined): AgentSections {
@@ -38,11 +41,12 @@ export function agentSections(info: AgentInfo | undefined): AgentSections {
     args: supported.includes('args'),
     mcp: supported.includes('mcp'),
     hooks: supported.includes('hooks'),
+    hibernate: supported.includes('hibernate'),
   };
 }
 
 export function emptyForm(): AgentForm {
-  return { args: [], set: [], remove: [], mcpText: '', hooksText: '' };
+  return { args: [], set: [], remove: [], mcpText: '', hooksText: '', hibernateAfter: '' };
 }
 
 function pretty(value: Record<string, unknown> | null): string {
@@ -56,6 +60,7 @@ export function toForm(config: AgentConfig): AgentForm {
     remove: [...config.env.remove],
     mcpText: pretty(config.mcp),
     hooksText: pretty(config.hooks),
+    hibernateAfter: config.hibernate_after_min == null ? '' : String(config.hibernate_after_min),
   };
 }
 
@@ -88,6 +93,12 @@ export function fromForm(
   }
   const mcp: Parsed = sections.mcp ? parseObject(form.mcpText, 'MCP servers') : { value: null };
   const hooks: Parsed = sections.hooks ? parseObject(form.hooksText, 'Hooks') : { value: null };
+  const minutes = form.hibernateAfter.trim();
+  let hibernate: number | null = null;
+  if (sections.hibernate && minutes !== '') {
+    if (/^\d+$/.test(minutes)) hibernate = Number(minutes);
+    else errors.hibernate = 'Minutes must be a whole number';
+  }
   if ('error' in mcp) errors.mcp = mcp.error;
   if ('error' in hooks) errors.hooks = hooks.error;
   if ('error' in mcp || 'error' in hooks || Object.keys(errors).length) return { errors };
@@ -97,6 +108,7 @@ export function fromForm(
       env: { remove: form.remove.map((r) => r.trim()).filter(Boolean), set },
       mcp: mcp.value,
       hooks: hooks.value,
+      hibernate_after_min: hibernate,
     },
   };
 }

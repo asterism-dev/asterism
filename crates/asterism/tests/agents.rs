@@ -72,12 +72,16 @@ async fn agents_are_listed_from_plugins() {
         [
             AgentSettingKind::Args,
             AgentSettingKind::Mcp,
-            AgentSettingKind::Hooks
+            AgentSettingKind::Hooks,
+            AgentSettingKind::Hibernate
         ]
     );
     let echo = agents.iter().find(|a| a.name == "echo-agent").unwrap();
     assert!(echo.available, "sh is on PATH");
-    assert_eq!(echo.settings, [AgentSettingKind::Args]);
+    assert_eq!(
+        echo.settings,
+        [AgentSettingKind::Args, AgentSettingKind::Hibernate]
+    );
 }
 
 #[tokio::test]
@@ -185,4 +189,24 @@ async fn sessions_of_a_removed_agent_plugin_are_marked_exited_on_recover() {
         })
         .is_ok());
     first.kill_session(session.id).unwrap();
+}
+
+#[tokio::test]
+async fn hibernate_setting_is_stored_and_only_allowed_where_declared() {
+    let home = tempfile::tempdir().unwrap();
+    let daemon = daemon(home.path());
+    let config = AgentConfig {
+        hibernate_after_min: Some(5),
+        ..Default::default()
+    };
+    daemon.set_agent_config("echo-agent", &config).unwrap();
+    assert_eq!(
+        daemon
+            .agent_config("echo-agent")
+            .unwrap()
+            .hibernate_after_min,
+        Some(5)
+    );
+    let err = daemon.set_agent_config("shell", &config).unwrap_err();
+    assert_eq!(err.kind, asterism_proto::rpc::ErrorKind::InvalidParams);
 }

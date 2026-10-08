@@ -83,7 +83,13 @@ export function initialState(): State {
 export const state = reactive<State>(initialState());
 
 const TOAST_MS = 6000;
-const RANK: Record<SessionStatus, number> = { exited: 0, idle: 1, working: 2, waiting_input: 3 };
+const RANK: Record<SessionStatus, number> = {
+  exited: 0,
+  hibernated: 1,
+  idle: 2,
+  working: 3,
+  waiting_input: 4,
+};
 
 export function isConnected(node: NodeStatus): boolean {
   return node.state === 'connected' || node.state === 'update_available';

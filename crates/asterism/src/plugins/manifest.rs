@@ -257,6 +257,15 @@ fn validate(m: &Manifest) -> Result<(), String> {
                 agent.id
             ));
         }
+        if agent.settings.contains(&AgentSettingKind::Hibernate)
+            && agent.launch == LaunchKind::Static
+            && agent.resume.is_empty()
+        {
+            return Err(format!(
+                "agent {}: hibernate needs a resume template",
+                agent.id
+            ));
+        }
     }
     for command in &p.command {
         if !is_slug(&command.name) || BUILTIN_COMMANDS.contains(&command.name.as_str()) {
@@ -374,6 +383,10 @@ required = true
         assert!(parse(&with(static_agent))
             .unwrap_err()
             .contains("start template"));
+        let no_resume = "[[provides.agent]]\nid = \"aider\"\nbinary = \"aider\"\nlaunch = \"static\"\nstart = [\"{binary}\"]\nsettings = [\"hibernate\"]\n";
+        assert!(parse(&with(no_resume))
+            .unwrap_err()
+            .contains("resume template"));
         let shell = "[[provides.agent]]\nid = \"shell\"\nbinary = \"sh\"\nlaunch = \"backend\"\n";
         assert!(parse(&with(shell)).is_err());
         assert!(parse(&with("[[provides.command]]\nname = \"task\"\n"))

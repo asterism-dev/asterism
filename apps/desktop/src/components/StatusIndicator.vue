@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Moon } from '@lucide/vue';
 import type { SessionStatus } from '../types';
 
 // The sidebar shows only states that need attention; tabs pass showAll to mark every state.
@@ -9,6 +10,7 @@ const LABELS: Record<SessionStatus, string> = {
   working: 'Working',
   idle: 'Idle',
   exited: 'Exited',
+  hibernated: 'Hibernated',
 };
 </script>
 
@@ -30,6 +32,13 @@ const LABELS: Record<SessionStatus, string> = {
     <circle class="star" cx="18.5" cy="17" r="2.5" />
     <circle class="star" cx="5.5" cy="17" r="2.5" />
   </svg>
+  <Moon
+    v-else-if="status === 'hibernated'"
+    class="moon"
+    :size="12"
+    role="img"
+    :aria-label="LABELS.hibernated"
+  />
   <span
     v-else-if="status === 'waiting_input' || (status && showAll)"
     class="dot"
@@ -41,6 +50,10 @@ const LABELS: Record<SessionStatus, string> = {
 </template>
 
 <style scoped>
+.moon {
+  flex: none;
+  color: var(--muted);
+}
 .stars {
   width: 14px;
   height: 14px;

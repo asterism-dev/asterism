@@ -93,6 +93,7 @@ pub enum AgentSettingKind {
     Args,
     Mcp,
     Hooks,
+    Hibernate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -869,6 +870,7 @@ pub enum SessionStatus {
     Idle,
     WaitingInput,
     Exited,
+    Hibernated,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -987,6 +989,9 @@ pub struct AgentConfig {
     pub mcp: Option<Value>,
     #[serde(default)]
     pub hooks: Option<Value>,
+    /// Minutes without output before an idle, unattached session hibernates; `None` is the default, 0 disables.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hibernate_after_min: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -997,6 +1002,8 @@ pub struct AgentConfigRaw {
     pub env: EnvSettings,
     pub mcp_text: Option<String>,
     pub hooks_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hibernate_after_min: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

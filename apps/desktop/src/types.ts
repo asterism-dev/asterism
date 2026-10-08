@@ -1,4 +1,4 @@
-export type SessionStatus = 'working' | 'idle' | 'waiting_input' | 'exited';
+export type SessionStatus = 'working' | 'idle' | 'waiting_input' | 'exited' | 'hibernated';
 export type SessionKind =
   { type: 'agent'; name: string } | { type: 'shell' } | { type: 'command'; argv: string[] };
 
@@ -11,12 +11,14 @@ export interface AgentConfig {
   env: EnvSettings;
   mcp: Record<string, unknown> | null;
   hooks: Record<string, unknown> | null;
+  hibernate_after_min?: number | null;
 }
 export interface AgentConfigRaw {
   args: string[];
   env: EnvSettings;
   mcp_text: string | null;
   hooks_text: string | null;
+  hibernate_after_min?: number | null;
 }
 
 export interface Project {
@@ -273,7 +275,7 @@ export interface ProjectCreateResult {
   remote_error: string | null;
 }
 
-export type AgentSettingKind = 'args' | 'mcp' | 'hooks';
+export type AgentSettingKind = 'args' | 'mcp' | 'hooks' | 'hibernate';
 export interface AgentInfo {
   name: string;
   available: boolean;
