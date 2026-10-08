@@ -1030,6 +1030,19 @@ async fn the_agents_panel_is_built_in_and_served() {
         .unwrap();
     assert_eq!(info.state, PluginState::Ok);
     assert_eq!(info.panels[0].entry, "ui/agents.html");
+    // Every file the panel references must be embedded.
+    for path in [
+        "ui/agents.html",
+        "ui/agents.css",
+        "ui/agents.mjs",
+        "ui/tree.mjs",
+    ] {
+        let served = env.daemon.plugin_ui_file(PluginUiFileParams {
+            plugin: "agents".into(),
+            path: path.into(),
+        });
+        assert!(served.is_ok(), "{path} is not served");
+    }
     let file = env
         .daemon
         .plugin_ui_file(PluginUiFileParams {
