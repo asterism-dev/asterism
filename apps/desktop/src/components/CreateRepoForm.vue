@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
 import { repoNameError, targetPath, visibilityChoices } from '../projects';
 import { state, toast } from '../store';
+import Kbd from './Kbd.vue';
 import type { ForgeInfo, ForgeStatus, Visibility } from '../types';
 
 const emit = defineEmits<{ close: []; busy: [boolean] }>();
@@ -155,7 +156,7 @@ watch(busy, (b) => emit('busy', b));
     <div class="actions">
       <button type="button" :disabled="busy" @click="emit('close')">Cancel</button>
       <button type="submit" :disabled="busy || !!nameError">
-        {{ busy ? 'Creating…' : 'Create' }}
+        {{ busy ? 'Creating…' : 'Create' }}<Kbd v-if="!busy" action="confirm" />
       </button>
     </div>
   </form>

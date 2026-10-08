@@ -4,6 +4,7 @@ import { X } from '@lucide/vue';
 import { api, errorMessage } from '../api';
 import { baseChoice } from '../baseBranch';
 import { leaveSettings } from '../settingsGuard';
+import { matchAction } from '../shortcuts';
 import { addSession, addTask, state, toast } from '../store';
 import {
   createRequest,
@@ -16,6 +17,7 @@ import {
 import { issueToCreate } from '../taskSources';
 import type { IssueDetails, PrHit, ProjectBranches, TaskIssue, TaskSourceInfo } from '../types';
 import BasedOnPicker from './BasedOnPicker.vue';
+import Kbd from './Kbd.vue';
 import WorkspaceSettings from './WorkspaceSettings.vue';
 
 const props = defineProps<{ projectId: number }>();
@@ -164,7 +166,7 @@ function onEsc() {
 
 // On window, not the form: WebKit doesn't focus clicked buttons, so focus often sits on body.
 function onKey(e: KeyboardEvent) {
-  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+  if (matchAction(e) === 'confirm') {
     e.preventDefault();
     submit();
   } else if (e.key === 'Escape') {
@@ -322,7 +324,7 @@ async function submit() {
       <p v-if="error" class="error">{{ error }}</p>
       <footer class="actions">
         <button type="submit" class="primary" :disabled="busy || loadingBranches || !canCreate">
-          Create <kbd>⌘</kbd><kbd>↵</kbd>
+          Create <Kbd action="confirm" />
         </button>
       </footer>
     </form>
@@ -401,12 +403,5 @@ header h2 {
 }
 .primary:disabled {
   opacity: 0.6;
-}
-kbd {
-  font: inherit;
-  font-size: 11px;
-  padding: 0 4px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.2);
 }
 </style>

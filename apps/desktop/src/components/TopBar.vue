@@ -23,6 +23,7 @@ import {
   togglePane,
 } from '../dock/main';
 import { sidebar } from '../dock/sidebar';
+import { withHint } from '../shortcuts';
 import { state, toast } from '../store';
 
 const task = computed(() => state.tasks.find((t) => t.id === state.selectedTaskId) ?? null);
@@ -57,7 +58,7 @@ function copyBranch() {
     <button
       class="icon"
       :aria-pressed="sidebar.open"
-      :title="sidebar.open ? 'Hide projects' : 'Show projects'"
+      :title="withHint(sidebar.open ? 'Hide projects' : 'Show projects', 'toggleSidebar')"
       @click="sidebar.open = !sidebar.open"
     >
       <PanelLeftClose v-if="sidebar.open" /><PanelLeftOpen v-else />
@@ -82,6 +83,7 @@ function copyBranch() {
       <button
         :disabled="!mainApi"
         :class="{ active: paneState('diff') === 'front' }"
+        :title="withHint('Toggle diff', 'toggleDiff')"
         @click="togglePane('diff')"
       >
         <GitCompare />Diff
@@ -116,7 +118,12 @@ function copyBranch() {
         <RotateCcw />
       </button>
     </template>
-    <button class="icon" title="Settings" aria-label="Settings" @click="state.settingsOpen = true">
+    <button
+      class="icon"
+      :title="withHint('Settings', 'settings')"
+      aria-label="Settings"
+      @click="state.settingsOpen = true"
+    >
       <Settings />
     </button>
   </header>
