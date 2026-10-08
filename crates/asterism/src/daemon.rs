@@ -40,6 +40,7 @@ const DEFAULT_COLS: u16 = 120;
 const REMOVE_GRACE: Duration = Duration::from_secs(2);
 // ponytail: fixed pause so TUIs treat Enter as a submit, not part of the paste; make it per-profile if an agent needs more.
 const SUBMIT_DELAY: Duration = Duration::from_millis(100);
+const WAKE_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const SLUG_MAX: usize = 40;
 const ISSUE_NAME_MAX: usize = 80;
 const PROMPT_DESCRIPTION_MAX: usize = 32 * 1024;
@@ -154,6 +155,7 @@ pub struct Daemon {
     builtin_dir: PathBuf,
     store_status: Mutex<BTreeMap<String, StoreStatus>>,
     pr_status: Mutex<PrStatus>,
+    waking: tokio::sync::Mutex<()>,
 }
 
 impl Daemon {
@@ -193,6 +195,7 @@ impl Daemon {
                 builtin_dir,
                 store_status: Mutex::new(BTreeMap::new()),
                 pr_status: Mutex::new(PrStatus::default()),
+                waking: tokio::sync::Mutex::new(()),
             }
         }))
     }
@@ -2373,8 +2376,24 @@ impl Daemon {
         Ok(self.live(id)?.pty.kill()?)
     }
 
-    pub async fn send(&self, params: SessionSendParams) -> Result<()> {
-        let live = self.live(params.session_id)?;
+    pub async fn send(self: &Arc<Self>, params: SessionSendParams) -> Result<()> {
+        let woke = self.live(params.session_id).is_err();
+        let live = self.live_or_wake(params.session_id).await?;
+        if woke {
+            let mut status = live.status.subscribe();
+            let ready = tokio::time::timeout(
+                WAKE_READY_TIMEOUT,
+                status.wait_for(|s| matches!(s, SessionStatus::Idle | SessionStatus::Exited)),
+            )
+            .await
+            .is_ok_and(|s| s.is_ok_and(|s| *s == SessionStatus::Idle));
+            if !ready {
+                return Err(Error::new(
+                    ErrorKind::Timeout,
+                    "session did not become ready after wake",
+                ));
+            }
+        }
         write_blocking(&live.pty, params.text.into_bytes()).await?;
         if params.submit {
             tokio::time::sleep(SUBMIT_DELAY).await;
@@ -2415,8 +2434,11 @@ impl Daemon {
         })
     }
 
-    pub fn attach(&self, session_id: i64) -> Result<(Snapshot, broadcast::Receiver<Vec<u8>>)> {
-        Ok(self.live(session_id)?.pty.attach())
+    pub async fn attach(
+        self: &Arc<Self>,
+        session_id: i64,
+    ) -> Result<(Snapshot, broadcast::Receiver<Vec<u8>>)> {
+        Ok(self.live_or_wake(session_id).await?.pty.attach())
     }
 
     pub async fn wait(&self, params: SessionWaitParams) -> Result<SessionStatus> {
@@ -2514,6 +2536,85 @@ impl Daemon {
         }
     }
 
+    async fn resume_argv(
+        &self,
+        kind: &SessionKind,
+        agent_ref: Option<&str>,
+        task: &Task,
+    ) -> Result<Option<(Vec<String>, Vec<(String, String)>)>> {
+        match kind {
+            SessionKind::Agent { name } => {
+                self.agent_argv(
+                    name,
+                    LaunchMode::Resume,
+                    None,
+                    agent_ref,
+                    Path::new(&task.worktree_path),
+                )
+                .await
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Restarts a hibernated session; anything else that is not live stays an error.
+    async fn wake(self: &Arc<Self>, id: i64) -> Result<Arc<LiveSession>> {
+        // ponytail: one lock for all wakes; per-session locks if many sessions wake at once.
+        let _guard = self.waking.lock().await;
+        if let Ok(live) = self.live(id) {
+            return Ok(live);
+        }
+        let stored = self
+            .store()
+            .session(id)?
+            .ok_or_else(|| not_found("session", id))?;
+        let session = stored.session;
+        if session.status != SessionStatus::Hibernated {
+            return self.live(id);
+        }
+        let task = self.task(session.task_id)?;
+        let resumed = if task.archived {
+            Err(Error::new(
+                ErrorKind::InvalidParams,
+                format!("task {} is archived", task.id),
+            ))
+        } else {
+            match self
+                .resume_argv(&session.kind, stored.agent_ref.as_deref(), &task)
+                .await
+            {
+                Ok(Some((argv, env))) => self.spawn_live(id, &task, argv, env, &session.kind),
+                Ok(None) => Err(Error::new(
+                    ErrorKind::PluginError,
+                    format!("session {id} cannot be resumed"),
+                )),
+                Err(e) => Err(e),
+            }
+        };
+        let status = if resumed.is_ok() {
+            SessionStatus::Working
+        } else {
+            SessionStatus::Exited
+        };
+        self.store().set_session_status(id, status)?;
+        self.emit(Event::SessionStatusChanged {
+            session_id: id,
+            status,
+        });
+        if let Err(e) = &resumed {
+            eprintln!("asterismd: could not wake session {id}: {e}");
+        }
+        resumed?;
+        self.live(id)
+    }
+
+    async fn live_or_wake(self: &Arc<Self>, id: i64) -> Result<Arc<LiveSession>> {
+        match self.live(id) {
+            Ok(live) => Ok(live),
+            Err(_) => self.wake(id).await,
+        }
+    }
+
     pub async fn recover(self: &Arc<Self>) -> Result<()> {
         let stored = self.store().sessions(None)?;
         for crate::store::StoredSession { session, agent_ref } in stored {
@@ -2525,19 +2626,9 @@ impl Daemon {
             }
             let resumed = match self.task(session.task_id) {
                 Ok(task) if !task.archived => {
-                    let resume = match &session.kind {
-                        SessionKind::Agent { name } => {
-                            self.agent_argv(
-                                name,
-                                LaunchMode::Resume,
-                                None,
-                                agent_ref.as_deref(),
-                                Path::new(&task.worktree_path),
-                            )
-                            .await
-                        }
-                        _ => Ok(None),
-                    };
+                    let resume = self
+                        .resume_argv(&session.kind, agent_ref.as_deref(), &task)
+                        .await;
                     match resume {
                         Ok(Some((argv, env))) => {
                             let spawned =

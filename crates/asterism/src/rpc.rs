@@ -126,16 +126,18 @@ async fn handle_line(daemon: Arc<Daemon>, conn: Arc<Conn>, line: String) {
 }
 
 /// The snapshot response is queued before the forwarder starts, so output never overtakes it.
-async fn attach(daemon: &Daemon, conn: &Conn, id: u64, raw: Value) {
-    let result = params::<SessionIdParams>(raw).and_then(|p| {
-        let (snapshot, rx) = daemon.attach(p.session_id)?;
+async fn attach(daemon: &Arc<Daemon>, conn: &Conn, id: u64, raw: Value) {
+    let result = async {
+        let p = params::<SessionIdParams>(raw)?;
+        let (snapshot, rx) = daemon.attach(p.session_id).await?;
         let result = SessionAttachResult {
             snapshot: BASE64.encode(&snapshot.screen),
             rows: snapshot.rows,
             cols: snapshot.cols,
         };
-        Ok((p.session_id, to_value(result)?, rx))
-    });
+        Ok::<_, Error>((p.session_id, to_value(result)?, rx))
+    }
+    .await;
     match result {
         Ok((session_id, value, rx)) => {
             conn.send(&Response::ok(id, value)).await;

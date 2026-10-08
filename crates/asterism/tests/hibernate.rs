@@ -121,12 +121,67 @@ async fn idle_unattached_session_hibernates_and_stays_asleep_across_restart() {
 #[tokio::test]
 async fn attached_session_is_not_hibernated() {
     let f = idle_session().await;
-    let _attached = f.daemon.attach(f.session).unwrap();
+    let _attached = f.daemon.attach(f.session).await.unwrap();
     tokio::time::sleep(Duration::from_millis(20)).await;
     f.daemon.hibernate_idle().unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(
         f.daemon.session(f.session).unwrap().status,
         SessionStatus::Idle
+    );
+}
+
+async fn hibernated() -> Fixture {
+    let f = idle_session().await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    f.daemon.hibernate_idle().unwrap();
+    wait_status(&f.daemon, f.session, SessionStatus::Hibernated).await;
+    f
+}
+
+#[tokio::test]
+async fn attach_wakes_with_the_agent_ref() {
+    let f = hibernated().await;
+    f.daemon.attach(f.session).await.unwrap();
+    assert!(eventually(|| screen(&f.daemon, f.session).contains("resumed r1")).await);
+    assert_ne!(
+        f.daemon.session(f.session).unwrap().status,
+        SessionStatus::Hibernated
+    );
+    assert_eq!(running(&f.daemon), 1);
+}
+
+#[tokio::test]
+async fn send_wakes_and_delivers() {
+    let f = hibernated().await;
+    f.daemon
+        .send(SessionSendParams {
+            session_id: f.session,
+            text: "ping".into(),
+            submit: false,
+        })
+        .await
+        .unwrap();
+    assert!(eventually(|| screen(&f.daemon, f.session).contains("ping")).await);
+}
+
+#[tokio::test]
+async fn concurrent_wakes_spawn_one_process() {
+    let f = hibernated().await;
+    let (a, b) = tokio::join!(f.daemon.attach(f.session), f.daemon.attach(f.session));
+    a.unwrap();
+    b.unwrap();
+    assert_eq!(running(&f.daemon), 1);
+}
+
+#[tokio::test]
+async fn archived_task_does_not_wake() {
+    let f = hibernated().await;
+    let task = f.daemon.session(f.session).unwrap().task_id;
+    f.daemon.archive_task(task).unwrap();
+    assert!(f.daemon.attach(f.session).await.is_err());
+    assert_eq!(
+        f.daemon.session(f.session).unwrap().status,
+        SessionStatus::Exited
     );
 }
