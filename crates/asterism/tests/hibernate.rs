@@ -67,6 +67,7 @@ async fn idle_session() -> Fixture {
             session_id: session,
             event: HookEvent::Stop,
             agent_ref: Some("r1".into()),
+            subagent: None,
         })
         .unwrap();
     wait_status(&daemon, session, SessionStatus::Idle).await;
