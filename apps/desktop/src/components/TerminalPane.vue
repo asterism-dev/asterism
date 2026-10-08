@@ -10,7 +10,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { api, decodeBase64, errorMessage, RpcError } from '../api';
 import { openFile } from '../dock/main';
 import { findFileLinks } from '../fileLinks';
-import { appShortcut } from '../shortcuts';
+import { matchAction } from '../shortcuts';
 import { isConnected, refresh, state, toast } from '../store';
 
 const props = defineProps<{ sessionId: number; taskId: number; live: boolean }>();
@@ -121,7 +121,7 @@ onMounted(() => {
     },
   });
   // Linux app shortcuts are Ctrl+Shift chords xterm would otherwise consume.
-  term.attachCustomKeyEventHandler((e) => appShortcut(e) === null);
+  term.attachCustomKeyEventHandler((e) => matchAction(e, { inTerminal: true }) === null);
   try {
     const webgl = new WebglAddon();
     webgl.onContextLoss(() => webgl.dispose());

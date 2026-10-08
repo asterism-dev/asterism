@@ -31,7 +31,7 @@ import {
   state,
   toast,
 } from './store';
-import { appShortcut } from './shortcuts';
+import { matchAction, type GlobalActionId } from './shortcuts';
 import { leaveSettings } from './settingsGuard';
 import { startUpdater } from './updater';
 import type { NodeEvent, NodeStatus, Session } from './types';
@@ -68,28 +68,35 @@ function onStatus(status: NodeStatus) {
   }
 }
 
-function onKey(e: KeyboardEvent) {
-  const key = appShortcut(e);
-  if (key === 'n') {
-    e.preventDefault();
+const actions: Record<GlobalActionId, () => void> = {
+  newTask: () => {
     const projectId = selectedTask.value?.project_id ?? state.projects[0]?.id;
     if (projectId !== undefined) state.newTaskFor = projectId;
-  } else if (key === 'f') {
-    e.preventDefault();
+  },
+  newProject: () => (state.projectDialog = 'folder'),
+  settings: () => (state.settingsOpen = true),
+  search: () => {
     sidebar.open = true;
     void nextTick(() => document.getElementById('sidebar-search')?.focus());
-  } else if (key === 'left' || key === 'right') {
-    e.preventDefault();
-    if (key === 'left') sidebar.open = !sidebar.open;
-    else togglePane('diff');
-  } else if (key === 'j') {
-    e.preventDefault();
+  },
+  nextWaiting: () => {
     const session = nextWaiting(state);
     if (session)
       leaveSettings()
         .then((left) => left && selectSession(state, session))
         .catch(() => {});
-  }
+  },
+  toggleSidebar: () => (sidebar.open = !sidebar.open),
+  toggleDiff: () => togglePane('diff'),
+};
+
+function onKey(e: KeyboardEvent) {
+  // xterm doesn't swallow every chord it ignores, so the terminal rule is applied here too.
+  const inTerminal = e.target instanceof Element && e.target.closest('.xterm') !== null;
+  const action = matchAction(e, { inTerminal });
+  if (!action || action === 'confirm') return;
+  e.preventDefault();
+  actions[action]();
 }
 
 function onQuitRequested() {
