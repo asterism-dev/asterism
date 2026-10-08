@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { open } from '@tauri-apps/plugin-dialog';
-import { onMounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { api, errorMessage } from '../api';
+import { matchAction } from '../shortcuts';
 import { state, type ProjectDialogTab } from '../store';
 import CloneForm from './CloneForm.vue';
 import CreateRepoForm from './CreateRepoForm.vue';
+import Kbd from './Kbd.vue';
 
 const TABS: { id: ProjectDialogTab; label: string }[] = [
   { id: 'folder', label: 'Add folder' },
@@ -15,8 +17,22 @@ const TABS: { id: ProjectDialogTab; label: string }[] = [
 const busy = ref(false);
 const error = ref<string | null>(null);
 const chooseButton = ref<HTMLButtonElement>();
+const dialog = ref<HTMLElement>();
 
-onMounted(() => chooseButton.value?.focus());
+// On window, like NewTaskDialog: WebKit doesn't focus clicked buttons, so focus often sits on body.
+function onKey(e: KeyboardEvent) {
+  if (matchAction(e) !== 'confirm' || busy.value) return;
+  e.preventDefault();
+  if (state.projectDialog === 'folder') void chooseFolder();
+  // Clicking (not requestSubmit) respects the button's disabled state and works on Safari 15.
+  else dialog.value?.querySelector<HTMLButtonElement>('button[type="submit"]')?.click();
+}
+
+onMounted(() => {
+  chooseButton.value?.focus();
+  window.addEventListener('keydown', onKey);
+});
+onUnmounted(() => window.removeEventListener('keydown', onKey));
 
 function close() {
   if (!busy.value) state.projectDialog = null;
@@ -45,7 +61,7 @@ async function chooseFolder() {
 
 <template>
   <div class="modal-backdrop" tabindex="-1" @click.self="close" @keydown.esc="close">
-    <div class="modal" role="dialog" aria-modal="true" aria-label="Add project">
+    <div ref="dialog" class="modal" role="dialog" aria-modal="true" aria-label="Add project">
       <div class="segmented" role="tablist">
         <button
           v-for="t in TABS"
@@ -72,7 +88,7 @@ async function chooseFolder() {
             :disabled="busy"
             @click="chooseFolder"
           >
-            {{ busy ? 'Adding…' : 'Choose folder…' }}
+            {{ busy ? 'Adding…' : 'Choose folder…' }}<Kbd v-if="!busy" action="confirm" />
           </button>
         </div>
       </div>

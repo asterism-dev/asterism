@@ -36,7 +36,9 @@ import {
 } from '../projects';
 import { leaveSettings } from '../settingsGuard';
 import { startSession } from '../sessionActions';
+import { withHint } from '../shortcuts';
 import { archiveTask, deleteTask } from '../taskActions';
+import Kbd from './Kbd.vue';
 import PrBadge from './PrBadge.vue';
 import StatusIndicator from './StatusIndicator.vue';
 import { DOCS_URL, installUpdate, updateLabel, updater } from '../updater';
@@ -218,22 +220,25 @@ function taskMenu(e: MouseEvent, t: Task) {
         </button>
         <button
           class="add"
-          title="Add project"
+          :title="withHint('Add project', 'newProject')"
           aria-label="Add project"
           @click="state.projectDialog = 'folder'"
         >
           <SquarePlus />
         </button>
       </div>
-      <input
-        id="sidebar-search"
-        v-model="query"
-        class="search"
-        type="search"
-        placeholder="Search projects and tasks"
-        aria-label="Search projects and tasks"
-        @keydown.esc="query = ''"
-      />
+      <div class="search-wrap">
+        <input
+          id="sidebar-search"
+          v-model="query"
+          class="search"
+          type="search"
+          placeholder="Search projects and tasks"
+          aria-label="Search projects and tasks"
+          @keydown.esc="query = ''"
+        />
+        <Kbd v-if="!query" action="search" class="search-kbd" />
+      </div>
       <div
         v-for="{ project: p, tasks } in visible"
         :key="p.id"
@@ -256,7 +261,11 @@ function taskMenu(e: MouseEvent, t: Task) {
             @click="openProject(p)"
             >{{ p.name }}</span
           >
-          <button class="hover-action" title="New task" @click="state.newTaskFor = p.id">
+          <button
+            class="hover-action"
+            :title="withHint('New task', 'newTask')"
+            @click="state.newTaskFor = p.id"
+          >
             <Plus />Task
           </button>
         </div>
@@ -299,7 +308,7 @@ function taskMenu(e: MouseEvent, t: Task) {
       :class="{ active: state.settingsOpen }"
       @click="state.settingsOpen = true"
     >
-      <Settings />Settings<span
+      <Settings />Settings<Kbd action="settings" /><span
         v-if="state.pluginUpdates"
         class="badge update-badge"
         :title="`${state.pluginUpdates} plugin update(s)`"
@@ -429,6 +438,16 @@ function taskMenu(e: MouseEvent, t: Task) {
 }
 .hint {
   padding: 0 8px;
+}
+.search-wrap {
+  position: relative;
+}
+.search-kbd {
+  position: absolute;
+  right: 8px;
+  top: calc(50% + 2px);
+  transform: translateY(-50%);
+  pointer-events: none;
 }
 .search {
   width: 100%;
