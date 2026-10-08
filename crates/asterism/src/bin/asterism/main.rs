@@ -1047,6 +1047,7 @@ async fn hook(event: HookArg, agent_ref: Option<String>) {
         session_id,
         event: event.into(),
         agent_ref,
+        subagent: None,
     };
     let _ = client.call::<_, ()>(method::SESSION_HOOK, params).await;
 }

@@ -311,6 +311,7 @@ impl Daemon {
             store: entry.map(|e| e.store.clone()),
             update_available: self.update_available(set, plugin),
             previous_version: entry.and_then(|e| e.previous.clone()),
+            panels: Vec::new(),
         }
     }
 

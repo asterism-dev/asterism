@@ -22,7 +22,8 @@ pub fn idle_status(screen: &str, waiting_patterns: &[String]) -> SessionStatus {
 pub fn hook_status(event: HookEvent) -> Option<SessionStatus> {
     match event {
         HookEvent::PromptSubmit | HookEvent::Tool => Some(SessionStatus::Working),
-        HookEvent::Stop => None,
+        HookEvent::Stop | HookEvent::SubagentStop => None,
+        HookEvent::SubagentStart => Some(SessionStatus::Working),
         HookEvent::Notification => Some(SessionStatus::WaitingInput),
     }
 }

@@ -205,6 +205,7 @@ async fn hooks_override_the_heuristic() {
             session_id: session.id,
             event: HookEvent::Notification,
             agent_ref: Some("abc".into()),
+            subagent: None,
         })
         .unwrap();
     let err = env
@@ -515,6 +516,7 @@ async fn submit_marks_hooked_sessions_working() {
             session_id: session.id,
             event: HookEvent::Stop,
             agent_ref: None,
+            subagent: None,
         })
         .unwrap();
     env.daemon

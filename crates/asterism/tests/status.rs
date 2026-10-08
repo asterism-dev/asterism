@@ -74,6 +74,11 @@ fn hook_events_map_to_statuses() {
     assert_eq!(hook_status(HookEvent::Tool), Some(SessionStatus::Working));
     assert_eq!(hook_status(HookEvent::Stop), None);
     assert_eq!(
+        hook_status(HookEvent::SubagentStart),
+        Some(SessionStatus::Working)
+    );
+    assert_eq!(hook_status(HookEvent::SubagentStop), None);
+    assert_eq!(
         hook_status(HookEvent::Notification),
         Some(SessionStatus::WaitingInput)
     );

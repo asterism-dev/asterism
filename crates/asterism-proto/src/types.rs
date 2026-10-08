@@ -72,6 +72,8 @@ pub mod method {
     pub const PROJECT_BRANCHES: &str = "project.branches";
     pub const PROJECT_UPDATE: &str = "project.update";
     pub const PR_SEARCH: &str = "pr.search";
+    pub const SESSION_SUBAGENTS: &str = "session.subagents";
+    pub const PLUGIN_UI_FILE: &str = "plugin.ui_file";
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -329,6 +331,7 @@ pub enum CapabilityKind {
     Agent,
     Command,
     TaskSource,
+    Panel,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -359,6 +362,29 @@ pub struct PluginInfo {
     pub update_available: bool,
     #[serde(default)]
     pub previous_version: Option<String>,
+    #[serde(default)]
+    pub panels: Vec<PanelInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PanelInfo {
+    pub id: String,
+    pub title: String,
+    pub entry: String,
+    pub slot: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginUiFileParams {
+    pub plugin: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginUiFile {
+    pub mime: String,
+    /// Base64-encoded file contents.
+    pub data: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -959,6 +985,47 @@ pub enum HookEvent {
     Tool,
     Stop,
     Notification,
+    SubagentStart,
+    SubagentStop,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SubagentHook {
+    pub id: String,
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub failed: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SubagentStatus {
+    Running,
+    Done,
+    Failed,
+    /// The session ended while the subagent was still running.
+    Ended,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Subagent {
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub kind: String,
+    pub description: String,
+    pub status: SubagentStatus,
+    pub started_at: i64,
+    pub ended_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionSubagentsParams {
+    pub session_id: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -968,6 +1035,8 @@ pub struct SessionHookParams {
     /// The agent's own session id, used to resume after a daemon restart.
     #[serde(default)]
     pub agent_ref: Option<String>,
+    #[serde(default)]
+    pub subagent: Option<SubagentHook>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1048,6 +1117,10 @@ pub enum Event {
         task_id: i64,
         pr: Option<PullRequest>,
     },
+    #[serde(rename = "subagent.started")]
+    SubagentStarted { session_id: i64, subagent: Subagent },
+    #[serde(rename = "subagent.updated")]
+    SubagentUpdated { session_id: i64, subagent: Subagent },
 }
 
 impl Event {
