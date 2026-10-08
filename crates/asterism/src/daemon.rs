@@ -33,7 +33,7 @@ use crate::pr_status::{self, ForgeCandidate, InFlight, PrStatus};
 use crate::proc_stats::{self, CpuTracker};
 use crate::session::{Pty, Snapshot, SpawnSpec, SCROLLBACK_LINES};
 use crate::store::Store;
-use crate::{git, lock, node_settings, repo_source, status};
+use crate::{git, hibernate, lock, node_settings, repo_source, status};
 
 const DEFAULT_ROWS: u16 = 40;
 const DEFAULT_COLS: u16 = 120;
@@ -48,6 +48,9 @@ struct LiveSession {
     pty: Arc<Pty>,
     status: Arc<watch::Sender<SessionStatus>>,
     hooks_active: Arc<AtomicBool>,
+    last_output: Arc<Mutex<tokio::time::Instant>>,
+    /// Set before a deliberate kill so the exit is recorded as `Hibernated`.
+    hibernating: AtomicBool,
 }
 
 /// Overridable external tools; tests inject an isolated git environment.
@@ -59,6 +62,8 @@ pub struct DaemonOptions {
     pub plugin_env: Vec<(String, String)>,
     pub plugin_call_timeout: Duration,
     pub plugin_idle: Duration,
+    /// One configured hibernate minute and the sweep interval; tests shorten it.
+    pub hibernate_minute: Duration,
     /// Shown to clients instead of the hostname, e.g. to keep it out of screenshots.
     pub node_name: Option<String>,
 }
@@ -71,6 +76,7 @@ impl Default for DaemonOptions {
             plugin_env: Vec::new(),
             plugin_call_timeout: process::CALL_TIMEOUT,
             plugin_idle: process::IDLE_TIMEOUT,
+            hibernate_minute: Duration::from_secs(60),
             node_name: std::env::var("ASTERISM_NODE_NAME")
                 .ok()
                 .filter(|name| !name.trim().is_empty()),
@@ -1791,9 +1797,17 @@ impl Daemon {
         if task.archived {
             return Ok(task);
         }
-        for stored in self.store().sessions(Some(task_id))? {
+        let sessions = self.store().sessions(Some(task_id))?;
+        for stored in sessions {
             if let Ok(live) = self.live(stored.session.id) {
                 let _ = live.pty.kill();
+            } else if stored.session.status == SessionStatus::Hibernated {
+                self.store()
+                    .set_session_status(stored.session.id, SessionStatus::Exited)?;
+                self.emit(Event::SessionStatusChanged {
+                    session_id: stored.session.id,
+                    status: SessionStatus::Exited,
+                });
             }
         }
         self.store().set_task_archived(task_id)?;
@@ -2200,6 +2214,8 @@ impl Daemon {
             pty: pty.clone(),
             status: Arc::new(status_tx),
             hooks_active: Arc::new(AtomicBool::new(false)),
+            last_output: Arc::new(Mutex::new(tokio::time::Instant::now())),
+            hibernating: AtomicBool::new(false),
         });
         lock(&self.live).insert(id, live.clone());
         let waiting_patterns: Arc<[String]> = match kind {
@@ -2215,20 +2231,24 @@ impl Daemon {
             waiting_patterns,
             live.status.clone(),
             live.hooks_active.clone(),
+            live.last_output.clone(),
         ));
 
         let daemon = self.clone();
         let task_id = task.id;
         tokio::spawn(async move {
             while status_rx.changed().await.is_ok() {
-                let status = *status_rx.borrow_and_update();
+                let mut status = *status_rx.borrow_and_update();
                 if status == SessionStatus::Exited {
                     // Stored before leaving `live` so `read` always finds one of the two.
                     let text = last_lines(&pty.history(), SCROLLBACK_LINES);
                     let _ = daemon.store().set_session_last_text(id, &text);
                     // Already taken by `remove_session`, which emits `session.removed`; nothing may follow.
-                    if lock(&daemon.live).remove(&id).is_none() {
+                    let Some(live) = lock(&daemon.live).remove(&id) else {
                         break;
+                    };
+                    if live.hibernating.load(Ordering::Relaxed) {
+                        status = SessionStatus::Hibernated;
                     }
                 }
                 let _ = daemon.store().set_session_status(id, status);
@@ -2237,7 +2257,7 @@ impl Daemon {
                     status,
                 });
                 daemon.touch_task(task_id);
-                if status == SessionStatus::Exited {
+                if matches!(status, SessionStatus::Exited | SessionStatus::Hibernated) {
                     break;
                 }
             }
@@ -2436,10 +2456,71 @@ impl Daemon {
         Ok(())
     }
 
+    fn hibernate_after(&self, config: &Config, kind: &SessionKind) -> Option<Duration> {
+        let SessionKind::Agent { name } = kind else {
+            return None;
+        };
+        let (_, decl) = self.agent_decl(name).ok()?;
+        if !decl.settings.contains(&AgentSettingKind::Hibernate) {
+            return None;
+        }
+        let minutes = config.agents.get(name).and_then(|a| a.hibernate_after_min);
+        hibernate::timeout(minutes, self.options.hibernate_minute)
+    }
+
+    /// Kills idle, unattached agent processes; their forwarder records them as `Hibernated`.
+    pub fn hibernate_idle(&self) -> Result<()> {
+        let live: Vec<(i64, Arc<LiveSession>)> = lock(&self.live)
+            .iter()
+            .map(|(id, live)| (*id, live.clone()))
+            .collect();
+        if live.is_empty() {
+            return Ok(());
+        }
+        let config = Config::load(&self.paths.config())?;
+        let stored: HashMap<i64, crate::store::StoredSession> = self
+            .store()
+            .sessions(None)?
+            .into_iter()
+            .map(|s| (s.session.id, s))
+            .collect();
+        for (id, session) in live {
+            let Some(stored) = stored.get(&id) else {
+                continue;
+            };
+            let quiet_for = lock(&session.last_output).elapsed();
+            let candidate = hibernate::should_hibernate(
+                *session.status.borrow(),
+                quiet_for,
+                session.pty.receivers() > 1,
+                stored.agent_ref.is_some(),
+                self.hibernate_after(&config, &stored.session.kind),
+            );
+            if candidate {
+                // ponytail: a client attaching between this check and the kill sees its stream end; the next attach wakes the session.
+                session.hibernating.store(true, Ordering::Relaxed);
+                let _ = session.pty.kill();
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn hibernate_loop(self: Arc<Self>) {
+        loop {
+            tokio::time::sleep(self.options.hibernate_minute).await;
+            if let Err(e) = self.hibernate_idle() {
+                eprintln!("asterismd: hibernation sweep failed: {e}");
+            }
+        }
+    }
+
     pub async fn recover(self: &Arc<Self>) -> Result<()> {
         let stored = self.store().sessions(None)?;
         for crate::store::StoredSession { session, agent_ref } in stored {
-            if session.status == SessionStatus::Exited {
+            if matches!(
+                session.status,
+                SessionStatus::Exited | SessionStatus::Hibernated
+            ) {
                 continue;
             }
             let resumed = match self.task(session.task_id) {

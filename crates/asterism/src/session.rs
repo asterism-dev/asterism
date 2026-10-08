@@ -220,6 +220,11 @@ impl Pty {
         self.output.subscribe()
     }
 
+    /// Output subscribers: the status tracker plus one per attached client.
+    pub fn receivers(&self) -> usize {
+        self.output.receiver_count()
+    }
+
     pub fn attach(&self) -> (Snapshot, broadcast::Receiver<Vec<u8>>) {
         let term = lock(&self.term);
         let (rows, cols) = term.parser.screen().size();
