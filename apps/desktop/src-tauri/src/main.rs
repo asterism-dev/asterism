@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use asterism_node::{CallError, LocalNode, LocalNodeConfig, NodeSink, NodeStatus, PathEnv};
 use asterism_proto::paths::Paths;
-use asterism_proto::types::{Event, SessionAttachResult};
+use asterism_proto::types::{method, Event, PluginUiFile, SessionAttachResult};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::Value;
 use tauri::ipc::Channel;
 #[cfg(target_os = "macos")]
@@ -12,6 +13,10 @@ use tauri::Wry;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 
 const QUIT_MENU_ID: &str = "quit";
+
+const PANEL_CSP: &str = "default-src 'self' asterism-plugin: http://asterism-plugin.localhost; \
+    style-src 'self' 'unsafe-inline' asterism-plugin: http://asterism-plugin.localhost; \
+    img-src 'self' data: asterism-plugin: http://asterism-plugin.localhost; connect-src 'none'";
 
 struct TauriSink(AppHandle);
 
@@ -116,6 +121,45 @@ fn app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     Ok(menu)
 }
 
+// ponytail: percent-encoded paths are not decoded; plugin names are slugs
+fn split_ui_path(path: &str) -> Option<(&str, &str)> {
+    let (plugin, file) = path.trim_start_matches('/').split_once('/')?;
+    (!plugin.is_empty() && !file.is_empty()).then_some((plugin, file))
+}
+
+async fn serve_ui_file(node: Arc<LocalNode>, path: String) -> tauri::http::Response<Vec<u8>> {
+    let not_found = || {
+        tauri::http::Response::builder()
+            .status(404)
+            .body(Vec::new())
+            .unwrap_or_default()
+    };
+    let Some((plugin, file)) = split_ui_path(&path) else {
+        return not_found();
+    };
+    let Ok(value) = node
+        .call(
+            method::PLUGIN_UI_FILE,
+            serde_json::json!({ "plugin": plugin, "path": file }),
+        )
+        .await
+    else {
+        return not_found();
+    };
+    let Ok(ui) = serde_json::from_value::<PluginUiFile>(value) else {
+        return not_found();
+    };
+    let Ok(body) = BASE64.decode(ui.data) else {
+        return not_found();
+    };
+    tauri::http::Response::builder()
+        .header("Content-Type", ui.mime)
+        .header("Content-Security-Policy", PANEL_CSP)
+        .header("Access-Control-Allow-Origin", "*")
+        .body(body)
+        .unwrap_or_default()
+}
+
 fn main() {
     let builder = tauri::Builder::default();
     #[cfg(target_os = "macos")]
@@ -152,6 +196,13 @@ fn main() {
                 let _ = app.emit("quit-requested", ());
             }
         })
+        .register_asynchronous_uri_scheme_protocol("asterism-plugin", |ctx, request, responder| {
+            let node = ctx.app_handle().state::<Arc<LocalNode>>().inner().clone();
+            let path = request.uri().path().to_string();
+            tauri::async_runtime::spawn(async move {
+                responder.respond(serve_ui_file(node, path).await);
+            });
+        })
         .invoke_handler(tauri::generate_handler![
             node_status,
             node_call,
@@ -165,5 +216,21 @@ fn main() {
     if let Err(e) = result {
         eprintln!("asterism: {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn splits_plugin_and_path_from_the_url_path() {
+        assert_eq!(
+            split_ui_path("/agents/ui/agents.html"),
+            Some(("agents", "ui/agents.html"))
+        );
+        assert_eq!(split_ui_path("/agents"), None);
+        assert_eq!(split_ui_path("/agents/"), None);
+        assert_eq!(split_ui_path(""), None);
     }
 }
