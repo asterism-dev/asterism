@@ -206,8 +206,58 @@ fn subagent_hook(session_id: i64, event: HookEvent, id: &str, failed: bool) -> S
             kind: "Explore".into(),
             description: "look around".into(),
             failed,
+            alias: None,
         }),
     }
+}
+
+fn aliased(mut params: SessionHookParams, alias: &str) -> SessionHookParams {
+    if let Some(subagent) = params.subagent.as_mut() {
+        subagent.alias = Some(alias.into());
+    }
+    params
+}
+
+#[tokio::test]
+async fn async_subagents_finish_through_their_alias() {
+    let env = setup();
+    let task = new_task(&env, "async").await;
+    let session = start(&env, &task, sh("sleep 30")).await;
+    let mut events = env.daemon.subscribe();
+    let id = session.id;
+    for params in [
+        subagent_hook(id, HookEvent::SubagentStart, "t1", false),
+        aliased(
+            subagent_hook(id, HookEvent::SubagentStart, "t1", false),
+            "a1",
+        ),
+        aliased(
+            subagent_hook(id, HookEvent::SubagentStart, "t1", false),
+            "a1",
+        ),
+    ] {
+        env.daemon.hook(params).unwrap();
+    }
+    assert_eq!(env.daemon.subagents(id)[0].status, SubagentStatus::Running);
+    for stop in ["unknown", "a1", "a1"] {
+        env.daemon
+            .hook(subagent_hook(id, HookEvent::SubagentStop, stop, false))
+            .unwrap();
+    }
+
+    let list = env.daemon.subagents(id);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].id, "t1");
+    assert_eq!(list[0].status, SubagentStatus::Done);
+    let (mut started, mut updated) = (0, 0);
+    while let Ok(event) = events.try_recv() {
+        match event {
+            Event::SubagentStarted { session_id, .. } if session_id == id => started += 1,
+            Event::SubagentUpdated { session_id, .. } if session_id == id => updated += 1,
+            _ => {}
+        }
+    }
+    assert_eq!((started, updated), (1, 1));
 }
 
 #[tokio::test]

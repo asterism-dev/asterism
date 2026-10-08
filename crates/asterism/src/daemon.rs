@@ -159,7 +159,14 @@ pub struct Daemon {
     pr_status: Mutex<PrStatus>,
     waking: tokio::sync::Mutex<()>,
     /// Subagents per session, kept after exit until the session is removed.
-    subagents: Mutex<HashMap<i64, Vec<Subagent>>>,
+    subagents: Mutex<HashMap<i64, SessionSubagents>>,
+}
+
+#[derive(Default)]
+struct SessionSubagents {
+    list: Vec<Subagent>,
+    /// alias -> subagent id, for agents that learn a second id after the start.
+    aliases: HashMap<String, String>,
 }
 
 impl Daemon {
@@ -2678,15 +2685,25 @@ impl Daemon {
     pub fn subagents(&self, session_id: i64) -> Vec<Subagent> {
         lock(&self.subagents)
             .get(&session_id)
-            .cloned()
+            .map(|s| s.list.clone())
             .unwrap_or_default()
     }
 
     fn subagent_hook(&self, session_id: i64, event: HookEvent, hook: SubagentHook) {
         let changed = {
             let mut all = lock(&self.subagents);
-            let list = all.entry(session_id).or_default();
-            let existing = list.iter_mut().find(|s| s.id == hook.id);
+            let state = all.entry(session_id).or_default();
+            if let (HookEvent::SubagentStart, Some(alias)) = (event, &hook.alias) {
+                state.aliases.insert(alias.clone(), hook.id.clone());
+            }
+            let id = match event {
+                HookEvent::SubagentStop if !state.list.iter().any(|s| s.id == hook.id) => {
+                    state.aliases.get(&hook.id).unwrap_or(&hook.id).clone()
+                }
+                _ => hook.id.clone(),
+            };
+            let list = &mut state.list;
+            let existing = list.iter_mut().find(|s| s.id == id);
             match (event, existing) {
                 (HookEvent::SubagentStart, None) => {
                     let subagent = Subagent {
@@ -2727,11 +2744,13 @@ impl Daemon {
     fn end_subagents(&self, session_id: i64) {
         let ended: Vec<Subagent> = {
             let mut all = lock(&self.subagents);
-            let Some(list) = all.get_mut(&session_id) else {
+            let Some(state) = all.get_mut(&session_id) else {
                 return;
             };
             let now = unix_now();
-            list.iter_mut()
+            state
+                .list
+                .iter_mut()
                 .filter(|s| s.status == SubagentStatus::Running)
                 .map(|s| {
                     s.status = SubagentStatus::Ended;

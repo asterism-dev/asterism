@@ -420,6 +420,10 @@ fn hook_params_carry_an_optional_subagent() {
     assert_eq!(p.event, HookEvent::SubagentStart);
     let s = p.subagent.unwrap();
     assert_eq!((s.id.as_str(), s.parent_id, s.failed), ("a", None, false));
+    assert_eq!(s.alias, None);
+    let aliased: SubagentHook = serde_json::from_value(json!({"id": "t1", "alias": "a1"})).unwrap();
+    assert_eq!(aliased.alias.as_deref(), Some("a1"));
+    assert_eq!(serde_json::to_value(&aliased).unwrap()["alias"], "a1");
 }
 
 #[test]

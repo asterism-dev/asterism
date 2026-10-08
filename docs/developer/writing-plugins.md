@@ -213,11 +213,11 @@ The app also sends events as `{ event, data }`. `theme` (same shape as in `conte
 An agent plugin can make subagents show up in panels by calling the CLI from its hooks. Asterism sets `ASTERISM_SESSION` for every session it starts, and the hook commands never fail, so they are safe to call unconditionally:
 
 ```sh
-asterism hook subagent-start --id <id> [--parent <id>] [--kind <kind>] [--description <text>]
+asterism hook subagent-start --id <id> [--parent <id>] [--kind <kind>] [--description <text>] [--alias <id>]
 asterism hook subagent-stop --id <id> [--failed]
 ```
 
-`--id` is any id unique within the session; `--parent` nests a subagent under another one. Pass values that may start with `-` as `--description=<text>`. The Claude Code plugin (`crates/asterism/src/bin/asterism-plugin-claude/hook.rs`) maps Claude's `Agent` (formerly `Task`) tool calls to these commands.
+`--id` is any id unique within the session; `--parent` nests a subagent under another one. `--alias` is for an agent that learns a second id for a running subagent: repeat `subagent-start` with the same `--id` and `--alias <other>`, and a later `subagent-stop --id <other>` finishes it. Pass values that may start with `-` as `--description=<text>`. The Claude Code plugin (`crates/asterism/src/bin/asterism-plugin-claude/hook.rs`) maps Claude's `Agent` (formerly `Task`) tool calls to these commands; an asynchronous launch is aliased to Claude's agent id and finished by Claude's `SubagentStop` hook.
 
 ## Walkthrough: the echo plugin
 

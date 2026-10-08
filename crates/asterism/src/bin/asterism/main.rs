@@ -87,6 +87,8 @@ enum Cmd {
         description: Option<String>,
         #[arg(long)]
         failed: bool,
+        #[arg(long)]
+        alias: Option<String>,
     },
     #[command(subcommand)]
     Pr(PrCmd),
@@ -393,6 +395,7 @@ async fn main() {
         kind,
         description,
         failed,
+        alias,
     } = cli.command
     {
         let subagent = id.map(|id| SubagentHook {
@@ -401,6 +404,7 @@ async fn main() {
             kind: kind.unwrap_or_default(),
             description: description.unwrap_or_default(),
             failed,
+            alias,
         });
         let _ = tokio::time::timeout(HOOK_TIMEOUT, hook(event, agent_ref, subagent)).await;
         std::process::exit(0);

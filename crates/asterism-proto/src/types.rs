@@ -1000,6 +1000,9 @@ pub struct SubagentHook {
     pub description: String,
     #[serde(default)]
     pub failed: bool,
+    /// A second id the agent learned for this subagent; a later stop may use it.
+    #[serde(default)]
+    pub alias: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
