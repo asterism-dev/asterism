@@ -1,3 +1,9 @@
+## v0.13.0 (2026-10-08)
+
+### Feat
+
+- **plugins**: add UI panels and a subagent tree for agent sessions (#17)
+
 ## v0.12.0 (2026-10-08)
 
 ### Feat

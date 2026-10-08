@@ -126,7 +126,7 @@ checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
 name = "asterism"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "asterism-plugin",
  "asterism-proto",
@@ -148,7 +148,7 @@ dependencies = [
 
 [[package]]
 name = "asterism-desktop"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "asterism-node",
  "asterism-proto",
@@ -165,7 +165,7 @@ dependencies = [
 
 [[package]]
 name = "asterism-node"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "asterism-proto",
  "base64 0.22.1",
@@ -177,7 +177,7 @@ dependencies = [
 
 [[package]]
 name = "asterism-plugin"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "asterism-proto",
  "serde",
@@ -187,7 +187,7 @@ dependencies = [
 
 [[package]]
 name = "asterism-proto"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "serde",
  "serde_json",
