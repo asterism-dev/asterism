@@ -2351,6 +2351,7 @@ impl Daemon {
 
     /// Stops the session if it still runs, then forgets it entirely.
     pub async fn remove_session(&self, id: i64) -> Result<()> {
+        let _waking = self.waking.lock().await;
         self.session(id)?;
         // Taken out first so the status forwarder sees it gone and reports nothing after `session.removed`.
         let live = lock(&self.live).remove(&id);
@@ -2583,7 +2584,17 @@ impl Daemon {
                 .resume_argv(&session.kind, stored.agent_ref.as_deref(), &task)
                 .await
             {
-                Ok(Some((argv, env))) => self.spawn_live(id, &task, argv, env, &session.kind),
+                Ok(Some((argv, env))) => {
+                    // The plugin call above can take a while; the session may have been removed or archived meanwhile.
+                    let still_asleep = self
+                        .store()
+                        .session(id)?
+                        .is_some_and(|s| s.session.status == SessionStatus::Hibernated);
+                    if !still_asleep || self.task(task.id)?.archived {
+                        return self.live(id);
+                    }
+                    self.spawn_live(id, &task, argv, env, &session.kind)
+                }
                 Ok(None) => Err(Error::new(
                     ErrorKind::PluginError,
                     format!("session {id} cannot be resumed"),
