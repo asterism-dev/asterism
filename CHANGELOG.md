@@ -1,3 +1,9 @@
+## v0.12.0 (2026-10-08)
+
+### Feat
+
+- hibernate idle agent sessions (#16)
+
 ## v0.11.0 (2026-10-08)
 
 ### Feat
