@@ -38,6 +38,7 @@ const deps: BridgeDeps = {
 
 export function registerFrame(win: Window, ctx: PanelContext): () => void {
   frames.set(win, ctx);
+  win.postMessage({ event: 'theme', data: theme() }, '*');
   return () => frames.delete(win);
 }
 
