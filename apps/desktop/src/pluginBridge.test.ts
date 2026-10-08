@@ -46,6 +46,12 @@ describe('handleMessage', () => {
     expect(res).toEqual({ id: 2, result: [{ ...session(1, 10), subagents: [sub] }] });
   });
 
+  it('lists a session with no subagents when fetching them fails', async () => {
+    const d = { ...deps(), subagents: vi.fn(async () => Promise.reject(new Error('gone'))) };
+    const res = await handleMessage({ id: 2, method: 'sessions.list' }, ctx(), d);
+    expect(res).toEqual({ id: 2, result: [{ ...session(1, 10), subagents: [] }] });
+  });
+
   it('checks permissions, methods and params', async () => {
     const d = deps();
     const code = async (data: unknown, c = ctx()) => {

@@ -4,10 +4,12 @@ import {
   filePanelId,
   fileTaskOf,
   floatKey,
+  isPluginPanel,
   keptSizes,
   parseSidebar,
   parseWorkspace,
   placementPosition,
+  pluginPanelId,
   reconcile,
   sessionIdOf,
   sessionPanelId,
@@ -36,6 +38,13 @@ describe('layout model', () => {
       remove: ['file:2:b.ts'],
       add: [],
     });
+  });
+
+  it('keeps plugin panels, whatever the plugin', () => {
+    const { remove } = reconcile([pluginPanelId('agents', 'agents'), 'stray'], [], 1);
+    expect(remove).toEqual(['stray']);
+    expect(isPluginPanel('plugin:agents/agents')).toBe(true);
+    expect(isPluginPanel('session-1')).toBe(false);
   });
 
   it('round-trips file panel ids, including paths with colons', () => {

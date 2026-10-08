@@ -36,6 +36,7 @@ import SessionPane from './SessionPane.vue';
 import ActivityPane from './panes/ActivityPane.vue';
 import DiffPane from './panes/DiffPane.vue';
 import FilePane from './panes/FilePane.vue';
+import PluginPane from './panes/PluginPane.vue';
 
 const props = defineProps<{ task: Task }>();
 // dockview types panel components as prop-less; ours take its `params` prop.
@@ -44,6 +45,7 @@ const components = {
   diff: DiffPane,
   activity: ActivityPane,
   file: FilePane,
+  plugin: PluginPane,
 } as unknown as Record<string, VueComponent>;
 const tabComponents = { pane: PaneTab } as unknown as Record<string, VueComponent>;
 const groupActions = GroupActions as unknown as VueComponent;

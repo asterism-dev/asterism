@@ -31,6 +31,7 @@ import {
   state,
   toast,
 } from './store';
+import { forwardEvent, initPluginFrames } from './pluginFrames';
 import { matchAction, type GlobalActionId } from './shortcuts';
 import { leaveSettings } from './settingsGuard';
 import { startUpdater } from './updater';
@@ -113,6 +114,7 @@ function restart() {
 }
 
 onMounted(async () => {
+  initPluginFrames();
   startUpdater().catch((e) => console.warn('updater', e));
   unlisteners.push(await listen<NodeStatus>('node-status', (e) => onStatus(e.payload)));
   unlisteners.push(
@@ -122,6 +124,8 @@ onMounted(async () => {
         event.method === 'task.changed' &&
         !event.params.archived &&
         !state.tasks.some((t) => t.id === event.params.id);
+      // Before applyEvent, so a removed session can still be matched to its task.
+      forwardEvent(event);
       const waiting = applyEvent(state, event);
       if (event.method === 'plugins.changed' || event.method === 'stores.changed')
         refreshPluginUpdates().catch(() => {});

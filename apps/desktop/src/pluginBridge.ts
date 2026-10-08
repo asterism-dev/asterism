@@ -62,7 +62,7 @@ export async function handleMessage(
       return {
         id,
         result: await Promise.all(
-          own.map(async (s) => ({ ...s, subagents: await deps.subagents(s.id) })),
+          own.map(async (s) => ({ ...s, subagents: await deps.subagents(s.id).catch(() => []) })),
         ),
       };
     case 'events.subscribe':

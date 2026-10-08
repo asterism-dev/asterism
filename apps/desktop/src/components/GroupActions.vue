@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import type { DockviewApi, IDockviewGroupPanel } from 'dockview-vue';
 import { Plus } from '@lucide/vue';
-import { addTool, paneState } from '../dock/main';
-import type { ToolPane } from '../dock/model';
+import { api } from '../api';
+import { addPluginPanel, addTool, paneState } from '../dock/main';
+import { pluginPanelId, type ToolPane } from '../dock/model';
 import { newSessionMenu } from '../sessionActions';
 import { state } from '../store';
 
@@ -12,18 +13,31 @@ const TOOLS: { pane: ToolPane; label: string }[] = [
   { pane: 'activity', label: 'Activity Monitor' },
 ];
 
-function open(e: MouseEvent) {
-  if (state.selectedTaskId === null) return;
+async function open(e: MouseEvent) {
+  const taskId = state.selectedTaskId;
+  if (taskId === null) return;
   const { group, containerApi } = props.params;
   const closedTools = TOOLS.filter((t) => paneState(t.pane) === 'closed').map((t) => ({
     label: t.label,
     action: () => addTool(containerApi, t.pane, { group: group.id }),
   }));
+  // A failing plugin list must not cost the user the new-session menu.
+  const plugins = await api.plugins().catch(() => []);
+  const panels = plugins
+    .filter((p) => p.state.state === 'ok')
+    .flatMap((p) =>
+      p.panels.filter((x) => x.slot === 'task').map((x) => ({ plugin: p.name, panel: x })),
+    )
+    .filter(({ plugin, panel }) => !containerApi.getPanel(pluginPanelId(plugin, panel.id)))
+    .map(({ plugin, panel }) => ({
+      label: panel.title,
+      action: () => addPluginPanel(containerApi, plugin, panel, { group: group.id }),
+    }));
   newSessionMenu(
     e,
-    state.selectedTaskId,
+    taskId,
     group.id,
-    closedTools,
+    [...closedTools, ...panels],
     group.api.location.type === 'floating',
   );
 }
