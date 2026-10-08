@@ -2575,7 +2575,7 @@ impl Daemon {
                 stored.agent_ref.is_some(),
                 self.hibernate_after(&config, &stored.session.kind),
             );
-            if candidate {
+            if candidate && !self.has_running_subagents(id) {
                 // ponytail: a client attaching between this check and the kill sees its stream end; the next attach wakes the session.
                 session.hibernating.store(true, Ordering::Relaxed);
                 let _ = session.pty.kill();
@@ -2739,6 +2739,13 @@ impl Daemon {
         if let Some(event) = changed {
             self.emit(event);
         }
+    }
+
+    // ponytail: hibernating would kill background subagents; one whose end is never reported keeps the session awake.
+    fn has_running_subagents(&self, session_id: i64) -> bool {
+        lock(&self.subagents)
+            .get(&session_id)
+            .is_some_and(|s| s.list.iter().any(|a| a.status == SubagentStatus::Running))
     }
 
     fn end_subagents(&self, session_id: i64) {

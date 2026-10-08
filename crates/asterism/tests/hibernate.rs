@@ -132,6 +132,49 @@ async fn attached_session_is_not_hibernated() {
     );
 }
 
+fn subagent(f: &Fixture, event: HookEvent) {
+    f.daemon
+        .hook(SessionHookParams {
+            session_id: f.session,
+            event,
+            agent_ref: None,
+            subagent: Some(SubagentHook {
+                id: "a".into(),
+                parent_id: None,
+                kind: "Explore".into(),
+                description: "d".into(),
+                failed: false,
+                alias: None,
+            }),
+        })
+        .unwrap();
+}
+
+#[tokio::test]
+async fn session_with_a_running_subagent_is_not_hibernated() {
+    let f = idle_session().await;
+    subagent(&f, HookEvent::SubagentStart);
+    wait_status(&f.daemon, f.session, SessionStatus::Working).await;
+    // Hook-driven Working only ends after output falls silent, so let the echo agent print once.
+    f.daemon
+        .send(SessionSendParams {
+            session_id: f.session,
+            text: "x".into(),
+            submit: false,
+        })
+        .await
+        .unwrap();
+    wait_status(&f.daemon, f.session, SessionStatus::Idle).await;
+    f.daemon.hibernate_idle().unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(running(&f.daemon), 1);
+
+    subagent(&f, HookEvent::SubagentStop);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    f.daemon.hibernate_idle().unwrap();
+    wait_status(&f.daemon, f.session, SessionStatus::Hibernated).await;
+}
+
 async fn hibernated() -> Fixture {
     let f = idle_session().await;
     tokio::time::sleep(Duration::from_millis(20)).await;
