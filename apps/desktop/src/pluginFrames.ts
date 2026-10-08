@@ -1,6 +1,7 @@
 import { watch } from 'vue';
 import { api } from './api';
 import {
+  frameFor,
   handleMessage,
   panelEvent,
   plainSessions,
@@ -13,7 +14,8 @@ import { selectSession, state, taskSessions } from './store';
 import { activeTheme } from './theme';
 import type { NodeEvent } from './types';
 
-const frames = new Map<Window, PanelContext>();
+// Keyed by element: dockview re-attaching an iframe gives it a new contentWindow.
+const frames = new Map<HTMLIFrameElement, PanelContext>();
 
 export function pluginUrl(plugin: string, path: string): string {
   const base = navigator.userAgent.includes('Windows')
@@ -31,7 +33,8 @@ function theme(): ThemeInfo {
 }
 
 // A closed frame or an uncloneable value must never throw out of the app.
-function post(win: Window, message: unknown) {
+function post(win: Window | null, message: unknown) {
+  if (!win) return;
   try {
     win.postMessage(message, '*');
   } catch (err) {
@@ -46,38 +49,37 @@ const deps: BridgeDeps = {
   theme,
 };
 
-export function registerFrame(win: Window, ctx: PanelContext): () => void {
-  frames.set(win, ctx);
-  post(win, { event: 'theme', data: theme() });
-  return () => frames.delete(win);
+export function registerFrame(el: HTMLIFrameElement, ctx: PanelContext): () => void {
+  frames.set(el, ctx);
+  post(el.contentWindow, { event: 'theme', data: theme() });
+  return () => frames.delete(el);
 }
 
 // Keeps `subscribed` across reloads: the new document's subscribe may beat this load event.
-export function frameLoaded(win: Window) {
-  if (frames.has(win)) post(win, { event: 'theme', data: theme() });
+export function frameLoaded(el: HTMLIFrameElement) {
+  if (frames.has(el)) post(el.contentWindow, { event: 'theme', data: theme() });
 }
 
 export function forwardEvent(event: NodeEvent) {
-  for (const [win, ctx] of frames) {
+  for (const [el, ctx] of frames) {
     if (!ctx.subscribed) continue;
     const message = panelEvent(event, ctx.taskId, state.sessions);
-    if (message) post(win, message);
+    if (message) post(el.contentWindow, message);
   }
 }
 
 export function initPluginFrames() {
   // Sandboxed frames have an opaque origin, hence '*'; the frame map is the trust check.
   window.addEventListener('message', async (e) => {
-    const win = e.source as Window | null;
-    const ctx = win && frames.get(win);
-    if (!win || !ctx) return;
+    const ctx = frameFor(e.source, frames);
+    if (!ctx) return;
     const response = await handleMessage(e.data, ctx, deps);
-    if (response) post(win, response);
+    if (response) post(e.source as Window, response);
   });
   watch(
     activeTheme,
     () => {
-      for (const win of frames.keys()) post(win, { event: 'theme', data: theme() });
+      for (const el of frames.keys()) post(el.contentWindow, { event: 'theme', data: theme() });
     },
     { flush: 'post' },
   );

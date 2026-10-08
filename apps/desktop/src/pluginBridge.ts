@@ -38,6 +38,16 @@ export const THEME_VARS = [
 /** Store sessions are reactive proxies, which postMessage cannot clone. */
 export const plainSessions = (sessions: Session[]): Session[] => sessions.map((s) => toRaw(s));
 
+/** The context of the registered frame whose current window sent a message, if any. */
+export function frameFor(
+  source: unknown,
+  frames: Map<{ contentWindow: unknown }, PanelContext>,
+): PanelContext | null {
+  if (!source) return null;
+  for (const [el, ctx] of frames) if (el.contentWindow === source) return ctx;
+  return null;
+}
+
 const NEEDS_SESSIONS = new Set(['sessions.list', 'events.subscribe', 'ui.focusSession']);
 
 export async function handleMessage(

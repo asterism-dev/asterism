@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { reactive } from 'vue';
 import {
+  frameFor,
   handleMessage,
   panelEvent,
   plainSessions,
@@ -128,5 +129,22 @@ describe('panelEvent', () => {
       panelEvent({ method: 'session.removed', params: { session_id: 1 } }, 10, sessions)?.event,
     ).toBe('session.removed');
     expect(panelEvent({ method: 'plugins.changed', params: {} }, 10, sessions)).toBeNull();
+  });
+});
+
+describe('frameFor', () => {
+  it('finds the registered frame by its current window', () => {
+    const before = {};
+    const el = { contentWindow: before as object | null };
+    const c = ctx();
+    const frames = new Map([[el, c]]);
+    expect(frameFor(before, frames)).toBe(c);
+    expect(frameFor({}, frames)).toBeNull();
+    expect(frameFor(null, frames)).toBeNull();
+    // Re-attaching the iframe gives it a new window; the element stays registered.
+    const after = {};
+    el.contentWindow = after;
+    expect(frameFor(after, frames)).toBe(c);
+    expect(frameFor(before, frames)).toBeNull();
   });
 });

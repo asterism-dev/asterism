@@ -29,20 +29,18 @@ async function load() {
 }
 
 // Register as soon as the iframe exists: its module script may call the bridge before `load`.
-// contentWindow keeps its identity across navigations, so one registration covers reloads.
 function register(el: HTMLIFrameElement | null) {
   unregister?.();
   unregister = null;
   ctx = null;
-  const win = el?.contentWindow;
-  if (!win || !plugin || state.selectedTaskId === null) return;
+  if (!el || !plugin || state.selectedTaskId === null) return;
   ctx = { taskId: state.selectedTaskId, permissions: plugin.permissions, subscribed: false };
-  unregister = registerFrame(win, ctx);
+  unregister = registerFrame(el, ctx);
 }
 
+// Dockview re-attaching the pane reloads the iframe in a new window, which needs the theme again.
 function onLoad() {
-  const win = frame.value?.contentWindow;
-  if (win) frameLoaded(win);
+  if (frame.value) frameLoaded(frame.value);
 }
 
 onMounted(load);
