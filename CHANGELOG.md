@@ -1,3 +1,9 @@
+## v0.11.0 (2026-10-08)
+
+### Feat
+
+- **desktop**: add configurable keyboard shortcuts (#15)
+
 ## v0.10.0 (2026-10-07)
 
 ### Feat
