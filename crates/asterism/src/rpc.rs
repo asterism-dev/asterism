@@ -251,6 +251,7 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             daemon.plugin_set_enabled(&p.name, p.enabled).await?;
             Ok(Value::Null)
         }
+        method::PLUGIN_UI_FILE => to_value(daemon.plugin_ui_file(params(raw)?)?),
         method::PLUGIN_LIST => to_value(daemon.plugin_list()?),
         method::PLUGIN_LINK => to_value(
             daemon
@@ -415,6 +416,9 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
         }
         method::SESSION_LIST => {
             to_value(daemon.sessions(params::<SessionListParams>(raw)?.task_id)?)
+        }
+        method::SESSION_SUBAGENTS => {
+            to_value(daemon.subagents(params::<SessionSubagentsParams>(raw)?.session_id))
         }
         method::SESSION_START => to_value(daemon.start_session(params(raw)?).await?),
         method::SESSION_KILL => {

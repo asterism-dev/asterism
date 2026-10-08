@@ -77,6 +77,18 @@ enum Cmd {
         /// The agent's own session id, used to resume after a daemon restart.
         #[arg(long)]
         agent_ref: Option<String>,
+        #[arg(long)]
+        id: Option<String>,
+        #[arg(long)]
+        parent: Option<String>,
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        failed: bool,
+        #[arg(long)]
+        alias: Option<String>,
     },
     #[command(subcommand)]
     Pr(PrCmd),
@@ -351,6 +363,8 @@ enum HookArg {
     Tool,
     Stop,
     Notification,
+    SubagentStart,
+    SubagentStop,
 }
 
 impl From<HookArg> for HookEvent {
@@ -360,6 +374,8 @@ impl From<HookArg> for HookEvent {
             HookArg::Tool => Self::Tool,
             HookArg::Stop => Self::Stop,
             HookArg::Notification => Self::Notification,
+            HookArg::SubagentStart => Self::SubagentStart,
+            HookArg::SubagentStop => Self::SubagentStop,
         }
     }
 }
@@ -371,8 +387,26 @@ async fn main() {
         Err(_) if std::env::args().nth(1).as_deref() == Some("hook") => std::process::exit(0),
         Err(err) => err.exit(),
     };
-    if let Cmd::Hook { event, agent_ref } = cli.command {
-        let _ = tokio::time::timeout(HOOK_TIMEOUT, hook(event, agent_ref)).await;
+    if let Cmd::Hook {
+        event,
+        agent_ref,
+        id,
+        parent,
+        kind,
+        description,
+        failed,
+        alias,
+    } = cli.command
+    {
+        let subagent = id.map(|id| SubagentHook {
+            id,
+            parent_id: parent,
+            kind: kind.unwrap_or_default(),
+            description: description.unwrap_or_default(),
+            failed,
+            alias,
+        });
+        let _ = tokio::time::timeout(HOOK_TIMEOUT, hook(event, agent_ref, subagent)).await;
         std::process::exit(0);
     }
     if let Err(e) = run(cli).await {
@@ -1034,7 +1068,7 @@ async fn attach() -> std::io::Result<()> {
 }
 
 /// Runs inside agent hooks: must never fail, block, or start a daemon.
-async fn hook(event: HookArg, agent_ref: Option<String>) {
+async fn hook(event: HookArg, agent_ref: Option<String>, subagent: Option<SubagentHook>) {
     let Some(session_id) = env_id("ASTERISM_SESSION") else {
         return;
     };
@@ -1047,6 +1081,7 @@ async fn hook(event: HookArg, agent_ref: Option<String>) {
         session_id,
         event: event.into(),
         agent_ref,
+        subagent,
     };
     let _ = client.call::<_, ()>(method::SESSION_HOOK, params).await;
 }

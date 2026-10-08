@@ -9,6 +9,7 @@ import type {
   SearchHit,
   StoreInfo,
   StoreList,
+  Subagent,
   PluginSettings,
   SettingValue,
   ForgeInfo,
@@ -107,6 +108,8 @@ async function send(sessionId: number, text: string): Promise<void> {
 }
 
 export const api = {
+  subagents: (sessionId: number) =>
+    call<Subagent[]>('session.subagents', { session_id: sessionId }),
   nodeStatus: () => command<NodeStatus>('node_status'),
   restartDaemon: () => command<void>('restart_daemon'),
   appPid: () => command<number>('app_pid'),

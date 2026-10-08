@@ -6,6 +6,7 @@ pub mod registry;
 pub mod settings;
 pub mod source;
 pub mod store_ops;
+pub mod ui;
 
 /// Serialises every store and install operation; the files they touch are read-modify-write.
 pub static STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

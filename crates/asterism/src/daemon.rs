@@ -12,6 +12,8 @@ use asterism_plugin::protocol::{
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
 use asterism_proto::PROTO_VERSION;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use tokio::sync::{broadcast, watch, Notify};
@@ -28,7 +30,7 @@ use crate::plugins::catalog::{self, EntrySource, StoreConfig};
 use crate::plugins::manifest::{self, AgentDecl, LaunchKind, Manifest};
 use crate::plugins::process::{self, HostFn};
 use crate::plugins::registry::{self, Plugin, Status};
-use crate::plugins::{install, settings, source, store_ops, PluginSet, Runtime, STORE_LOCK};
+use crate::plugins::{install, settings, source, store_ops, ui, PluginSet, Runtime, STORE_LOCK};
 use crate::pr_status::{self, ForgeCandidate, InFlight, PrStatus};
 use crate::proc_stats::{self, CpuTracker};
 use crate::session::{Pty, Snapshot, SpawnSpec, SCROLLBACK_LINES};
@@ -156,6 +158,15 @@ pub struct Daemon {
     store_status: Mutex<BTreeMap<String, StoreStatus>>,
     pr_status: Mutex<PrStatus>,
     waking: tokio::sync::Mutex<()>,
+    /// Subagents per session, kept after exit until the session is removed.
+    subagents: Mutex<HashMap<i64, SessionSubagents>>,
+}
+
+#[derive(Default)]
+struct SessionSubagents {
+    list: Vec<Subagent>,
+    /// alias -> subagent id, for agents that learn a second id after the start.
+    aliases: HashMap<String, String>,
 }
 
 impl Daemon {
@@ -196,6 +207,7 @@ impl Daemon {
                 store_status: Mutex::new(BTreeMap::new()),
                 pr_status: Mutex::new(PrStatus::default()),
                 waking: tokio::sync::Mutex::new(()),
+                subagents: Mutex::new(HashMap::new()),
             }
         }))
     }
@@ -311,7 +323,40 @@ impl Daemon {
             store: entry.map(|e| e.store.clone()),
             update_available: self.update_available(set, plugin),
             previous_version: entry.and_then(|e| e.previous.clone()),
+            panels: manifest
+                .map(|m| {
+                    m.provides
+                        .panel
+                        .iter()
+                        .map(|p| PanelInfo {
+                            id: p.id.clone(),
+                            title: p.title.clone(),
+                            entry: p.entry.clone(),
+                            slot: "task".into(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
+    }
+
+    pub fn plugin_ui_file(&self, params: PluginUiFileParams) -> Result<PluginUiFile> {
+        let set = self.plugin_set();
+        let data = set
+            .registry
+            .get(&params.plugin)
+            .filter(|p| p.is_ok())
+            .and_then(|p| ui::read(p, &params.path));
+        let Some(data) = data else {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                format!("{}/{} not found", params.plugin, params.path),
+            ));
+        };
+        Ok(PluginUiFile {
+            mime: ui::mime(&params.path).into(),
+            data: BASE64.encode(data),
+        })
     }
 
     pub fn plugin_list(&self) -> Result<Vec<PluginInfo>> {
@@ -1907,6 +1952,7 @@ impl Daemon {
             store.delete_task(task_id)?;
         }
         for stored in sessions {
+            lock(&self.subagents).remove(&stored.session.id);
             self.emit(Event::SessionRemoved {
                 session_id: stored.session.id,
             });
@@ -2253,6 +2299,7 @@ impl Daemon {
                     if live.hibernating.load(Ordering::Relaxed) {
                         status = SessionStatus::Hibernated;
                     }
+                    daemon.end_subagents(id);
                 }
                 let _ = daemon.store().set_session_status(id, status);
                 daemon.emit(Event::SessionStatusChanged {
@@ -2369,6 +2416,7 @@ impl Daemon {
             }
         }
         self.store().delete_session(id)?;
+        lock(&self.subagents).remove(&id);
         self.emit(Event::SessionRemoved { session_id: id });
         Ok(())
     }
@@ -2476,6 +2524,14 @@ impl Daemon {
             self.store()
                 .set_session_agent_ref(params.session_id, &agent_ref)?;
         }
+        if let Some(subagent) = params.subagent {
+            if matches!(
+                params.event,
+                HookEvent::SubagentStart | HookEvent::SubagentStop
+            ) {
+                self.subagent_hook(params.session_id, params.event, subagent);
+            }
+        }
         Ok(())
     }
 
@@ -2519,7 +2575,7 @@ impl Daemon {
                 stored.agent_ref.is_some(),
                 self.hibernate_after(&config, &stored.session.kind),
             );
-            if candidate {
+            if candidate && !self.has_running_subagents(id) {
                 // ponytail: a client attaching between this check and the kill sees its stream end; the next attach wakes the session.
                 session.hibernating.store(true, Ordering::Relaxed);
                 let _ = session.pty.kill();
@@ -2623,6 +2679,98 @@ impl Daemon {
         match self.live(id) {
             Ok(live) => Ok(live),
             Err(_) => self.wake(id).await,
+        }
+    }
+
+    pub fn subagents(&self, session_id: i64) -> Vec<Subagent> {
+        lock(&self.subagents)
+            .get(&session_id)
+            .map(|s| s.list.clone())
+            .unwrap_or_default()
+    }
+
+    fn subagent_hook(&self, session_id: i64, event: HookEvent, hook: SubagentHook) {
+        let changed = {
+            let mut all = lock(&self.subagents);
+            let state = all.entry(session_id).or_default();
+            if let (HookEvent::SubagentStart, Some(alias)) = (event, &hook.alias) {
+                state.aliases.insert(alias.clone(), hook.id.clone());
+            }
+            let id = match event {
+                HookEvent::SubagentStop if !state.list.iter().any(|s| s.id == hook.id) => {
+                    state.aliases.get(&hook.id).unwrap_or(&hook.id).clone()
+                }
+                _ => hook.id.clone(),
+            };
+            let list = &mut state.list;
+            let existing = list.iter_mut().find(|s| s.id == id);
+            match (event, existing) {
+                (HookEvent::SubagentStart, None) => {
+                    let subagent = Subagent {
+                        id: hook.id,
+                        parent_id: hook.parent_id,
+                        kind: hook.kind,
+                        description: hook.description,
+                        status: SubagentStatus::Running,
+                        started_at: unix_now(),
+                        ended_at: None,
+                    };
+                    list.push(subagent.clone());
+                    Some(Event::SubagentStarted {
+                        session_id,
+                        subagent,
+                    })
+                }
+                (HookEvent::SubagentStop, Some(s)) if s.status == SubagentStatus::Running => {
+                    s.status = if hook.failed {
+                        SubagentStatus::Failed
+                    } else {
+                        SubagentStatus::Done
+                    };
+                    s.ended_at = Some(unix_now());
+                    Some(Event::SubagentUpdated {
+                        session_id,
+                        subagent: s.clone(),
+                    })
+                }
+                _ => None,
+            }
+        };
+        if let Some(event) = changed {
+            self.emit(event);
+        }
+    }
+
+    // ponytail: hibernating would kill background subagents; one whose end is never reported keeps the session awake.
+    fn has_running_subagents(&self, session_id: i64) -> bool {
+        lock(&self.subagents)
+            .get(&session_id)
+            .is_some_and(|s| s.list.iter().any(|a| a.status == SubagentStatus::Running))
+    }
+
+    fn end_subagents(&self, session_id: i64) {
+        let ended: Vec<Subagent> = {
+            let mut all = lock(&self.subagents);
+            let Some(state) = all.get_mut(&session_id) else {
+                return;
+            };
+            let now = unix_now();
+            state
+                .list
+                .iter_mut()
+                .filter(|s| s.status == SubagentStatus::Running)
+                .map(|s| {
+                    s.status = SubagentStatus::Ended;
+                    s.ended_at = Some(now);
+                    s.clone()
+                })
+                .collect()
+        };
+        for subagent in ended {
+            self.emit(Event::SubagentUpdated {
+                session_id,
+                subagent,
+            });
         }
     }
 

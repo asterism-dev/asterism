@@ -187,6 +187,7 @@ fn plugin_types_roundtrip() {
         store: None,
         update_available: false,
         previous_version: None,
+        panels: Vec::new(),
     };
     let value = serde_json::to_value(&info).unwrap();
     assert_eq!(
@@ -371,4 +372,68 @@ fn older_clients_omit_base_and_default_base() {
     assert_eq!(params.base, None);
     let project: Project = serde_json::from_str(r#"{"id":1,"name":"n","path":"/p"}"#).unwrap();
     assert_eq!(project.default_base, None);
+}
+
+#[test]
+fn subagent_events_round_trip() {
+    let subagent = Subagent {
+        id: "toolu_1".into(),
+        parent_id: None,
+        kind: "Explore".into(),
+        description: "find callers".into(),
+        status: SubagentStatus::Running,
+        started_at: 10,
+        ended_at: None,
+    };
+    let started = Event::SubagentStarted {
+        session_id: 3,
+        subagent: subagent.clone(),
+    };
+    let n = started.to_notification();
+    assert_eq!(n.method, "subagent.started");
+    assert_eq!(n.params["subagent"]["status"], "running");
+    assert_eq!(Event::from_notification(&n), Some(started));
+    let updated = Event::SubagentUpdated {
+        session_id: 3,
+        subagent: Subagent {
+            status: SubagentStatus::Done,
+            ended_at: Some(12),
+            ..subagent
+        },
+    };
+    assert_eq!(
+        Event::from_notification(&updated.to_notification()),
+        Some(updated)
+    );
+}
+
+#[test]
+fn hook_params_carry_an_optional_subagent() {
+    let old: SessionHookParams =
+        serde_json::from_value(json!({"session_id": 1, "event": "tool"})).unwrap();
+    assert_eq!(old.subagent, None);
+    let p: SessionHookParams = serde_json::from_value(json!({
+        "session_id": 1, "event": "subagent-start",
+        "subagent": {"id": "a", "kind": "Explore", "description": "d"}
+    }))
+    .unwrap();
+    assert_eq!(p.event, HookEvent::SubagentStart);
+    let s = p.subagent.unwrap();
+    assert_eq!((s.id.as_str(), s.parent_id, s.failed), ("a", None, false));
+    assert_eq!(s.alias, None);
+    let aliased: SubagentHook = serde_json::from_value(json!({"id": "t1", "alias": "a1"})).unwrap();
+    assert_eq!(aliased.alias.as_deref(), Some("a1"));
+    assert_eq!(serde_json::to_value(&aliased).unwrap()["alias"], "a1");
+}
+
+#[test]
+fn plugin_info_defaults_to_no_panels_and_panels_are_a_capability() {
+    let info: PluginInfo = serde_json::from_value(json!({
+        "name": "x", "version": "1.0.0", "description": "", "origin": "builtin", "path": "/p",
+        "capabilities": [{"kind": "panel", "id": "agents"}], "permissions": [],
+        "state": {"state": "ok"}, "backend": null
+    }))
+    .unwrap();
+    assert!(info.panels.is_empty());
+    assert_eq!(info.capabilities[0].kind, CapabilityKind::Panel);
 }

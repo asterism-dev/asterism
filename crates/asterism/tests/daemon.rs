@@ -195,6 +195,140 @@ async fn wait_times_out_while_busy() {
     assert_eq!(err.kind, ErrorKind::Timeout);
 }
 
+fn subagent_hook(session_id: i64, event: HookEvent, id: &str, failed: bool) -> SessionHookParams {
+    SessionHookParams {
+        session_id,
+        event,
+        agent_ref: None,
+        subagent: Some(SubagentHook {
+            id: id.into(),
+            parent_id: None,
+            kind: "Explore".into(),
+            description: "look around".into(),
+            failed,
+            alias: None,
+        }),
+    }
+}
+
+fn aliased(mut params: SessionHookParams, alias: &str) -> SessionHookParams {
+    if let Some(subagent) = params.subagent.as_mut() {
+        subagent.alias = Some(alias.into());
+    }
+    params
+}
+
+#[tokio::test]
+async fn async_subagents_finish_through_their_alias() {
+    let env = setup();
+    let task = new_task(&env, "async").await;
+    let session = start(&env, &task, sh("sleep 30")).await;
+    let mut events = env.daemon.subscribe();
+    let id = session.id;
+    for params in [
+        subagent_hook(id, HookEvent::SubagentStart, "t1", false),
+        aliased(
+            subagent_hook(id, HookEvent::SubagentStart, "t1", false),
+            "a1",
+        ),
+        aliased(
+            subagent_hook(id, HookEvent::SubagentStart, "t1", false),
+            "a1",
+        ),
+    ] {
+        env.daemon.hook(params).unwrap();
+    }
+    assert_eq!(env.daemon.subagents(id)[0].status, SubagentStatus::Running);
+    for stop in ["unknown", "a1", "a1"] {
+        env.daemon
+            .hook(subagent_hook(id, HookEvent::SubagentStop, stop, false))
+            .unwrap();
+    }
+
+    let list = env.daemon.subagents(id);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].id, "t1");
+    assert_eq!(list[0].status, SubagentStatus::Done);
+    let (mut started, mut updated) = (0, 0);
+    while let Ok(event) = events.try_recv() {
+        match event {
+            Event::SubagentStarted { session_id, .. } if session_id == id => started += 1,
+            Event::SubagentUpdated { session_id, .. } if session_id == id => updated += 1,
+            _ => {}
+        }
+    }
+    assert_eq!((started, updated), (1, 1));
+}
+
+#[tokio::test]
+async fn subagents_are_tracked_per_session() {
+    let env = setup();
+    let task = new_task(&env, "subagents").await;
+    let session = start(&env, &task, sh("sleep 30")).await;
+    let mut events = env.daemon.subscribe();
+    let id = session.id;
+    env.daemon
+        .hook(subagent_hook(id, HookEvent::SubagentStart, "a", false))
+        .unwrap();
+    env.daemon
+        .hook(subagent_hook(id, HookEvent::SubagentStart, "a", false))
+        .unwrap();
+    env.daemon
+        .hook(subagent_hook(id, HookEvent::SubagentStart, "b", false))
+        .unwrap();
+    env.daemon
+        .hook(subagent_hook(id, HookEvent::SubagentStop, "a", false))
+        .unwrap();
+    env.daemon
+        .hook(subagent_hook(id, HookEvent::SubagentStop, "b", true))
+        .unwrap();
+    env.daemon
+        .hook(subagent_hook(id, HookEvent::SubagentStop, "nope", false))
+        .unwrap();
+
+    let list = env.daemon.subagents(id);
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0].status, SubagentStatus::Done);
+    assert!(list[0].ended_at.is_some());
+    assert_eq!(list[1].status, SubagentStatus::Failed);
+
+    let (mut started, mut updated) = (0, 0);
+    while let Ok(event) = events.try_recv() {
+        match event {
+            Event::SubagentStarted { session_id, .. } if session_id == id => started += 1,
+            Event::SubagentUpdated { session_id, .. } if session_id == id => updated += 1,
+            _ => {}
+        }
+    }
+    assert_eq!((started, updated), (2, 2));
+    assert!(env.daemon.subagents(999_999).is_empty());
+}
+
+#[tokio::test]
+async fn running_subagents_end_with_their_session_and_go_with_it() {
+    let env = setup();
+    let task = new_task(&env, "ends").await;
+    let session = start(&env, &task, sh("sleep 1")).await;
+    env.daemon
+        .hook(subagent_hook(
+            session.id,
+            HookEvent::SubagentStart,
+            "a",
+            false,
+        ))
+        .unwrap();
+    assert!(
+        eventually(|| env
+            .daemon
+            .subagents(session.id)
+            .first()
+            .is_some_and(|s| s.status == SubagentStatus::Ended))
+        .await
+    );
+    env.daemon.remove_session(session.id).await.unwrap();
+    assert!(env.daemon.subagents(session.id).is_empty());
+}
+
 #[tokio::test]
 async fn hooks_override_the_heuristic() {
     let env = setup();
@@ -205,6 +339,7 @@ async fn hooks_override_the_heuristic() {
             session_id: session.id,
             event: HookEvent::Notification,
             agent_ref: Some("abc".into()),
+            subagent: None,
         })
         .unwrap();
     let err = env
@@ -515,6 +650,7 @@ async fn submit_marks_hooked_sessions_working() {
             session_id: session.id,
             event: HookEvent::Stop,
             agent_ref: None,
+            subagent: None,
         })
         .unwrap();
     env.daemon
@@ -879,4 +1015,97 @@ fn hello_reports_the_configured_node_name() {
         })
         .unwrap();
     assert_eq!(hello.hostname, "test-node");
+}
+
+fn ui_plugin(dir: &Path, with_entry: bool) {
+    std::fs::create_dir_all(dir.join("ui")).unwrap();
+    std::fs::write(
+        dir.join("plugin.toml"),
+        "name = \"uip\"\nversion = \"0.1.0\"\nprotocol = 1\n\n[[provides.panel]]\nid = \"uip\"\ntitle = \"Ui\"\nentry = \"ui/a.html\"\nslot = \"task\"\n",
+    )
+    .unwrap();
+    if with_entry {
+        std::fs::write(dir.join("ui/a.html"), "<p>hi").unwrap();
+    }
+}
+
+#[tokio::test]
+async fn serves_plugin_ui_files_and_flags_missing_entries() {
+    let env = setup();
+    let ok = env.home.path().join("ok");
+    ui_plugin(&ok, true);
+    let info = env
+        .daemon
+        .plugin_link(&ok.display().to_string())
+        .await
+        .unwrap();
+    assert_eq!(info.state, PluginState::Ok);
+    assert_eq!(info.panels[0].entry, "ui/a.html");
+    let file = |path: &str| {
+        env.daemon.plugin_ui_file(PluginUiFileParams {
+            plugin: "uip".into(),
+            path: path.into(),
+        })
+    };
+    let served = file("ui/a.html").unwrap();
+    assert_eq!(served.mime, "text/html; charset=utf-8");
+    assert_eq!(served.data, "PHA+aGk=");
+    assert_eq!(
+        file("../plugin.toml").unwrap_err().kind,
+        ErrorKind::NotFound
+    );
+    env.daemon.plugin_set_enabled("uip", false).await.unwrap();
+    assert_eq!(file("ui/a.html").unwrap_err().kind, ErrorKind::NotFound);
+
+    let env = setup();
+    let bad = env.home.path().join("bad");
+    ui_plugin(&bad, false);
+    let info = env
+        .daemon
+        .plugin_link(&bad.display().to_string())
+        .await
+        .unwrap();
+    assert!(matches!(info.state, PluginState::Broken { reason } if reason.contains("cannot read")));
+}
+
+#[tokio::test]
+async fn the_agents_panel_is_built_in_and_served() {
+    let env = setup();
+    let info = env
+        .daemon
+        .plugin_list()
+        .unwrap()
+        .into_iter()
+        .find(|p| p.name == "agents")
+        .unwrap();
+    assert_eq!(info.state, PluginState::Ok);
+    assert_eq!(info.panels[0].entry, "ui/agents.html");
+    // Every file the panel references must be embedded.
+    for path in [
+        "ui/agents.html",
+        "ui/agents.css",
+        "ui/agents.mjs",
+        "ui/tree.mjs",
+    ] {
+        let served = env.daemon.plugin_ui_file(PluginUiFileParams {
+            plugin: "agents".into(),
+            path: path.into(),
+        });
+        assert!(served.is_ok(), "{path} is not served");
+    }
+    let file = env
+        .daemon
+        .plugin_ui_file(PluginUiFileParams {
+            plugin: "agents".into(),
+            path: "ui/tree.mjs".into(),
+        })
+        .unwrap();
+    assert_eq!(file.mime, "text/javascript; charset=utf-8");
+    assert!(env
+        .daemon
+        .plugin_ui_file(PluginUiFileParams {
+            plugin: "agents".into(),
+            path: "plugin.toml".into()
+        })
+        .is_err());
 }

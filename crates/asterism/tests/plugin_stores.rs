@@ -109,7 +109,7 @@ async fn broken_files_do_not_stop_the_daemon() {
         .into_iter()
         .map(|p| p.name)
         .collect();
-    assert_eq!(names, ["claude", "github", "linear"]);
+    assert_eq!(names, ["agents", "claude", "github", "linear"]);
 }
 
 use std::path::{Path, PathBuf};

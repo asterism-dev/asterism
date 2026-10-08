@@ -1,0 +1,15 @@
+:root { font: 13px -apple-system, system-ui, sans-serif; }
+body { margin: 0; padding: 8px 12px; background: var(--bg); color: var(--text); }
+.tree, .tree ul { list-style: none; margin: 0; padding-left: 14px; }
+.tree { padding-left: 0; }
+.session { cursor: pointer; font-weight: 600; padding: 2px 0; }
+.session:hover { color: var(--accent); }
+.row { display: flex; gap: 6px; align-items: baseline; padding: 2px 0; }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--muted); }
+.working, .running { background: var(--accent); }
+.waiting_input { background: var(--waiting); }
+.failed { background: var(--danger); }
+.kind { color: var(--muted); }
+.time { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+summary { color: var(--muted); cursor: pointer; padding: 2px 0; }
+.empty { color: var(--muted); }

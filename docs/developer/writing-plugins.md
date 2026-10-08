@@ -12,6 +12,7 @@ A plugin declares what it provides under `[provides]`. One plugin may provide se
 | `agent` | A coding agent that can run in a session. | Only for `launch = "backend"` |
 | `command` | A subcommand of the `asterism` CLI. | Yes |
 | `task_source` | Issues that tasks can be created from. | Yes |
+| `panel` | A web view in the desktop app's task dock. | No |
 
 Each forge id, agent id, command name and task source id can only be provided by one plugin. If two plugins claim the same one, the plugin found later is marked broken. Discovery order is: linked plugins, then installed plugins, then the built-in ones; the first plugin with a given name wins.
 
@@ -27,7 +28,7 @@ Each forge id, agent id, command name and task source id can only be provided by
 | `version` | string | yes | Letters, digits, `.`, `_`, `+` and `-`, not starting with `.`. Installed versions live in a directory of this name. |
 | `protocol` | integer | yes | Plugin protocol version. Must be `1`. |
 | `description` | string | no | One-line description shown in plugin lists. |
-| `permissions` | array of strings | no | What the plugin needs, e.g. `"network"`, `"exec:gh"`. Shown to the user, who must accept exactly this list when installing from a store, and again when an update adds permissions. Asterism does not sandbox backends. |
+| `permissions` | array of strings | no | What the plugin needs, e.g. `"network"`, `"exec:gh"`, `"ui:sessions"` (a panel may read and focus the task's sessions). Shown to the user, who must accept exactly this list when installing from a store, and again when an update adds permissions. Asterism does not sandbox backends. |
 | `backend` | table | see below | How to start the backend. |
 | `provides` | table | no | The capabilities, see below. |
 | `settings` | array of tables | no | User settings, see [Settings](#settings). |
@@ -86,6 +87,17 @@ Templates are expanded token by token. These tokens are replaced only when they 
 |---|---|---|---|
 | `id` | string (slug) | yes | Task source id. |
 | `display_name` | string | yes | Name shown in the UI. |
+
+### `[[provides.panel]]`
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | string (slug) | yes | Panel id, unique within the plugin. |
+| `title` | string | yes | Shown in the task dock's + menu and as the tab title. |
+| `entry` | string | yes | HTML file, relative to the plugin directory, e.g. `"ui/agents.html"`. |
+| `slot` | `"task"` | yes | Where the panel can be opened. Only `task` exists. |
+
+A plugin that only provides panels needs no `[backend]`. See [Panels](#panels) for how a panel talks to the app.
 
 ## Settings
 
@@ -171,6 +183,41 @@ Plugin commands do not use the protocol. `asterism <name> [args...]` replaces it
 ### Rust backends
 
 Backends in Rust can use the `asterism-plugin` crate: `asterism_plugin::serve(handler)` runs the stdin/stdout loop, passes each request to `handler(host, method, params)`, and `Host::call` sends `host.*` requests. The built-in backends in `crates/asterism/src/bin/asterism-plugin-*` are complete examples.
+
+## Panels
+
+A panel is a web page the desktop app shows in a sandboxed iframe (`sandbox="allow-scripts"`) in the task dock. Its files are served from `asterism-plugin://localhost/<plugin>/<path>`, so load scripts, styles and images with paths relative to the entry. The page has no network access (`connect-src 'none'`); everything it knows comes from the app over `postMessage`. The built-in `agents` plugin in `crates/asterism/plugins/agents` is a complete example.
+
+### The bridge
+
+The panel sends calls to `parent` and matches replies by `id`:
+
+```js
+parent.postMessage({ id: 1, method: 'sessions.list', params: {} }, '*');
+// reply: { id: 1, result: ... }  or  { id: 1, error: { code, message } }
+```
+
+| Method | Permission | Params | Result |
+|---|---|---|---|
+| `context` | none | none | `taskId`, `theme` (`name`: `light`/`dark`, `vars`: CSS variables), `protocol` (`1`) |
+| `sessions.list` | `ui:sessions` | none | The task's sessions, each with its `subagents` |
+| `events.subscribe` | `ui:sessions` | none | `null`; the panel receives the task's events from now on |
+| `ui.focusSession` | `ui:sessions` | `sessionId` | `null`; shows that session's tab |
+
+Error codes are `method_not_found`, `permission_denied` and `invalid_params`. Anything that is not a call is ignored.
+
+The app also sends events as `{ event, data }`. `theme` (same shape as in `context`) arrives when the panel loads and whenever the theme changes, subscribed or not. After `events.subscribe` the panel gets, for the sessions of its task only, `session.changed`, `session.status_changed`, `session.removed`, `subagent.started` and `subagent.updated`, with the daemon's notification params as `data`.
+
+### Reporting subagents
+
+An agent plugin can make subagents show up in panels by calling the CLI from its hooks. Asterism sets `ASTERISM_SESSION` for every session it starts, and the hook commands never fail, so they are safe to call unconditionally:
+
+```sh
+asterism hook subagent-start --id <id> [--parent <id>] [--kind <kind>] [--description <text>] [--alias <id>]
+asterism hook subagent-stop --id <id> [--failed]
+```
+
+`--id` is any id unique within the session; `--parent` nests a subagent under another one. `--alias` is for an agent that learns a second id for a running subagent: repeat `subagent-start` with the same `--id` and `--alias <other>`, and a later `subagent-stop --id <other>` finishes it. Pass values that may start with `-` as `--description=<text>`. The Claude Code plugin (`crates/asterism/src/bin/asterism-plugin-claude/hook.rs`) maps Claude's `Agent` (formerly `Task`) tool calls to these commands; an asynchronous launch is aliased to Claude's agent id and finished by Claude's `SubagentStop` hook.
 
 ## Walkthrough: the echo plugin
 

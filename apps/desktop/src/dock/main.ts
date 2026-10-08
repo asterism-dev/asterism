@@ -2,6 +2,7 @@ import type { DockviewApi, DockviewGroupPanel } from 'dockview-vue';
 import { ref, shallowRef } from 'vue';
 import { api, errorMessage } from '../api';
 import { toast } from '../store';
+import type { PanelInfo } from '../types';
 import {
   LEGACY_KEYS,
   TEMPLATE_KEY,
@@ -9,6 +10,7 @@ import {
   fileTaskOf,
   floatKey,
   keptSizes,
+  pluginPanelId,
   sessionIdOf,
   staleKeys,
   toggleAction,
@@ -64,6 +66,36 @@ export function addTool(
     api.addPanel({ ...base, position: { referenceGroup: options.group, direction: 'within' } });
   else if (pane === 'activity' && diff)
     api.addPanel({ ...base, position: { referencePanel: diff, direction: 'within' } });
+  else {
+    const grid = gridGroups(api);
+    const anchor = grid.find(hasSession) ?? grid[0];
+    api.addPanel({
+      ...base,
+      initialWidth: 420,
+      ...(anchor && { position: { referenceGroup: anchor, direction: 'right' } }),
+    });
+  }
+}
+
+/** Adds a plugin panel into `group`, else right of the sessions; an open one is brought to the front. */
+export function addPluginPanel(
+  api: DockviewApi,
+  plugin: string,
+  panel: PanelInfo,
+  options: { group?: string } = {},
+) {
+  const id = pluginPanelId(plugin, panel.id);
+  const existing = api.getPanel(id);
+  if (existing) return existing.api.setActive();
+  const base = {
+    id,
+    component: 'plugin',
+    tabComponent: 'pane',
+    title: panel.title,
+    params: { plugin, panel: panel.id },
+  };
+  if (options.group)
+    api.addPanel({ ...base, position: { referenceGroup: options.group, direction: 'within' } });
   else {
     const grid = gridGroups(api);
     const anchor = grid.find(hasSession) ?? grid[0];

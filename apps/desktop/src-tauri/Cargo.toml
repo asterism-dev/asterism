@@ -12,6 +12,7 @@ asterism-node = { path = "../../../crates/asterism-node" }
 asterism-proto = { path = "../../../crates/asterism-proto" }
 serde_json = "1"
 tauri = { version = "2", features = [] }
+base64 = "0.22"
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"

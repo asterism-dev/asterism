@@ -7,10 +7,12 @@ use asterism_proto::types::{Capability, CapabilityKind, PluginOrigin};
 use serde::{Deserialize, Serialize};
 
 use super::manifest::{self, AgentDecl, CommandDecl, ForgeDecl, Manifest, TaskSourceDecl};
+use super::ui;
 use crate::agent_settings::write_atomic;
 
 /// Manifests of the plugins shipped with asterism; their backends sit next to `asterismd`.
 pub const BUILTIN: &[(&str, &str)] = &[
+    ("agents", include_str!("../../plugins/agents/plugin.toml")),
     ("claude", include_str!("../../plugins/claude/plugin.toml")),
     ("github", include_str!("../../plugins/github/plugin.toml")),
     ("linear", include_str!("../../plugins/linear/plugin.toml")),
@@ -125,6 +127,18 @@ impl Registry {
             }
             if plugin.is_ok() && sources.disabled.contains(&plugin.name) {
                 plugin.status = Status::Disabled;
+            }
+            if plugin.is_ok() {
+                let reason = plugin.manifest.as_ref().and_then(|m| {
+                    m.provides
+                        .panel
+                        .iter()
+                        .find(|p| ui::read(&plugin, &p.entry).is_none())
+                        .map(|p| format!("panel {}: cannot read {}", p.id, p.entry))
+                });
+                if let Some(reason) = reason {
+                    plugin.status = Status::Broken(reason);
+                }
             }
             if plugin.is_ok() {
                 let capabilities = plugin.capabilities();
@@ -311,7 +325,12 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            [("claude", true), ("github", true), ("linear", true)]
+            [
+                ("agents", true),
+                ("claude", true),
+                ("github", true),
+                ("linear", true)
+            ]
         );
         let (plugin, forge) = registry.forge("github").unwrap();
         assert_eq!(
@@ -339,7 +358,7 @@ mod tests {
             (github.origin, github.dir.clone()),
             (PluginOrigin::Linked, dir)
         );
-        assert_eq!(registry.plugins().len(), 3);
+        assert_eq!(registry.plugins().len(), 4);
         assert_eq!(github.backend_command().unwrap(), ["python3", "x.py"]);
     }
 

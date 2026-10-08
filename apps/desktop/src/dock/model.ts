@@ -2,6 +2,8 @@ import type { SerializedDockview } from 'dockview-vue';
 
 export type ToolPane = 'diff' | 'activity';
 export const isToolPane = (id: string): id is ToolPane => id === 'diff' || id === 'activity';
+export const pluginPanelId = (plugin: string, panel: string) => `plugin:${plugin}/${panel}`;
+export const isPluginPanel = (id: string) => id.startsWith('plugin:');
 
 export const WORKSPACE_PREFIX = 'asterism.workspace.';
 export const FLOAT_PREFIX = 'asterism.float.';
@@ -25,7 +27,7 @@ export function fileTaskOf(panelId: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
-/** Panels to drop and sessions to add so a saved layout shows exactly the task's sessions; tool panes and the task's own file panes stay. */
+/** Panels to drop and sessions to add so a saved layout shows exactly the task's sessions; tool panes, plugin panels and the task's own file panes stay. */
 export function reconcile(
   panelIds: string[],
   sessionIds: number[],
@@ -34,7 +36,7 @@ export function reconcile(
   const wanted = new Set(sessionIds);
   const shown = new Set<number>();
   const remove = panelIds.filter((id) => {
-    if (isToolPane(id)) return false;
+    if (isToolPane(id) || isPluginPanel(id)) return false;
     // File panes inherited from another task through the layout template are dropped.
     const fileTask = fileTaskOf(id);
     if (fileTask !== null) return fileTask !== taskId;

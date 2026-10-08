@@ -152,7 +152,20 @@ export type NodeEvent =
   | { method: 'project.removed'; params: { project_id: number } }
   | { method: 'plugins.changed'; params: Record<string, never> }
   | { method: 'stores.changed'; params: Record<string, never> }
-  | { method: 'pr.changed'; params: { task_id: number; pr: PullRequest | null } };
+  | { method: 'pr.changed'; params: { task_id: number; pr: PullRequest | null } }
+  | { method: 'subagent.started'; params: { session_id: number; subagent: Subagent } }
+  | { method: 'subagent.updated'; params: { session_id: number; subagent: Subagent } };
+
+export type SubagentStatus = 'running' | 'done' | 'failed' | 'ended';
+export interface Subagent {
+  id: string;
+  parent_id: string | null;
+  kind: string;
+  description: string;
+  status: SubagentStatus;
+  started_at: number;
+  ended_at: number | null;
+}
 
 export interface TaskDeleteCheck {
   dirty: boolean;
@@ -289,7 +302,13 @@ export type PluginState =
   | { state: 'broken'; reason: string }
   | { state: 'failing'; reason: string }
   | { state: 'disabled' };
-export type CapabilityKind = 'forge' | 'agent' | 'command' | 'task_source';
+export type CapabilityKind = 'forge' | 'agent' | 'command' | 'task_source' | 'panel';
+export interface PanelInfo {
+  id: string;
+  title: string;
+  entry: string;
+  slot: string;
+}
 export interface Capability {
   kind: CapabilityKind;
   id: string;
@@ -302,6 +321,7 @@ export interface PluginInfo {
   origin: 'builtin' | 'linked' | 'installed';
   path: string;
   capabilities: Capability[];
+  panels: PanelInfo[];
   permissions: string[];
   state: PluginState;
   backend: string[] | null;
