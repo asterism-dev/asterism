@@ -26,8 +26,10 @@ function subagentItem(node, now) {
   const li = el('li');
   const row = el('div', 'row');
   const end = node.ended_at ?? now;
+  const time = el('span', 'time', formatDuration(end - node.started_at));
+  if (node.ended_at == null) time.dataset.started = String(node.started_at);
   row.append(el('span', `dot ${node.status}`), el('span', 'kind', node.kind || 'agent'),
-    el('span', '', node.description), el('span', 'time', formatDuration(end - node.started_at)));
+    el('span', '', node.description), time);
   li.append(row);
   if (node.children.length) li.append(listOf(node.children, now));
   return li;
@@ -94,4 +96,10 @@ applyTheme(context.theme);
 await call('events.subscribe');
 sessions = await call('sessions.list');
 render();
-setInterval(() => sessions.some((s) => s.subagents.some((x) => x.status === 'running')) && render(), 1000);
+// Only touch the running timers: rebuilding the tree every second would swallow clicks.
+setInterval(() => {
+  const now = Date.now() / 1000;
+  for (const time of document.querySelectorAll('.time[data-started]')) {
+    time.textContent = formatDuration(now - Number(time.dataset.started));
+  }
+}, 1000);
