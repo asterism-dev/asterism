@@ -11,10 +11,12 @@ import { setTheme, themeChoice, type ThemeChoice } from '../theme';
 import { checkForUpdates, installUpdate, RELEASES_URL, updateLabel, updater } from '../updater';
 import AgentSettings from './AgentSettings.vue';
 import PathsSettings from './PathsSettings.vue';
+import ShortcutsSettings from './ShortcutsSettings.vue';
 import PluginSettingsForm from './plugins/PluginSettingsForm.vue';
 import PluginsSettings from './PluginsSettings.vue';
 
-type Section = 'interface' | 'paths' | 'sessions' | 'plugins' | 'about' | `plugin:${string}`;
+type Section =
+  'interface' | 'shortcuts' | 'paths' | 'sessions' | 'plugins' | 'about' | `plugin:${string}`;
 const section = ref<Section>('interface');
 const sessionKind = ref(BASE_AGENTS[0]);
 const tabs = ref<PluginTab[]>([]);
@@ -86,6 +88,9 @@ async function open(next: Section) {
         <button :class="{ active: section === 'interface' }" @click="open('interface')">
           Interface
         </button>
+        <button :class="{ active: section === 'shortcuts' }" @click="open('shortcuts')">
+          Shortcuts
+        </button>
         <button :class="{ active: section === 'paths' }" @click="open('paths')">Paths</button>
         <button :class="{ active: section === 'sessions' }" @click="open('sessions')">
           Sessions
@@ -120,6 +125,9 @@ async function open(next: Section) {
             System follows your operating system's appearance. Terminals stay dark.
           </p>
         </section>
+      </div>
+      <div v-else-if="section === 'shortcuts'" class="settings-content">
+        <ShortcutsSettings />
       </div>
       <div v-else-if="section === 'paths'" class="settings-content">
         <PathsSettings />

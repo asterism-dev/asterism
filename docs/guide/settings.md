@@ -8,6 +8,29 @@ section with unsaved changes, Asterism asks whether to discard them.
 
 **Theme** — **System** (follows macOS appearance), **Light** or **Dark**. Terminals always stay dark.
 
+## Shortcuts
+
+Every main action has a keyboard shortcut, shown next to the action (on buttons and in tooltips).
+
+| Action | macOS | Linux / Windows |
+|---|---|---|
+| New task | ⌘N | Ctrl+Shift+N |
+| New project | ⇧⌘N | Ctrl+Shift+P |
+| Settings | ⌘, | Ctrl+, |
+| Search sidebar | ⌘F | Ctrl+Shift+F |
+| Next waiting session | ⌘J | Ctrl+Shift+J |
+| Toggle sidebar | ⌘B | Ctrl+Shift+B |
+| Toggle diff | ⌥⌘B | Ctrl+Alt+Shift+B |
+| Confirm dialog | ⌘↩ | Ctrl+↩ |
+
+To change one, click its shortcut and press the new keys (Esc cancels). A shortcut must include ⌘, ⌃ or ⌥
+(Ctrl or Alt on Linux / Windows). If the keys are already in use, Asterism asks whether to move them. **Clear**
+removes a shortcut, **Reset** restores the default, **Reset all** restores every default. Changes apply
+immediately.
+
+While a terminal has focus, only shortcuts with ⌘ (Ctrl+Shift on Linux / Windows) work; all other keys go to the
+terminal.
+
 ## Paths
 
 - **Repositories** — where cloned and newly created repositories go, as `<owner>/<repo>`. Default:
