@@ -122,6 +122,7 @@ function plugin(over: Partial<PluginInfo>): PluginInfo {
     origin: 'installed',
     path: '/p',
     capabilities: [],
+    panels: [],
     permissions: [],
     state: { state: 'ok' },
     backend: null,
@@ -159,6 +160,7 @@ describe('store helpers', () => {
     expect(permissionText('exec:glab')).toBe('Runs glab');
     expect(permissionText('network')).toBe('Network access');
     expect(permissionText('fs:read')).toBe('fs:read');
+    expect(permissionText('ui:sessions')).toBe("Panels see this task's sessions and subagents");
     expect(newPermissions(['network'], ['network', 'exec:gh'])).toEqual(['exec:gh']);
   });
 

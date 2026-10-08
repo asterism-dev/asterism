@@ -41,6 +41,7 @@ const KIND_LABELS: Record<CapabilityKind, string> = {
   agent: 'Agent',
   command: 'Command',
   task_source: 'Task source',
+  panel: 'Panel',
 };
 
 export function capabilityChips(plugin: PluginInfo): string[] {
@@ -105,6 +106,7 @@ export function updateCount(plugins: PluginInfo[]): number {
 
 export function permissionText(permission: string): string {
   if (permission === 'network') return 'Network access';
+  if (permission === 'ui:sessions') return "Panels see this task's sessions and subagents";
   if (permission.startsWith('exec:')) return `Runs ${permission.slice('exec:'.length)}`;
   return permission;
 }
