@@ -26,7 +26,7 @@ async function open(e: MouseEvent) {
   const panels = plugins
     .filter((p) => p.state.state === 'ok')
     .flatMap((p) =>
-      p.panels.filter((x) => x.slot === 'task').map((x) => ({ plugin: p.name, panel: x })),
+      (p.panels ?? []).filter((x) => x.slot === 'task').map((x) => ({ plugin: p.name, panel: x })),
     )
     .filter(({ plugin, panel }) => !containerApi.getPanel(pluginPanelId(plugin, panel.id)))
     .map(({ plugin, panel }) => ({

@@ -17,7 +17,7 @@ let unregister: (() => void) | null = null;
 async function load() {
   const { plugin: name, panel: id } = props.params.params;
   plugin = (await api.plugins()).find((p) => p.name === name);
-  const panel = plugin?.panels.find((p) => p.id === id);
+  const panel = (plugin?.panels ?? []).find((p) => p.id === id);
   if (!plugin || !panel) notice.value = `The plugin ${name} is not installed.`;
   else if (plugin.state.state !== 'ok')
     notice.value = `The plugin ${name} is not available (${plugin.state.state}).`;
