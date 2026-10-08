@@ -52,12 +52,9 @@ export function registerFrame(win: Window, ctx: PanelContext): () => void {
   return () => frames.delete(win);
 }
 
-/** A (re)loaded document starts unsubscribed and needs the theme again. */
+// Keeps `subscribed` across reloads: the new document's subscribe may beat this load event.
 export function frameLoaded(win: Window) {
-  const ctx = frames.get(win);
-  if (!ctx) return;
-  ctx.subscribed = false;
-  post(win, { event: 'theme', data: theme() });
+  if (frames.has(win)) post(win, { event: 'theme', data: theme() });
 }
 
 export function forwardEvent(event: NodeEvent) {
