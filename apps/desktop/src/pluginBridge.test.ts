@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { handleMessage, panelEvent, type BridgeDeps, type PanelContext } from './pluginBridge';
+import { reactive } from 'vue';
+import {
+  handleMessage,
+  panelEvent,
+  plainSessions,
+  type BridgeDeps,
+  type PanelContext,
+} from './pluginBridge';
+import { initialState, taskSessions } from './store';
 import type { Session, Subagent } from './types';
 
 const session = (id: number, task_id: number): Session => ({
@@ -44,6 +52,16 @@ describe('handleMessage', () => {
   it('lists only the task sessions with their subagents', async () => {
     const res = await handleMessage({ id: 2, method: 'sessions.list' }, ctx(), deps());
     expect(res).toEqual({ id: 2, result: [{ ...session(1, 10), subagents: [sub] }] });
+  });
+
+  it('lists sessions from the reactive store in a postable form', async () => {
+    const st = reactive({ ...initialState(), sessions: [session(1, 10)] });
+    const d = { ...deps(), sessions: (taskId: number) => plainSessions(taskSessions(st, taskId)) };
+    const res = await handleMessage({ id: 2, method: 'sessions.list' }, ctx(), d);
+    expect(structuredClone(res)).toEqual({
+      id: 2,
+      result: [{ ...session(1, 10), subagents: [sub] }],
+    });
   });
 
   it('lists a session with no subagents when fetching them fails', async () => {

@@ -1,3 +1,4 @@
+import { toRaw } from 'vue';
 import type { NodeEvent, Session, Subagent } from './types';
 
 export type BridgeErrorCode = 'method_not_found' | 'permission_denied' | 'invalid_params';
@@ -33,6 +34,9 @@ export const THEME_VARS = [
   '--waiting',
   '--exited',
 ];
+
+/** Store sessions are reactive proxies, which postMessage cannot clone. */
+export const plainSessions = (sessions: Session[]): Session[] => sessions.map((s) => toRaw(s));
 
 const NEEDS_SESSIONS = new Set(['sessions.list', 'events.subscribe', 'ui.focusSession']);
 

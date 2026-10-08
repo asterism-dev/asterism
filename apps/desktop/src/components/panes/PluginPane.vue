@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { api } from '../../api';
-import { pluginUrl, registerFrame } from '../../pluginFrames';
+import { frameLoaded, pluginUrl, registerFrame } from '../../pluginFrames';
+import type { PanelContext } from '../../pluginBridge';
 import { state } from '../../store';
 import type { PluginInfo } from '../../types';
 
@@ -10,6 +11,7 @@ const frame = ref<HTMLIFrameElement | null>(null);
 const src = ref<string | null>(null);
 const notice = ref('Loading…');
 let plugin: PluginInfo | undefined;
+let ctx: PanelContext | null = null;
 let unregister: (() => void) | null = null;
 
 async function load() {
@@ -19,23 +21,33 @@ async function load() {
   if (!plugin || !panel) notice.value = `The plugin ${name} is not installed.`;
   else if (plugin.state.state !== 'ok')
     notice.value = `The plugin ${name} is not available (${plugin.state.state}).`;
-  else return void (src.value = pluginUrl(name, panel.entry));
+  else {
+    if (ctx) ctx.permissions = plugin.permissions;
+    return void (src.value = pluginUrl(name, panel.entry));
+  }
   src.value = null;
 }
 
-function onLoad() {
+// Register as soon as the iframe exists: its module script may call the bridge before `load`.
+// contentWindow keeps its identity across navigations, so one registration covers reloads.
+function register(el: HTMLIFrameElement | null) {
   unregister?.();
-  const win = frame.value?.contentWindow;
+  unregister = null;
+  ctx = null;
+  const win = el?.contentWindow;
   if (!win || !plugin || state.selectedTaskId === null) return;
-  unregister = registerFrame(win, {
-    taskId: state.selectedTaskId,
-    permissions: plugin.permissions,
-    subscribed: false,
-  });
+  ctx = { taskId: state.selectedTaskId, permissions: plugin.permissions, subscribed: false };
+  unregister = registerFrame(win, ctx);
+}
+
+function onLoad() {
+  const win = frame.value?.contentWindow;
+  if (win) frameLoaded(win);
 }
 
 onMounted(load);
 watch(() => state.pluginsVersion, load);
+watch(frame, register, { flush: 'post' });
 onBeforeUnmount(() => unregister?.());
 </script>
 

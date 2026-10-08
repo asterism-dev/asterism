@@ -3,6 +3,7 @@ import { api } from './api';
 import {
   handleMessage,
   panelEvent,
+  plainSessions,
   THEME_VARS,
   type BridgeDeps,
   type PanelContext,
@@ -29,8 +30,17 @@ function theme(): ThemeInfo {
   };
 }
 
+// A closed frame or an uncloneable value must never throw out of the app.
+function post(win: Window, message: unknown) {
+  try {
+    win.postMessage(message, '*');
+  } catch (err) {
+    console.warn('plugin panel postMessage failed', err);
+  }
+}
+
 const deps: BridgeDeps = {
-  sessions: (taskId) => taskSessions(state, taskId),
+  sessions: (taskId) => plainSessions(taskSessions(state, taskId)),
   subagents: (sessionId) => api.subagents(sessionId),
   focus: (session) => selectSession(state, session),
   theme,
@@ -38,15 +48,23 @@ const deps: BridgeDeps = {
 
 export function registerFrame(win: Window, ctx: PanelContext): () => void {
   frames.set(win, ctx);
-  win.postMessage({ event: 'theme', data: theme() }, '*');
+  post(win, { event: 'theme', data: theme() });
   return () => frames.delete(win);
+}
+
+/** A (re)loaded document starts unsubscribed and needs the theme again. */
+export function frameLoaded(win: Window) {
+  const ctx = frames.get(win);
+  if (!ctx) return;
+  ctx.subscribed = false;
+  post(win, { event: 'theme', data: theme() });
 }
 
 export function forwardEvent(event: NodeEvent) {
   for (const [win, ctx] of frames) {
     if (!ctx.subscribed) continue;
     const message = panelEvent(event, ctx.taskId, state.sessions);
-    if (message) win.postMessage(message, '*');
+    if (message) post(win, message);
   }
 }
 
@@ -57,12 +75,12 @@ export function initPluginFrames() {
     const ctx = win && frames.get(win);
     if (!win || !ctx) return;
     const response = await handleMessage(e.data, ctx, deps);
-    if (response) win.postMessage(response, '*');
+    if (response) post(win, response);
   });
   watch(
     activeTheme,
     () => {
-      for (const win of frames.keys()) win.postMessage({ event: 'theme', data: theme() }, '*');
+      for (const win of frames.keys()) post(win, { event: 'theme', data: theme() });
     },
     { flush: 'post' },
   );
