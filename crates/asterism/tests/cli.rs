@@ -308,6 +308,22 @@ fn claude_subagent_hooks_track_start_and_stop() {
         br#"{"tool_use_id":"t1","tool_response":{}}"#,
     );
     assert!(eventually(&|| subagents()[0].status == SubagentStatus::Done));
+    hook(
+        "subagent-start",
+        br#"{"tool_use_id":"t2","tool_input":{"subagent_type":"Explore","description":"async"}}"#,
+    );
+    hook(
+        "subagent-stop",
+        br#"{"tool_use_id":"t2","tool_response":{"isAsync":true,"status":"async_launched","agentId":"a884c554c74adf3e3"}}"#,
+    );
+    assert!(eventually(&|| subagents().len() == 2));
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert_eq!(subagents()[1].status, SubagentStatus::Running);
+    hook(
+        "subagent-end",
+        br#"{"agent_id":"a884c554c74adf3e3","agent_type":"Explore"}"#,
+    );
+    assert!(eventually(&|| subagents()[1].status == SubagentStatus::Done));
     let bare = node.cmd(&["hook", "subagent-stop"]);
     assert!(bare.status.success());
     node.cmd(&["session", "kill", &session]);

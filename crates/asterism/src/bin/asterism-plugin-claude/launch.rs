@@ -12,6 +12,12 @@ const STATUS_HOOKS: &[(&str, &str, Option<&str>)] = &[
     ("PreToolUse", "tool", None),
     ("PreToolUse", "subagent-start", Some(SUBAGENT_TOOLS)),
     ("PostToolUse", "subagent-stop", Some(SUBAGENT_TOOLS)),
+    (
+        "PostToolUseFailure",
+        "subagent-failed",
+        Some(SUBAGENT_TOOLS),
+    ),
+    ("SubagentStop", "subagent-end", None),
     ("Stop", "stop", None),
     ("Notification", "notification", None),
 ];
@@ -191,6 +197,13 @@ mod tests {
             ("PreToolUse", 0, "tool", None),
             ("PreToolUse", 1, "subagent-start", Some("Agent|Task")),
             ("PostToolUse", 0, "subagent-stop", Some("Agent|Task")),
+            (
+                "PostToolUseFailure",
+                0,
+                "subagent-failed",
+                Some("Agent|Task"),
+            ),
+            ("SubagentStop", 0, "subagent-end", None),
             ("Stop", 0, "stop", None),
             ("Notification", 0, "notification", None),
         ] {
