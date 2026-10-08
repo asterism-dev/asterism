@@ -48,6 +48,8 @@ pub struct AgentConfig {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: EnvPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hibernate_after_min: Option<u32>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]

@@ -13,7 +13,7 @@ display_name = "Claude Code"
 binary = "claude"
 launch = "backend"
 waiting_patterns = ["Do you want to", "❯ 1. Yes"]
-settings = ["args", "mcp", "hooks"]
+settings = ["args", "mcp", "hooks", "hibernate"]
 reserved_args = ["--", "--settings", "--mcp-config", "--resume", "-r", "--continue", "-c", "--print", "-p", "--settings=", "--mcp-config=", "--resume="]
 
 [[settings]]
