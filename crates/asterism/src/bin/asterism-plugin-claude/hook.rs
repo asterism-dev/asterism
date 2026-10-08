@@ -58,14 +58,15 @@ pub fn subagent_args(event: &str, payload: &Value) -> Option<Vec<String>> {
     }
     // ponytail: Claude's tool payload shape (tool_use_id, tool_input, tool_response.is_error); verify against real Claude and update if it changes.
     let id = payload["tool_use_id"].as_str()?;
-    let mut args = vec!["--id".to_string(), id.to_string()];
+    // `--flag=value` keeps values that start with `-` from parsing as flags.
+    let mut args = vec![format!("--id={id}")];
     if event == "subagent-start" {
         for (flag, key) in [
             ("--kind", "subagent_type"),
             ("--description", "description"),
         ] {
             if let Some(value) = payload["tool_input"][key].as_str() {
-                args.extend([flag.to_string(), value.to_string()]);
+                args.push(format!("{flag}={value}"));
             }
         }
         return Some(args);
@@ -166,23 +167,20 @@ mod tests {
         assert_eq!(
             subagent_args("subagent-start", &start),
             Some(vec![
-                "--id".into(),
-                "toolu_1".into(),
-                "--kind".into(),
-                "Explore".into(),
-                "--description".into(),
-                "find it".into()
+                "--id=toolu_1".into(),
+                "--kind=Explore".into(),
+                "--description=find it".into()
             ])
         );
         let done = json!({"tool_use_id": "toolu_1", "tool_response": {"content": []}});
         assert_eq!(
             subagent_args("subagent-stop", &done),
-            Some(vec!["--id".into(), "toolu_1".into()])
+            Some(vec!["--id=toolu_1".into()])
         );
         let failed = json!({"tool_use_id": "toolu_1", "tool_response": {"is_error": true}});
         assert_eq!(
             subagent_args("subagent-stop", &failed),
-            Some(vec!["--id".into(), "toolu_1".into(), "--failed".into()])
+            Some(vec!["--id=toolu_1".into(), "--failed".into()])
         );
         let background =
             json!({"tool_use_id": "toolu_2", "tool_input": {"run_in_background": true}});

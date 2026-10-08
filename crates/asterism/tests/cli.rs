@@ -298,10 +298,11 @@ fn claude_subagent_hooks_track_start_and_stop() {
     };
     hook(
         "subagent-start",
-        br#"{"tool_use_id":"t1","tool_input":{"subagent_type":"Explore","description":"d"}}"#,
+        br#"{"tool_use_id":"t1","tool_input":{"subagent_type":"Explore","description":"-d"}}"#,
     );
     assert!(eventually(&|| subagents().len() == 1));
     assert_eq!(subagents()[0].kind, "Explore");
+    assert_eq!(subagents()[0].description, "-d");
     hook(
         "subagent-stop",
         br#"{"tool_use_id":"t1","tool_response":{}}"#,
