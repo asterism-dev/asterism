@@ -73,7 +73,8 @@ const actions: Record<GlobalActionId, () => void> = {
     const projectId = selectedTask.value?.project_id ?? state.projects[0]?.id;
     if (projectId !== undefined) state.newTaskFor = projectId;
   },
-  newProject: () => (state.projectDialog = 'folder'),
+  // A dialog that is already open may be mid-clone; switching its tab would orphan that work.
+  newProject: () => (state.projectDialog ??= 'folder'),
   settings: () => (state.settingsOpen = true),
   search: () => {
     sidebar.open = true;

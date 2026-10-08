@@ -188,6 +188,14 @@ export function findConflict(bindings: Bindings, b: Binding, except: ActionId): 
   );
 }
 
+export function findResetConflict(
+  overrides: Overrides,
+  id: ActionId,
+  mac: boolean,
+): ActionId | null {
+  return findConflict(resolveBindings(overrides, mac), ACTIONS[id][mac ? 'mac' : 'other'], id);
+}
+
 export function formatBinding(b: Binding, mac: boolean): string {
   if (mac)
     return `${b.ctrl ? '⌃' : ''}${b.alt ? '⌥' : ''}${b.shift ? '⇧' : ''}${b.meta ? '⌘' : ''}${b.label}`;
@@ -231,6 +239,9 @@ export function setBinding(id: ActionId, b: Binding | null) {
   else next[id] = b;
   save(next);
 }
+
+export const defaultBinding = (id: ActionId) => ACTIONS[id][IS_MAC ? 'mac' : 'other'];
+export const resetConflict = (id: ActionId) => findResetConflict(overrides.value, id, IS_MAC);
 
 export function resetBinding(id: ActionId) {
   const next = { ...overrides.value };

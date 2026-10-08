@@ -7,11 +7,13 @@ import {
   bindingFor,
   bindingFromEvent,
   conflictFor,
+  defaultBinding,
   formatBinding,
   hasOverride,
   isUsable,
   resetAll,
   resetBinding,
+  resetConflict,
   setBinding,
   shortcutHint,
   terminalSafe,
@@ -59,6 +61,12 @@ function onRecordKey(e: KeyboardEvent) {
   else setBinding(id, b);
 }
 
+function requestReset(id: ActionId) {
+  const conflict = resetConflict(id);
+  if (conflict) pending.value = { id, binding: defaultBinding(id), conflict };
+  else resetBinding(id);
+}
+
 function replace() {
   const p = pending.value;
   if (!p) return;
@@ -102,7 +110,7 @@ onUnmounted(stopRecording);
           </td>
           <td class="row-actions">
             <button v-if="bindingFor(id)" @click="setBinding(id, null)">Clear</button>
-            <button v-if="hasOverride(id)" @click="resetBinding(id)">Reset</button>
+            <button v-if="hasOverride(id)" @click="requestReset(id)">Reset</button>
           </td>
         </tr>
       </tbody>

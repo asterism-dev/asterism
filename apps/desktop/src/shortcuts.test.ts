@@ -4,6 +4,7 @@ import {
   bindingFromEvent,
   findAction,
   findConflict,
+  findResetConflict,
   formatBinding,
   isUsable,
   parseOverrides,
@@ -161,6 +162,12 @@ describe('shortcuts', () => {
     expect(findConflict(mac, ACTIONS.newTask.mac, 'settings')).toBe('newTask');
     expect(findConflict(mac, ACTIONS.newTask.mac, 'newTask')).toBeNull();
     expect(findConflict(mac, ctrlK, 'settings')).toBeNull();
+  });
+
+  it('reports which action holds a default before resetting to it', () => {
+    const overrides = { newTask: ACTIONS.confirm.mac, confirm: null };
+    expect(findResetConflict(overrides, 'confirm', true)).toBe('newTask');
+    expect(findResetConflict({ confirm: null }, 'confirm', true)).toBeNull();
   });
 
   it('formats bindings per platform', () => {
