@@ -13,6 +13,7 @@ pub const BUILTIN_COMMANDS: &[&str] = &[
 ];
 /// Built-in session kinds that share the agent namespace for settings.
 const SESSION_KINDS: &[&str] = &["shell", "command"];
+pub const UI_PERMISSIONS: &[&str] = &["ui:sessions"];
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -48,6 +49,23 @@ pub struct Provides {
     pub command: Vec<CommandDecl>,
     #[serde(default)]
     pub task_source: Vec<TaskSourceDecl>,
+    #[serde(default)]
+    pub panel: Vec<PanelDecl>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PanelSlot {
+    Task,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PanelDecl {
+    pub id: String,
+    pub title: String,
+    pub entry: String,
+    pub slot: PanelSlot,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -164,6 +182,11 @@ impl Manifest {
                     .iter()
                     .map(|t| cap(CapabilityKind::TaskSource, &t.id, &t.display_name)),
             )
+            .chain(
+                p.panel
+                    .iter()
+                    .map(|n| cap(CapabilityKind::Panel, &n.id, &n.title)),
+            )
             .collect()
     }
 }
@@ -237,6 +260,25 @@ fn validate(m: &Manifest) -> Result<(), String> {
     unique("command", p.command.iter().map(|c| &c.name))?;
     unique("task source", p.task_source.iter().map(|t| &t.id))?;
     unique("setting", m.settings.iter().map(|s| &s.key))?;
+    unique("panel", p.panel.iter().map(|n| &n.id))?;
+    for panel in &p.panel {
+        if !is_slug(&panel.id) {
+            return Err(format!("panel id {:?} is not a valid name", panel.id));
+        }
+        if !super::ui::is_safe_path(&panel.entry) {
+            return Err(format!(
+                "panel {}: entry {:?} must be a relative path inside the plugin",
+                panel.id, panel.entry
+            ));
+        }
+    }
+    if let Some(unknown) = m
+        .permissions
+        .iter()
+        .find(|p| p.starts_with("ui:") && !UI_PERMISSIONS.contains(&p.as_str()))
+    {
+        return Err(format!("unknown permission {unknown:?}"));
+    }
     for id in p
         .forge
         .iter()
@@ -347,6 +389,40 @@ required = true
             m.backend_capabilities(),
             ["forge", "task_source"].map(String::from).into()
         );
+    }
+
+    const PANEL: &str = "[[provides.panel]]\nid = \"agents\"\ntitle = \"Agents\"\nentry = \"ui/agents.html\"\nslot = \"task\"\n";
+    const UI_ONLY: &str =
+        "name = \"agents\"\nversion = \"0.1.0\"\nprotocol = 1\npermissions = [\"ui:sessions\"]\n";
+
+    #[test]
+    fn panels_need_no_backend_and_are_capabilities() {
+        let m = parse(&format!("{UI_ONLY}{PANEL}")).unwrap();
+        assert_eq!(m.provides.panel[0].entry, "ui/agents.html");
+        let caps = m.capabilities();
+        assert_eq!(
+            (caps[0].kind, caps[0].id.as_str()),
+            (CapabilityKind::Panel, "agents")
+        );
+        assert!(m.backend_capabilities().is_empty());
+    }
+
+    #[test]
+    fn rejects_bad_panels_and_unknown_ui_permissions() {
+        for bad in [
+            PANEL.replace("ui/agents.html", "../x.html"),
+            PANEL.replace("ui/agents.html", "/etc/passwd"),
+            PANEL.replace("ui/agents.html", ""),
+            PANEL.replace("\"task\"", "\"global\""),
+            PANEL.replace("\"agents\"", "\"Not A Slug\""),
+            format!("{PANEL}{PANEL}"),
+        ] {
+            assert!(parse(&format!("{UI_ONLY}{bad}")).is_err(), "{bad}");
+        }
+        let unknown = UI_ONLY.replace("ui:sessions", "ui:everything");
+        assert!(parse(&format!("{unknown}{PANEL}"))
+            .unwrap_err()
+            .contains("ui:everything"));
     }
 
     #[test]

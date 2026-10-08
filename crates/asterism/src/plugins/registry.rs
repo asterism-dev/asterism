@@ -7,6 +7,7 @@ use asterism_proto::types::{Capability, CapabilityKind, PluginOrigin};
 use serde::{Deserialize, Serialize};
 
 use super::manifest::{self, AgentDecl, CommandDecl, ForgeDecl, Manifest, TaskSourceDecl};
+use super::ui;
 use crate::agent_settings::write_atomic;
 
 /// Manifests of the plugins shipped with asterism; their backends sit next to `asterismd`.
@@ -125,6 +126,18 @@ impl Registry {
             }
             if plugin.is_ok() && sources.disabled.contains(&plugin.name) {
                 plugin.status = Status::Disabled;
+            }
+            if plugin.is_ok() {
+                let reason = plugin.manifest.as_ref().and_then(|m| {
+                    m.provides
+                        .panel
+                        .iter()
+                        .find(|p| ui::read(&plugin, &p.entry).is_none())
+                        .map(|p| format!("panel {}: cannot read {}", p.id, p.entry))
+                });
+                if let Some(reason) = reason {
+                    plugin.status = Status::Broken(reason);
+                }
             }
             if plugin.is_ok() {
                 let capabilities = plugin.capabilities();

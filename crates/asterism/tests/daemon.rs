@@ -966,3 +966,54 @@ fn hello_reports_the_configured_node_name() {
         .unwrap();
     assert_eq!(hello.hostname, "test-node");
 }
+
+fn ui_plugin(dir: &Path, with_entry: bool) {
+    std::fs::create_dir_all(dir.join("ui")).unwrap();
+    std::fs::write(
+        dir.join("plugin.toml"),
+        "name = \"uip\"\nversion = \"0.1.0\"\nprotocol = 1\n\n[[provides.panel]]\nid = \"uip\"\ntitle = \"Ui\"\nentry = \"ui/a.html\"\nslot = \"task\"\n",
+    )
+    .unwrap();
+    if with_entry {
+        std::fs::write(dir.join("ui/a.html"), "<p>hi").unwrap();
+    }
+}
+
+#[tokio::test]
+async fn serves_plugin_ui_files_and_flags_missing_entries() {
+    let env = setup();
+    let ok = env.home.path().join("ok");
+    ui_plugin(&ok, true);
+    let info = env
+        .daemon
+        .plugin_link(&ok.display().to_string())
+        .await
+        .unwrap();
+    assert_eq!(info.state, PluginState::Ok);
+    assert_eq!(info.panels[0].entry, "ui/a.html");
+    let file = |path: &str| {
+        env.daemon.plugin_ui_file(PluginUiFileParams {
+            plugin: "uip".into(),
+            path: path.into(),
+        })
+    };
+    let served = file("ui/a.html").unwrap();
+    assert_eq!(served.mime, "text/html; charset=utf-8");
+    assert_eq!(served.data, "PHA+aGk=");
+    assert_eq!(
+        file("../plugin.toml").unwrap_err().kind,
+        ErrorKind::NotFound
+    );
+    env.daemon.plugin_set_enabled("uip", false).await.unwrap();
+    assert_eq!(file("ui/a.html").unwrap_err().kind, ErrorKind::NotFound);
+
+    let env = setup();
+    let bad = env.home.path().join("bad");
+    ui_plugin(&bad, false);
+    let info = env
+        .daemon
+        .plugin_link(&bad.display().to_string())
+        .await
+        .unwrap();
+    assert!(matches!(info.state, PluginState::Broken { reason } if reason.contains("cannot read")));
+}

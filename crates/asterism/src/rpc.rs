@@ -251,6 +251,7 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             daemon.plugin_set_enabled(&p.name, p.enabled).await?;
             Ok(Value::Null)
         }
+        method::PLUGIN_UI_FILE => to_value(daemon.plugin_ui_file(params(raw)?)?),
         method::PLUGIN_LIST => to_value(daemon.plugin_list()?),
         method::PLUGIN_LINK => to_value(
             daemon

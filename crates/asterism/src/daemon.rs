@@ -12,6 +12,8 @@ use asterism_plugin::protocol::{
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
 use asterism_proto::PROTO_VERSION;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use tokio::sync::{broadcast, watch, Notify};
@@ -28,7 +30,7 @@ use crate::plugins::catalog::{self, EntrySource, StoreConfig};
 use crate::plugins::manifest::{self, AgentDecl, LaunchKind, Manifest};
 use crate::plugins::process::{self, HostFn};
 use crate::plugins::registry::{self, Plugin, Status};
-use crate::plugins::{install, settings, source, store_ops, PluginSet, Runtime, STORE_LOCK};
+use crate::plugins::{install, settings, source, store_ops, ui, PluginSet, Runtime, STORE_LOCK};
 use crate::pr_status::{self, ForgeCandidate, InFlight, PrStatus};
 use crate::proc_stats::{self, CpuTracker};
 use crate::session::{Pty, Snapshot, SpawnSpec, SCROLLBACK_LINES};
@@ -314,8 +316,40 @@ impl Daemon {
             store: entry.map(|e| e.store.clone()),
             update_available: self.update_available(set, plugin),
             previous_version: entry.and_then(|e| e.previous.clone()),
-            panels: Vec::new(),
+            panels: manifest
+                .map(|m| {
+                    m.provides
+                        .panel
+                        .iter()
+                        .map(|p| PanelInfo {
+                            id: p.id.clone(),
+                            title: p.title.clone(),
+                            entry: p.entry.clone(),
+                            slot: "task".into(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
+    }
+
+    pub fn plugin_ui_file(&self, params: PluginUiFileParams) -> Result<PluginUiFile> {
+        let set = self.plugin_set();
+        let data = set
+            .registry
+            .get(&params.plugin)
+            .filter(|p| p.is_ok())
+            .and_then(|p| ui::read(p, &params.path));
+        let Some(data) = data else {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                format!("{}/{} not found", params.plugin, params.path),
+            ));
+        };
+        Ok(PluginUiFile {
+            mime: ui::mime(&params.path).into(),
+            data: BASE64.encode(data),
+        })
     }
 
     pub fn plugin_list(&self) -> Result<Vec<PluginInfo>> {
