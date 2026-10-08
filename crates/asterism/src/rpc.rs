@@ -416,6 +416,9 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
         method::SESSION_LIST => {
             to_value(daemon.sessions(params::<SessionListParams>(raw)?.task_id)?)
         }
+        method::SESSION_SUBAGENTS => {
+            to_value(daemon.subagents(params::<SessionSubagentsParams>(raw)?.session_id))
+        }
         method::SESSION_START => to_value(daemon.start_session(params(raw)?).await?),
         method::SESSION_KILL => {
             daemon.kill_session(params::<SessionIdParams>(raw)?.session_id)?;

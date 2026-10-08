@@ -195,6 +195,90 @@ async fn wait_times_out_while_busy() {
     assert_eq!(err.kind, ErrorKind::Timeout);
 }
 
+fn subagent_hook(session_id: i64, event: HookEvent, id: &str, failed: bool) -> SessionHookParams {
+    SessionHookParams {
+        session_id,
+        event,
+        agent_ref: None,
+        subagent: Some(SubagentHook {
+            id: id.into(),
+            parent_id: None,
+            kind: "Explore".into(),
+            description: "look around".into(),
+            failed,
+        }),
+    }
+}
+
+#[tokio::test]
+async fn subagents_are_tracked_per_session() {
+    let env = setup();
+    let task = new_task(&env, "subagents").await;
+    let session = start(&env, &task, sh("sleep 30")).await;
+    let mut events = env.daemon.subscribe();
+    let id = session.id;
+    env.daemon
+        .hook(subagent_hook(id, HookEvent::SubagentStart, "a", false))
+        .unwrap();
+    env.daemon
+        .hook(subagent_hook(id, HookEvent::SubagentStart, "a", false))
+        .unwrap();
+    env.daemon
+        .hook(subagent_hook(id, HookEvent::SubagentStart, "b", false))
+        .unwrap();
+    env.daemon
+        .hook(subagent_hook(id, HookEvent::SubagentStop, "a", false))
+        .unwrap();
+    env.daemon
+        .hook(subagent_hook(id, HookEvent::SubagentStop, "b", true))
+        .unwrap();
+    env.daemon
+        .hook(subagent_hook(id, HookEvent::SubagentStop, "nope", false))
+        .unwrap();
+
+    let list = env.daemon.subagents(id);
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0].status, SubagentStatus::Done);
+    assert!(list[0].ended_at.is_some());
+    assert_eq!(list[1].status, SubagentStatus::Failed);
+
+    let (mut started, mut updated) = (0, 0);
+    while let Ok(event) = events.try_recv() {
+        match event {
+            Event::SubagentStarted { session_id, .. } if session_id == id => started += 1,
+            Event::SubagentUpdated { session_id, .. } if session_id == id => updated += 1,
+            _ => {}
+        }
+    }
+    assert_eq!((started, updated), (2, 2));
+    assert!(env.daemon.subagents(999_999).is_empty());
+}
+
+#[tokio::test]
+async fn running_subagents_end_with_their_session_and_go_with_it() {
+    let env = setup();
+    let task = new_task(&env, "ends").await;
+    let session = start(&env, &task, sh("sleep 1")).await;
+    env.daemon
+        .hook(subagent_hook(
+            session.id,
+            HookEvent::SubagentStart,
+            "a",
+            false,
+        ))
+        .unwrap();
+    assert!(
+        eventually(|| env
+            .daemon
+            .subagents(session.id)
+            .first()
+            .is_some_and(|s| s.status == SubagentStatus::Ended))
+        .await
+    );
+    env.daemon.remove_session(session.id).await.unwrap();
+    assert!(env.daemon.subagents(session.id).is_empty());
+}
+
 #[tokio::test]
 async fn hooks_override_the_heuristic() {
     let env = setup();

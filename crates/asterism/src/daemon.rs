@@ -156,6 +156,8 @@ pub struct Daemon {
     store_status: Mutex<BTreeMap<String, StoreStatus>>,
     pr_status: Mutex<PrStatus>,
     waking: tokio::sync::Mutex<()>,
+    /// Subagents per session, kept after exit until the session is removed.
+    subagents: Mutex<HashMap<i64, Vec<Subagent>>>,
 }
 
 impl Daemon {
@@ -196,6 +198,7 @@ impl Daemon {
                 store_status: Mutex::new(BTreeMap::new()),
                 pr_status: Mutex::new(PrStatus::default()),
                 waking: tokio::sync::Mutex::new(()),
+                subagents: Mutex::new(HashMap::new()),
             }
         }))
     }
@@ -1908,6 +1911,7 @@ impl Daemon {
             store.delete_task(task_id)?;
         }
         for stored in sessions {
+            lock(&self.subagents).remove(&stored.session.id);
             self.emit(Event::SessionRemoved {
                 session_id: stored.session.id,
             });
@@ -2254,6 +2258,7 @@ impl Daemon {
                     if live.hibernating.load(Ordering::Relaxed) {
                         status = SessionStatus::Hibernated;
                     }
+                    daemon.end_subagents(id);
                 }
                 let _ = daemon.store().set_session_status(id, status);
                 daemon.emit(Event::SessionStatusChanged {
@@ -2370,6 +2375,7 @@ impl Daemon {
             }
         }
         self.store().delete_session(id)?;
+        lock(&self.subagents).remove(&id);
         self.emit(Event::SessionRemoved { session_id: id });
         Ok(())
     }
@@ -2476,6 +2482,14 @@ impl Daemon {
         if let Some(agent_ref) = params.agent_ref {
             self.store()
                 .set_session_agent_ref(params.session_id, &agent_ref)?;
+        }
+        if let Some(subagent) = params.subagent {
+            if matches!(
+                params.event,
+                HookEvent::SubagentStart | HookEvent::SubagentStop
+            ) {
+                self.subagent_hook(params.session_id, params.event, subagent);
+            }
         }
         Ok(())
     }
@@ -2624,6 +2638,79 @@ impl Daemon {
         match self.live(id) {
             Ok(live) => Ok(live),
             Err(_) => self.wake(id).await,
+        }
+    }
+
+    pub fn subagents(&self, session_id: i64) -> Vec<Subagent> {
+        lock(&self.subagents)
+            .get(&session_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn subagent_hook(&self, session_id: i64, event: HookEvent, hook: SubagentHook) {
+        let changed = {
+            let mut all = lock(&self.subagents);
+            let list = all.entry(session_id).or_default();
+            let existing = list.iter_mut().find(|s| s.id == hook.id);
+            match (event, existing) {
+                (HookEvent::SubagentStart, None) => {
+                    let subagent = Subagent {
+                        id: hook.id,
+                        parent_id: hook.parent_id,
+                        kind: hook.kind,
+                        description: hook.description,
+                        status: SubagentStatus::Running,
+                        started_at: unix_now(),
+                        ended_at: None,
+                    };
+                    list.push(subagent.clone());
+                    Some(Event::SubagentStarted {
+                        session_id,
+                        subagent,
+                    })
+                }
+                (HookEvent::SubagentStop, Some(s)) if s.status == SubagentStatus::Running => {
+                    s.status = if hook.failed {
+                        SubagentStatus::Failed
+                    } else {
+                        SubagentStatus::Done
+                    };
+                    s.ended_at = Some(unix_now());
+                    Some(Event::SubagentUpdated {
+                        session_id,
+                        subagent: s.clone(),
+                    })
+                }
+                _ => None,
+            }
+        };
+        if let Some(event) = changed {
+            self.emit(event);
+        }
+    }
+
+    fn end_subagents(&self, session_id: i64) {
+        let ended: Vec<Subagent> = {
+            let mut all = lock(&self.subagents);
+            let Some(list) = all.get_mut(&session_id) else {
+                return;
+            };
+            let now = unix_now();
+            list.iter_mut()
+                .filter(|s| s.status == SubagentStatus::Running)
+                .map(|s| {
+                    s.status = SubagentStatus::Ended;
+                    s.ended_at = Some(now);
+                    s.clone()
+                })
+                .collect()
+        };
+        for subagent in ended {
+            self.emit(Event::SubagentUpdated {
+                session_id,
+                subagent,
+            });
         }
     }
 
