@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { ask } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { computed, ref, watch } from 'vue';
+import { computed, ref, useTemplateRef, watch } from 'vue';
 import { api } from '../api';
 import { pluginTabs, type PluginTab } from '../pluginsView';
 import { BASE_AGENTS } from '../settingsForm';
 import { leaveSettings } from '../settingsGuard';
-import { state } from '../store';
+import { state, toast } from '../store';
 import { setTheme, themeChoice, type ThemeChoice } from '../theme';
 import { checkForUpdates, installUpdate, RELEASES_URL, updateLabel, updater } from '../updater';
 import AgentSettings from './AgentSettings.vue';
@@ -22,6 +22,32 @@ const plugin = computed(() =>
   section.value.startsWith('plugin:') ? section.value.slice('plugin:'.length) : null,
 );
 const pluginAgents = computed(() => state.agents.filter((a) => a.plugin === plugin.value));
+type SettingsForm = { dirty: boolean; save: () => Promise<boolean> };
+const pluginForm = useTemplateRef<SettingsForm>('pluginForm');
+const agentForms = useTemplateRef<SettingsForm[]>('agentForms');
+const pluginForms = computed<SettingsForm[]>(() =>
+  [pluginForm.value, ...(agentForms.value ?? [])].filter((f): f is SettingsForm => !!f),
+);
+const pluginDirty = computed(() => pluginForms.value.some((f) => f.dirty));
+const savingPlugin = ref(false);
+
+watch(pluginDirty, (value) => {
+  if (plugin.value) state.settingsDirty = value;
+});
+
+// Forms save one after another; a failed one stays dirty and shows its own error.
+async function savePlugin() {
+  savingPlugin.value = true;
+  try {
+    let ok = true;
+    for (const form of pluginForms.value.filter((f) => f.dirty)) {
+      ok = (await form.save()) && ok;
+    }
+    if (ok) toast(`Saved ${plugin.value} settings`);
+  } finally {
+    savingPlugin.value = false;
+  }
+}
 
 watch(
   () => state.pluginSettingsRequest,
@@ -128,14 +154,24 @@ async function open(next: Section) {
         <PluginsSettings />
       </div>
       <div v-else-if="plugin" class="settings-content">
-        <PluginSettingsForm :key="plugin" :plugin="plugin" />
+        <PluginSettingsForm ref="pluginForm" :key="plugin" :plugin="plugin" />
         <template v-for="a in pluginAgents" :key="`${plugin}:${a.name}`">
           <h2 v-if="pluginAgents.length > 1">{{ a.display_name }}</h2>
           <p v-if="!a.available" class="muted">
             {{ a.display_name }} is not installed on this node.
           </p>
-          <AgentSettings :agent="a.name" :info="a" />
+          <AgentSettings ref="agentForms" :agent="a.name" :info="a" embedded />
         </template>
+        <div class="save-bar">
+          <button
+            :class="{ primary: pluginDirty }"
+            :disabled="savingPlugin || !pluginDirty"
+            @click="savePlugin"
+          >
+            Save
+          </button>
+          <span class="muted">Applies to newly started sessions.</span>
+        </div>
       </div>
       <div v-else-if="section === 'about'" class="settings-content">
         <section>

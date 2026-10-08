@@ -18,7 +18,8 @@ import {
 import { state, toast } from '../store';
 import type { AgentInfo } from '../types';
 
-const props = defineProps<{ agent: string; info?: AgentInfo }>();
+// Embedded forms leave saving and the dirty guard to the parent's shared save bar.
+const props = defineProps<{ agent: string; info?: AgentInfo; embedded?: boolean }>();
 
 const MCP_DOCS = 'https://docs.anthropic.com/en/docs/claude-code/mcp';
 const HOOKS_DOCS = 'https://docs.anthropic.com/en/docs/claude-code/hooks';
@@ -33,7 +34,13 @@ const label = computed(() => props.info?.display_name || props.agent);
 const gone = computed(() => !props.info && !BASE_AGENTS.includes(props.agent));
 const dirty = computed(() => JSON.stringify(form.value) !== saved.value);
 
-watch(dirty, (value) => (state.settingsDirty = value), { immediate: true });
+watch(
+  dirty,
+  (value) => {
+    if (!props.embedded) state.settingsDirty = value;
+  },
+  { immediate: true },
+);
 
 async function load() {
   errors.value = {};
@@ -63,11 +70,11 @@ async function load() {
   saved.value = JSON.stringify(form.value);
 }
 
-async function save() {
+async function save(): Promise<boolean> {
   const result = fromForm(form.value, sections.value);
   if ('errors' in result) {
     errors.value = result.errors;
-    return;
+    return false;
   }
   saving.value = true;
   try {
@@ -75,13 +82,17 @@ async function save() {
     saved.value = JSON.stringify(form.value);
     errors.value = {};
     loadError.value = null;
-    toast(`Saved ${props.agent} settings`);
+    if (!props.embedded) toast(`Saved ${props.agent} settings`);
+    return true;
   } catch (e) {
     errors.value = { save: errorMessage(e) };
+    return false;
   } finally {
     saving.value = false;
   }
 }
+
+defineExpose({ dirty, save });
 
 function docs(url: string) {
   openUrl(url).catch((e) => toast(errorMessage(e)));
@@ -156,7 +167,7 @@ watch(() => props.agent, load, { immediate: true });
       <p v-if="errors.hooks" class="error">{{ errors.hooks }}</p>
     </section>
 
-    <div class="save-bar">
+    <div v-if="!embedded" class="save-bar">
       <button :class="{ primary: dirty }" :disabled="saving || !dirty || gone" @click="save">
         Save
       </button>
