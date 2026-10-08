@@ -5,11 +5,15 @@ use asterism_plugin::protocol::{LaunchMode, PrepareParams, PrepareResult};
 use asterism_plugin::{ErrorKind, RpcError};
 use serde_json::{json, Map, Value};
 
-const STATUS_HOOKS: &[(&str, &str)] = &[
-    ("UserPromptSubmit", "prompt-submit"),
-    ("PreToolUse", "tool"),
-    ("Stop", "stop"),
-    ("Notification", "notification"),
+const SUBAGENT_TOOLS: &str = "Agent|Task";
+
+const STATUS_HOOKS: &[(&str, &str, Option<&str>)] = &[
+    ("UserPromptSubmit", "prompt-submit", None),
+    ("PreToolUse", "tool", None),
+    ("PreToolUse", "subagent-start", Some(SUBAGENT_TOOLS)),
+    ("PostToolUse", "subagent-stop", Some(SUBAGENT_TOOLS)),
+    ("Stop", "stop", None),
+    ("Notification", "notification", None),
 ];
 const TRUST_FLAGS: [&str; 2] = ["hasTrustDialogAccepted", "hasCompletedProjectOnboarding"];
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -17,12 +21,16 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Claude settings passed via `--settings`, so the user's own config is never modified.
 pub fn status_settings(exe: &Path) -> Value {
     let mut hooks = Map::new();
-    for (event, arg) in STATUS_HOOKS {
+    for (event, arg, matcher) in STATUS_HOOKS {
         let command = format!("\"{}\" hook {arg}", exe.display());
-        hooks.insert(
-            event.to_string(),
-            json!([{ "hooks": [{ "type": "command", "command": command }] }]),
-        );
+        let mut entry = json!({ "hooks": [{ "type": "command", "command": command }] });
+        if let Some(matcher) = matcher {
+            entry["matcher"] = json!(matcher);
+        }
+        let list = hooks.entry(event.to_string()).or_insert_with(|| json!([]));
+        if let Some(list) = list.as_array_mut() {
+            list.push(entry);
+        }
     }
     json!({ "hooks": hooks })
 }
@@ -178,16 +186,20 @@ mod tests {
     #[test]
     fn status_hooks_call_this_binary() {
         let settings = status_settings(Path::new(EXE));
-        for (event, arg) in [
-            ("UserPromptSubmit", "prompt-submit"),
-            ("PreToolUse", "tool"),
-            ("Stop", "stop"),
-            ("Notification", "notification"),
+        for (event, index, arg, matcher) in [
+            ("UserPromptSubmit", 0, "prompt-submit", None),
+            ("PreToolUse", 0, "tool", None),
+            ("PreToolUse", 1, "subagent-start", Some("Agent|Task")),
+            ("PostToolUse", 0, "subagent-stop", Some("Agent|Task")),
+            ("Stop", 0, "stop", None),
+            ("Notification", 0, "notification", None),
         ] {
-            let command = settings["hooks"][event][0]["hooks"][0]["command"]
-                .as_str()
-                .unwrap();
-            assert_eq!(command, format!("\"{EXE}\" hook {arg}"));
+            let entry = &settings["hooks"][event][index];
+            assert_eq!(
+                entry["hooks"][0]["command"].as_str().unwrap(),
+                format!("\"{EXE}\" hook {arg}")
+            );
+            assert_eq!(entry["matcher"].as_str(), matcher, "{event} {arg}");
         }
     }
 

@@ -240,6 +240,79 @@ fn claude_hook_payloads_are_normalized_by_the_plugin() {
 }
 
 #[test]
+fn claude_subagent_hooks_track_start_and_stop() {
+    use asterism_core::paths::Paths;
+    use asterism_proto::client::Client;
+    use asterism_proto::types::*;
+    use asterism_proto::PROTO_VERSION;
+
+    let node = Node::new();
+    let task = node.json(&["task", "new", "subagents"])["task"]["id"].to_string();
+    let session =
+        node.json(&["session", "start", &task, "--", "sh", "-c", "sleep 30"])["id"].to_string();
+    let hook = |event: &str, payload: &[u8]| {
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_asterism-plugin-claude"))
+            .args(["hook", event])
+            .env("ASTERISM_HOME", node.home())
+            .env("ASTERISM_SESSION", &session)
+            .env("ASTERISM_CLI", env!("CARGO_BIN_EXE_asterism"))
+            .env_remove("ASTERISM_SOCKET")
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(payload).unwrap();
+        assert!(child.wait().unwrap().success());
+    };
+    let subagents = || -> Vec<Subagent> {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let paths = Paths {
+                home: node.home().to_path_buf(),
+            };
+            let client = Client::connect_unix(&paths.socket()).await.unwrap();
+            let _: HelloResult = client
+                .call(
+                    method::HELLO,
+                    HelloParams {
+                        proto_version: PROTO_VERSION,
+                        client_kind: ClientKind::Cli,
+                    },
+                )
+                .await
+                .unwrap();
+            client
+                .call(
+                    method::SESSION_SUBAGENTS,
+                    SessionSubagentsParams {
+                        session_id: session.parse().unwrap(),
+                    },
+                )
+                .await
+                .unwrap()
+        })
+    };
+    let eventually = |f: &dyn Fn() -> bool| {
+        (0..100).any(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            f()
+        })
+    };
+    hook(
+        "subagent-start",
+        br#"{"tool_use_id":"t1","tool_input":{"subagent_type":"Explore","description":"d"}}"#,
+    );
+    assert!(eventually(&|| subagents().len() == 1));
+    assert_eq!(subagents()[0].kind, "Explore");
+    hook(
+        "subagent-stop",
+        br#"{"tool_use_id":"t1","tool_response":{}}"#,
+    );
+    assert!(eventually(&|| subagents()[0].status == SubagentStatus::Done));
+    let bare = node.cmd(&["hook", "subagent-stop"]);
+    assert!(bare.status.success());
+    node.cmd(&["session", "kill", &session]);
+}
+
+#[test]
 fn autostarted_daemon_drops_the_callers_claude_env() {
     let node = Node::new();
     let created = node

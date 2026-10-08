@@ -13,6 +13,8 @@ pub fn normalize(event: &str, payload: &Value) -> Option<(&'static str, Option<S
         "tool" => "tool",
         "stop" => "stop",
         "notification" => "notification",
+        "subagent-start" => "subagent-start",
+        "subagent-stop" => "subagent-stop",
         _ => return None,
     };
     let message = payload["message"]
@@ -49,6 +51,35 @@ fn asks_question(reply: &str) -> bool {
     })
 }
 
+/// Extra CLI args for subagent events; `None` means send nothing.
+pub fn subagent_args(event: &str, payload: &Value) -> Option<Vec<String>> {
+    if !event.starts_with("subagent-") {
+        return Some(Vec::new());
+    }
+    // ponytail: Claude's tool payload shape (tool_use_id, tool_input, tool_response.is_error); verify against real Claude and update if it changes.
+    let id = payload["tool_use_id"].as_str()?;
+    let mut args = vec!["--id".to_string(), id.to_string()];
+    if event == "subagent-start" {
+        for (flag, key) in [
+            ("--kind", "subagent_type"),
+            ("--description", "description"),
+        ] {
+            if let Some(value) = payload["tool_input"][key].as_str() {
+                args.extend([flag.to_string(), value.to_string()]);
+            }
+        }
+        return Some(args);
+    }
+    // ponytail: a background launch returns at once, so it stays running until the session ends; correlating SubagentStop is the upgrade path.
+    if payload["tool_input"]["run_in_background"].as_bool() == Some(true) {
+        return None;
+    }
+    if payload["tool_response"]["is_error"].as_bool() == Some(true) {
+        args.push("--failed".to_string());
+    }
+    Some(args)
+}
+
 /// A hung stdin must not stall Claude's hook runner.
 fn read_payload() -> Value {
     if std::io::stdin().is_terminal() {
@@ -69,12 +100,15 @@ fn read_payload() -> Value {
 /// Runs inside Claude's hooks: must never fail or block.
 pub fn run(event: &str) -> ! {
     let payload = read_payload();
-    if let (Some((event, agent_ref)), Some(cli)) =
-        (normalize(event, &payload), std::env::var_os("ASTERISM_CLI"))
-    {
+    if let (Some((event, agent_ref)), Some(extra), Some(cli)) = (
+        normalize(event, &payload),
+        subagent_args(event, &payload),
+        std::env::var_os("ASTERISM_CLI"),
+    ) {
         let mut command = Command::new(cli);
         command
             .args(["hook", event])
+            .args(extra)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -120,6 +154,41 @@ mod tests {
         let earlier = json!({"last_assistant_message": "Should I?\n\nI did, done."});
         assert_eq!(normalize("stop", &earlier), Some(("notification", None)));
         assert_eq!(normalize("stop", &Value::Null), Some(("stop", None)));
+    }
+
+    #[test]
+    fn subagent_tool_calls_become_subagent_args() {
+        let start = json!({"tool_use_id": "toolu_1", "tool_input": {"subagent_type": "Explore", "description": "find it"}});
+        assert_eq!(
+            normalize("subagent-start", &start).map(|n| n.0),
+            Some("subagent-start")
+        );
+        assert_eq!(
+            subagent_args("subagent-start", &start),
+            Some(vec![
+                "--id".into(),
+                "toolu_1".into(),
+                "--kind".into(),
+                "Explore".into(),
+                "--description".into(),
+                "find it".into()
+            ])
+        );
+        let done = json!({"tool_use_id": "toolu_1", "tool_response": {"content": []}});
+        assert_eq!(
+            subagent_args("subagent-stop", &done),
+            Some(vec!["--id".into(), "toolu_1".into()])
+        );
+        let failed = json!({"tool_use_id": "toolu_1", "tool_response": {"is_error": true}});
+        assert_eq!(
+            subagent_args("subagent-stop", &failed),
+            Some(vec!["--id".into(), "toolu_1".into(), "--failed".into()])
+        );
+        let background =
+            json!({"tool_use_id": "toolu_2", "tool_input": {"run_in_background": true}});
+        assert_eq!(subagent_args("subagent-stop", &background), None);
+        assert_eq!(subagent_args("subagent-start", &json!({})), None);
+        assert_eq!(subagent_args("tool", &start), Some(vec![]));
     }
 
     #[test]
