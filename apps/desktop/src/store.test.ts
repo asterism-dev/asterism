@@ -70,6 +70,17 @@ describe('applyEvent', () => {
     expect(s.sessions[0].status).toBe('waiting_input');
   });
 
+  it('applies the hibernated status', () => {
+    const s = initialState();
+    s.tasks = [task(1)];
+    s.sessions = [session(10, 1)];
+    applyEvent(s, {
+      method: 'session.status_changed',
+      params: { session_id: 10, status: 'hibernated' },
+    });
+    expect(s.sessions[0].status).toBe('hibernated');
+  });
+
   it('upserts sessions, tasks and projects', () => {
     const s = initialState();
     applyEvent(s, { method: 'session.changed', params: session(10, 1) });

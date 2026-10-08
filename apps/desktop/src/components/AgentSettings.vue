@@ -59,7 +59,13 @@ async function load() {
     try {
       const raw = await api.agentConfigRaw(props.agent);
       form.value = {
-        ...toForm({ args: raw.args, env: raw.env, mcp: null, hooks: null }),
+        ...toForm({
+          args: raw.args,
+          env: raw.env,
+          mcp: null,
+          hooks: null,
+          hibernate_after_min: raw.hibernate_after_min,
+        }),
         mcpText: raw.mcp_text ?? '',
         hooksText: raw.hooks_text ?? '',
       };
@@ -165,6 +171,18 @@ watch(() => props.agent, load, { immediate: true });
         spellcheck="false"
       />
       <p v-if="errors.hooks" class="error">{{ errors.hooks }}</p>
+    </section>
+
+    <section v-if="sections.hibernate">
+      <h3>Hibernation</h3>
+      <p class="muted">
+        Ends idle {{ label }} sessions that are not open in a pane and resumes them when opened.
+      </p>
+      <label>
+        Hibernate after (minutes, 0 = off)
+        <input v-model="form.hibernateAfter" inputmode="numeric" placeholder="30" />
+      </label>
+      <p v-if="errors.hibernate" class="error">{{ errors.hibernate }}</p>
     </section>
 
     <div v-if="!embedded" class="save-bar">

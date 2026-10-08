@@ -93,7 +93,9 @@ function onKey(e: KeyboardEvent) {
 }
 
 function onQuitRequested() {
-  const running = state.sessions.filter((s) => s.status !== 'exited').length;
+  const running = state.sessions.filter(
+    (s) => s.status !== 'exited' && s.status !== 'hibernated',
+  ).length;
   if (running === 0) api.quit(true).catch((e) => toast(errorMessage(e)));
   else quitRunning.value = running;
 }
