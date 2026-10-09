@@ -222,9 +222,6 @@ export type TaskCreateRequest = {
   checkout: string | null;
   push: boolean;
 };
-export interface TaskDiffResult {
-  patch: string;
-}
 export interface TaskFileResult {
   path: string;
   mtime: number;

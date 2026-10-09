@@ -43,7 +43,6 @@ import type {
   TaskSourceInfo,
   TaskDeleteCheck,
   TaskDeleteResult,
-  TaskDiffResult,
   TaskFileResult,
   Worktree,
   WorktreeSize,
@@ -159,7 +158,6 @@ export const api = {
     call<void>('project.worktree_remove', { project_id: projectId, path }),
   pruneWorktrees: (projectId: number) =>
     call<void>('project.worktree_prune', { project_id: projectId }),
-  diff: (taskId: number) => call<TaskDiffResult>('task.diff', { task_id: taskId }),
   file: (taskId: number, path: string, knownMtime: number | null = null) =>
     call<TaskFileResult>('task.file', { task_id: taskId, path, known_mtime: knownMtime }),
   sessions: () => call<Session[]>('session.list'),

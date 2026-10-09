@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { state } from '../../store';
-import DiffView from '../DiffView.vue';
+import ReviewView from '../review/ReviewView.vue';
 
 defineProps<{ params: unknown }>();
 const task = computed(() => state.tasks.find((t) => t.id === state.selectedTaskId) ?? null);
@@ -9,7 +9,7 @@ const task = computed(() => state.tasks.find((t) => t.id === state.selectedTaskI
 
 <template>
   <div class="pane">
-    <DiffView v-if="task" :key="task.id" :task="task" />
-    <p v-else class="empty">Select a task to see its diff.</p>
+    <ReviewView v-if="task" :key="task.id" :task="task" />
+    <p v-else class="empty">Select a task to review its changes.</p>
   </div>
 </template>
