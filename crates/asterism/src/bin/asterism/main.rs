@@ -279,6 +279,14 @@ enum ReviewCmd {
         #[arg(long)]
         local: bool,
     },
+    /// List a task's pull request checks, or print one check's log.
+    Checks {
+        #[arg(long)]
+        task: Option<i64>,
+        /// Print the log of this check id.
+        #[arg(long)]
+        log: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -738,6 +746,42 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
                     )
                     .await?;
                 print(json, &result, || result.prompt.clone());
+            }
+        }
+        Cmd::Review(ReviewCmd::Checks { task, log }) => {
+            let task_id = resolve_task(task)?;
+            if let Some(check_id) = log {
+                let log: CheckLog = client
+                    .call(
+                        method::REVIEW_CHECK_LOG,
+                        ReviewCheckParams { task_id, check_id },
+                    )
+                    .await?;
+                if log.truncated && !json {
+                    eprintln!("(log truncated, full log: {})", log.url);
+                }
+                print(json, &log, || log.text.trim_end().to_string());
+            } else {
+                let review: ReviewResult = client
+                    .call(
+                        method::REVIEW_GET,
+                        ReviewGetParams {
+                            task_id,
+                            source: ReviewSource::Pr,
+                        },
+                    )
+                    .await?;
+                if review.source != ReviewSource::Pr {
+                    return Err(invalid("the task has no pull request with checks".into()));
+                }
+                print(json, &review.checks, || {
+                    review
+                        .checks
+                        .iter()
+                        .map(check_line)
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                });
             }
         }
         Cmd::Session(SessionCmd::Start {
@@ -1326,6 +1370,23 @@ fn hit_line(h: &SearchHit) -> String {
     )
 }
 
+fn check_line(c: &CheckRun) -> String {
+    let state = c.conclusion.clone().unwrap_or_else(|| {
+        match c.status {
+            CheckStatus::Queued => "queued",
+            CheckStatus::Running => "running",
+            CheckStatus::Done => "done",
+        }
+        .to_string()
+    });
+    let workflow = if c.workflow.is_empty() {
+        String::new()
+    } else {
+        format!("{} / ", c.workflow)
+    };
+    format!("{state:<9} {workflow}{} [{}]", c.name, c.id)
+}
+
 fn invalid(message: String) -> ClientError {
     ClientError::Rpc(RpcError::new(ErrorKind::InvalidParams, message))
 }
@@ -1554,4 +1615,36 @@ fn session_line(s: &Session) -> String {
         SessionKind::Command { argv } => argv.join(" "),
     };
     format!("{}\ttask {}\t{}\t{kind}", s.id, s.task_id, label(&s.status))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(status: CheckStatus, conclusion: Option<&str>, workflow: &str) -> CheckRun {
+        CheckRun {
+            id: "11".into(),
+            name: "test".into(),
+            workflow: workflow.into(),
+            status,
+            conclusion: conclusion.map(String::from),
+            started_at: None,
+            completed_at: None,
+            url: String::new(),
+            has_log: true,
+            rerunnable: true,
+        }
+    }
+
+    #[test]
+    fn check_lines_show_state_workflow_and_id() {
+        assert_eq!(
+            check_line(&run(CheckStatus::Done, Some("failure"), "CI")),
+            "failure   CI / test [11]"
+        );
+        assert_eq!(
+            check_line(&run(CheckStatus::Running, None, "")),
+            "running   test [11]"
+        );
+    }
 }

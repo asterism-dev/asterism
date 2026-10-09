@@ -31,3 +31,14 @@ fn review_comments_prints_open_local_threads() {
     let threads = node.json(&["review", "comments", "--task", &id]);
     assert_eq!(threads[0]["comments"][0]["body"], "Add a test.");
 }
+
+#[test]
+fn review_checks_needs_a_pull_request() {
+    let node = Node::new();
+    let created = node.json(&["task", "new", "t"]);
+    let id = created["task"]["id"].as_i64().unwrap().to_string();
+    let out = node.cmd(&["review", "checks", "--task", &id]);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("pull request"), "{stderr}");
+}
