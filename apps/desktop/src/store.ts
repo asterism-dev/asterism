@@ -50,6 +50,7 @@ export interface State {
   projectDialog: ProjectDialogTab | null;
   prs: Record<number, PullRequest>;
   prErrors: Record<number, string>;
+  reviewVersion: Record<number, number>;
 }
 
 export function initialState(): State {
@@ -77,6 +78,7 @@ export function initialState(): State {
     projectDialog: null,
     prs: {},
     prErrors: {},
+    reviewVersion: {},
   };
 }
 
@@ -186,6 +188,9 @@ export function applyEvent(s: State, event: NodeEvent): Session | null {
       return null;
     case 'stores.changed':
       s.storesVersion++;
+      return null;
+    case 'review.changed':
+      s.reviewVersion[event.params.task_id] = (s.reviewVersion[event.params.task_id] ?? 0) + 1;
       return null;
     case 'pr.changed':
       if (event.params.pr) s.prs[event.params.task_id] = event.params.pr;

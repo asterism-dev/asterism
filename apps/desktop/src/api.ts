@@ -3,6 +3,8 @@ import type {
   AgentConfig,
   AgentConfigRaw,
   AgentInfo,
+  CommentTarget,
+  DiffSide,
   CapabilityKind,
   PluginDetails,
   PluginInfo,
@@ -26,6 +28,9 @@ import type {
   ProjectBranches,
   ProjectCreateResult,
   RemoteTarget,
+  ReviewEvent,
+  ReviewResult,
+  ReviewSource,
   Session,
   SessionAttachResult,
   SessionKind,
@@ -158,8 +163,33 @@ export const api = {
   file: (taskId: number, path: string, knownMtime: number | null = null) =>
     call<TaskFileResult>('task.file', { task_id: taskId, path, known_mtime: knownMtime }),
   sessions: () => call<Session[]>('session.list'),
-  startSession: (taskId: number, kind: SessionKind) =>
-    call<Session>('session.start', { task_id: taskId, kind }),
+  startSession: (taskId: number, kind: SessionKind, prompt?: string) =>
+    call<Session>('session.start', { task_id: taskId, kind, prompt: prompt ?? null }),
+  sendPrompt: (sessionId: number, text: string) =>
+    call<null>('session.send', { session_id: sessionId, text, submit: true }),
+  review: (taskId: number, source: ReviewSource) =>
+    call<ReviewResult>('review.get', { task_id: taskId, source }),
+  reviewComment: (p: {
+    task_id: number;
+    source: ReviewSource;
+    path: string;
+    line: number;
+    side: DiffSide;
+    body: string;
+    target: CommentTarget;
+  }) => call<null>('review.comment', p),
+  reviewReply: (taskId: number, threadId: string, body: string) =>
+    call<null>('review.reply', { task_id: taskId, thread_id: threadId, body }),
+  reviewResolve: (taskId: number, threadId: string, resolved: boolean) =>
+    call<null>('review.resolve', { task_id: taskId, thread_id: threadId, resolved }),
+  reviewSetViewed: (taskId: number, source: ReviewSource, path: string, viewed: boolean) =>
+    call<null>('review.set_viewed', { task_id: taskId, source, path, viewed }),
+  reviewSubmit: (taskId: number, event: ReviewEvent, body: string) =>
+    call<null>('review.submit', { task_id: taskId, event, body }),
+  reviewPublish: (taskId: number, threadId: string, target: CommentTarget) =>
+    call<null>('review.publish', { task_id: taskId, thread_id: threadId, target }),
+  reviewPrompt: (taskId: number, source: ReviewSource, threadIds: string[]) =>
+    call<{ prompt: string }>('review.prompt', { task_id: taskId, source, thread_ids: threadIds }),
   killSession: (sessionId: number) => call<null>('session.kill', { session_id: sessionId }),
   send,
   resize: (sessionId: number, rows: number, cols: number) =>

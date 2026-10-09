@@ -220,3 +220,12 @@ describe('pull requests', () => {
     expect(s.prErrors[5]).toBeUndefined();
   });
 });
+
+describe('review.changed', () => {
+  it('bumps the per-task review version', () => {
+    const s = initialState();
+    applyEvent(s, { method: 'review.changed', params: { task_id: 3 } });
+    applyEvent(s, { method: 'review.changed', params: { task_id: 3 } });
+    expect(s.reviewVersion).toEqual({ 3: 2 });
+  });
+});

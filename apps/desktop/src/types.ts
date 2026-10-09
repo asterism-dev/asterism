@@ -152,6 +152,7 @@ export type NodeEvent =
   | { method: 'project.removed'; params: { project_id: number } }
   | { method: 'plugins.changed'; params: Record<string, never> }
   | { method: 'stores.changed'; params: Record<string, never> }
+  | { method: 'review.changed'; params: { task_id: number } }
   | { method: 'pr.changed'; params: { task_id: number; pr: PullRequest | null } }
   | { method: 'subagent.started'; params: { session_id: number; subagent: Subagent } }
   | { method: 'subagent.updated'; params: { session_id: number; subagent: Subagent } };
@@ -375,4 +376,41 @@ export interface PluginSettings {
   schema: SettingSpec[];
   values: Record<string, SettingValue>;
   secrets_set: string[];
+}
+
+export type DiffSide = 'old' | 'new';
+export type ReviewSource = 'pr' | 'local';
+export type CommentTarget = 'local' | 'single' | 'review';
+export type ReviewEvent = 'comment' | 'approve' | 'request_changes';
+export interface ReviewComment {
+  id: string;
+  author: string;
+  body: string;
+  created_at: string;
+}
+export interface ReviewThread {
+  id: string;
+  path: string;
+  line: number;
+  side: DiffSide;
+  outdated: boolean;
+  resolved: boolean;
+  local: boolean;
+  pending: boolean;
+  comments: ReviewComment[];
+}
+export interface PendingReview {
+  id: string;
+  comments: number;
+}
+export interface ReviewResult {
+  source: ReviewSource;
+  pr: number | null;
+  reviews_supported: boolean;
+  patch: string;
+  threads: ReviewThread[];
+  conversation: ReviewComment[];
+  viewed_files: string[];
+  pending_review: PendingReview | null;
+  local_ahead: boolean;
 }
