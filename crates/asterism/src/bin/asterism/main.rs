@@ -47,6 +47,8 @@ enum Cmd {
     #[command(subcommand)]
     Task(TaskCmd),
     #[command(subcommand)]
+    Review(ReviewCmd),
+    #[command(subcommand)]
     Session(SessionCmd),
     /// Type text into a session (submits with Enter unless --no-submit).
     Send {
@@ -261,6 +263,21 @@ enum IssueCmd {
         all: bool,
         #[arg(long)]
         project: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ReviewCmd {
+    /// Print a task's review comments as an agent prompt.
+    Comments {
+        #[arg(long)]
+        task: Option<i64>,
+        /// Include resolved threads.
+        #[arg(long)]
+        all: bool,
+        /// Read local comments against the worktree instead of the pull request.
+        #[arg(long)]
+        local: bool,
     },
 }
 
@@ -690,6 +707,38 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
                 )
                 .await?;
             print(json, &diff, || diff.patch.clone());
+        }
+        Cmd::Review(ReviewCmd::Comments { task, all, local }) => {
+            let task_id = resolve_task(task)?;
+            let source = if local {
+                ReviewSource::Local
+            } else {
+                ReviewSource::Pr
+            };
+            if json {
+                let review: ReviewResult = client
+                    .call(method::REVIEW_GET, ReviewGetParams { task_id, source })
+                    .await?;
+                let threads: Vec<&ReviewThread> = review
+                    .threads
+                    .iter()
+                    .filter(|t| all || !t.resolved)
+                    .collect();
+                print(json, &threads, String::new);
+            } else {
+                let result: ReviewPromptResult = client
+                    .call(
+                        method::REVIEW_PROMPT,
+                        ReviewPromptParams {
+                            task_id,
+                            source,
+                            thread_ids: None,
+                            include_resolved: all,
+                        },
+                    )
+                    .await?;
+                print(json, &result, || result.prompt.clone());
+            }
         }
         Cmd::Session(SessionCmd::Start {
             task,
