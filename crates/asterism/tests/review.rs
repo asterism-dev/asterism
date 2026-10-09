@@ -227,7 +227,6 @@ async fn local_viewed_resets_when_the_file_changes() {
     assert!(r.viewed_files.is_empty());
 }
 
-#[allow(dead_code)]
 fn log_lines(env: &Env, prefix: &str) -> Vec<Value> {
     std::fs::read_to_string(&env.log)
         .unwrap_or_default()
@@ -235,4 +234,199 @@ fn log_lines(env: &Env, prefix: &str) -> Vec<Value> {
         .filter_map(|l| l.strip_prefix(prefix))
         .map(|l| serde_json::from_str(l.split_once(' ').map_or(l, |(_, j)| j)).unwrap())
         .collect()
+}
+
+fn comment(
+    task: &Task,
+    source: ReviewSource,
+    target: CommentTarget,
+    body: &str,
+) -> ReviewCommentParams {
+    ReviewCommentParams {
+        task_id: task.id,
+        source,
+        path: "a.rs".into(),
+        line: 1,
+        side: DiffSide::New,
+        body: body.into(),
+        target,
+    }
+}
+
+#[tokio::test]
+async fn local_comments_thread_resolve_and_reach_the_prompt() {
+    let env = setup();
+    let task = task(&env).await;
+    commit(&task, "one\n");
+    let d = &env.daemon;
+    d.review_comment(&comment(
+        &task,
+        ReviewSource::Local,
+        CommentTarget::Local,
+        "Add a test.",
+    ))
+    .await
+    .unwrap();
+    let r = d
+        .review_get(&get(ReviewSource::Local, &task))
+        .await
+        .unwrap();
+    let thread = r.threads[0].id.clone();
+    d.review_reply(&ReviewReplyParams {
+        task_id: task.id,
+        thread_id: thread.clone(),
+        body: "and docs".into(),
+    })
+    .await
+    .unwrap();
+    let prompt = d
+        .review_prompt(&ReviewPromptParams {
+            task_id: task.id,
+            source: ReviewSource::Local,
+            thread_ids: None,
+            include_resolved: false,
+        })
+        .await
+        .unwrap()
+        .prompt;
+    assert_eq!(prompt, "Review comments on your changes:\n\na.rs:1\n> one\n- (local) Add a test.\n- (local) and docs\n");
+    d.review_resolve(&ReviewResolveParams {
+        task_id: task.id,
+        thread_id: thread,
+        resolved: true,
+    })
+    .await
+    .unwrap();
+    let prompt = d
+        .review_prompt(&ReviewPromptParams {
+            task_id: task.id,
+            source: ReviewSource::Local,
+            thread_ids: None,
+            include_resolved: false,
+        })
+        .await
+        .unwrap()
+        .prompt;
+    assert_eq!(prompt, "Review comments on your changes:\n");
+}
+
+#[tokio::test]
+async fn forge_comments_go_to_the_plugin_and_refresh_the_cache() {
+    let env = setup();
+    let task = task(&env).await;
+    let head = commit(&task, "one\n");
+    with_pr(&env, &task, &head).await;
+    let d = &env.daemon;
+    let mut events = d.subscribe();
+    d.review_get(&get(ReviewSource::Pr, &task)).await.unwrap();
+    d.review_comment(&comment(
+        &task,
+        ReviewSource::Pr,
+        CommentTarget::Review,
+        "pending one",
+    ))
+    .await
+    .unwrap();
+    let r = d.review_get(&get(ReviewSource::Pr, &task)).await.unwrap();
+    assert!(
+        r.threads[0].pending && r.pending_review.is_some(),
+        "cache was dropped after the mutation"
+    );
+    assert!(
+        matches!(events.try_recv(), Ok(Event::ReviewChanged { task_id }) if task_id == task.id)
+    );
+    d.review_resolve(&ReviewResolveParams {
+        task_id: task.id,
+        thread_id: r.threads[0].id.clone(),
+        resolved: true,
+    })
+    .await
+    .unwrap();
+    d.review_set_viewed(&ReviewViewedParams {
+        task_id: task.id,
+        source: ReviewSource::Pr,
+        path: "a.rs".into(),
+        viewed: true,
+    })
+    .await
+    .unwrap();
+    d.review_submit(&ReviewSubmitParams {
+        task_id: task.id,
+        event: ReviewEvent::Approve,
+        body: "ship".into(),
+    })
+    .await
+    .unwrap();
+    let r = d.review_get(&get(ReviewSource::Pr, &task)).await.unwrap();
+    assert!(r.threads[0].resolved && !r.threads[0].pending && r.pending_review.is_none());
+    assert_eq!(r.viewed_files, vec!["a.rs".to_string()]);
+    let submitted = log_lines(&env, "review submit");
+    assert_eq!(submitted[0]["event"], "approve");
+    assert_eq!(submitted[0]["number"], 7);
+}
+
+#[tokio::test]
+async fn publish_hides_the_local_thread_and_failure_keeps_it() {
+    let env = setup();
+    let task = task(&env).await;
+    let head = commit(&task, "one\n");
+    with_pr(&env, &task, &head).await;
+    let d = &env.daemon;
+    d.review_comment(&comment(
+        &task,
+        ReviewSource::Pr,
+        CommentTarget::Local,
+        "local first",
+    ))
+    .await
+    .unwrap();
+    let local = d
+        .review_get(&get(ReviewSource::Pr, &task))
+        .await
+        .unwrap()
+        .threads
+        .into_iter()
+        .find(|t| t.local)
+        .unwrap();
+    let saved = std::fs::read_to_string(&env.review).unwrap();
+    std::fs::write(&env.review, json!({"error": "boom"}).to_string()).unwrap();
+    let publish = ReviewPublishParams {
+        task_id: task.id,
+        thread_id: local.id.clone(),
+        target: CommentTarget::Single,
+    };
+    assert!(d.review_publish(&publish).await.is_err());
+    std::fs::write(&env.review, saved).unwrap();
+    assert!(d
+        .review_get(&get(ReviewSource::Local, &task))
+        .await
+        .unwrap()
+        .threads
+        .iter()
+        .any(|t| t.id == local.id));
+    d.review_publish(&publish).await.unwrap();
+    let r = d.review_get(&get(ReviewSource::Pr, &task)).await.unwrap();
+    assert!(!r.threads.iter().any(|t| t.local));
+    assert!(r
+        .threads
+        .iter()
+        .any(|t| t.comments[0].body == "local first"));
+}
+
+#[tokio::test]
+async fn forge_targets_without_a_pull_request_are_rejected() {
+    let env = setup();
+    let task = task(&env).await;
+    commit(&task, "one\n");
+    let err = env
+        .daemon
+        .review_comment(&comment(
+            &task,
+            ReviewSource::Local,
+            CommentTarget::Single,
+            "x",
+        ))
+        .await
+        .unwrap_err();
+    assert!(err.message.contains("pull request"), "{}", err.message);
 }

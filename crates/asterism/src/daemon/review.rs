@@ -1,9 +1,14 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use asterism_plugin::protocol::{self, PrRef, ReviewGetForgeParams};
+use asterism_plugin::protocol::{
+    self, ForgeCommentMode, PrRef, ReviewCommentForgeParams, ReviewGetForgeParams,
+    ReviewReplyForgeParams, ReviewResolveForgeParams, ReviewSubmitForgeParams,
+    ReviewViewedForgeParams,
+};
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
+use serde::Serialize;
 
 use super::Daemon;
 use crate::error::{Error, Result};
@@ -138,6 +143,23 @@ impl Daemon {
     }
 
     pub async fn review_set_viewed(&self, p: &ReviewViewedParams) -> Result<()> {
+        if p.source == ReviewSource::Pr {
+            let task = self.task(p.task_id)?;
+            let pr = self.reviewable_pr(&task)?;
+            let params = ReviewViewedForgeParams {
+                pr: pr.clone(),
+                path: p.path.clone(),
+                viewed: p.viewed,
+            };
+            return self
+                .forge_mutate(
+                    task.id,
+                    &pr,
+                    protocol::method::FORGE_REVIEW_SET_VIEWED,
+                    params,
+                )
+                .await;
+        }
         let task = self.task(p.task_id)?;
         let patch = self.diff(task.id)?.patch;
         let hash = review::split_patch(&patch)
@@ -148,5 +170,198 @@ impl Daemon {
             .set_review_viewed(task.id, &p.path, hash.as_deref().filter(|_| p.viewed))?;
         self.emit(Event::ReviewChanged { task_id: task.id });
         Ok(())
+    }
+
+    fn reviewable_pr(&self, task: &Task) -> Result<PrRef> {
+        match self.review_pr(task)? {
+            Some((pr, true)) => Ok(pr),
+            Some((_, false)) => Err(Error::new(
+                ErrorKind::InvalidParams,
+                "this forge does not support reviews",
+            )),
+            None => Err(Error::new(
+                ErrorKind::InvalidParams,
+                "the task has no pull request",
+            )),
+        }
+    }
+
+    async fn forge_mutate<P: Serialize>(
+        &self,
+        task_id: i64,
+        pr: &PrRef,
+        method: &str,
+        params: P,
+    ) -> Result<()> {
+        let result: Result<serde_json::Value> = self
+            .forge_call(&pr.forge, method, params, Some(self.call_timeout()))
+            .await;
+        lock(&self.review_cache).remove(&task_id);
+        self.emit(Event::ReviewChanged { task_id });
+        result.map(|_| ())
+    }
+
+    fn changed(&self, task_id: i64) {
+        self.emit(Event::ReviewChanged { task_id });
+    }
+
+    pub async fn review_comment(&self, p: &ReviewCommentParams) -> Result<()> {
+        let task = self.task(p.task_id)?;
+        let mode = match p.target {
+            CommentTarget::Local => {
+                let patch = self
+                    .review_get(&ReviewGetParams {
+                        task_id: task.id,
+                        source: p.source,
+                    })
+                    .await?
+                    .patch;
+                let text = review::line_text(&patch, &p.path, p.side, p.line).unwrap_or_default();
+                self.store()
+                    .add_review_comment(task.id, None, &p.path, p.line, p.side, &text, &p.body)?;
+                self.changed(task.id);
+                return Ok(());
+            }
+            CommentTarget::Single => ForgeCommentMode::Single,
+            CommentTarget::Review => ForgeCommentMode::Review,
+        };
+        let pr = self.reviewable_pr(&task)?;
+        let params = ReviewCommentForgeParams {
+            pr: pr.clone(),
+            path: p.path.clone(),
+            line: p.line,
+            side: p.side,
+            body: p.body.clone(),
+            mode,
+        };
+        self.forge_mutate(task.id, &pr, protocol::method::FORGE_REVIEW_COMMENT, params)
+            .await
+    }
+
+    pub async fn review_reply(&self, p: &ReviewReplyParams) -> Result<()> {
+        let task = self.task(p.task_id)?;
+        if p.thread_id.starts_with("local-") {
+            let first = self
+                .store()
+                .review_comments(task.id)?
+                .into_iter()
+                .find(|c| c.thread_id == p.thread_id)
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::NotFound,
+                        format!("thread {} not found", p.thread_id),
+                    )
+                })?;
+            self.store().add_review_comment(
+                task.id,
+                Some(&p.thread_id),
+                &first.path,
+                first.line,
+                first.side,
+                &first.line_text,
+                &p.body,
+            )?;
+            self.changed(task.id);
+            return Ok(());
+        }
+        let pr = self.reviewable_pr(&task)?;
+        let params = ReviewReplyForgeParams {
+            pr: pr.clone(),
+            thread_id: p.thread_id.clone(),
+            body: p.body.clone(),
+        };
+        self.forge_mutate(task.id, &pr, protocol::method::FORGE_REVIEW_REPLY, params)
+            .await
+    }
+
+    pub async fn review_resolve(&self, p: &ReviewResolveParams) -> Result<()> {
+        let task = self.task(p.task_id)?;
+        if p.thread_id.starts_with("local-") {
+            self.store()
+                .set_review_thread_resolved(task.id, &p.thread_id, p.resolved)?;
+            self.changed(task.id);
+            return Ok(());
+        }
+        let pr = self.reviewable_pr(&task)?;
+        let params = ReviewResolveForgeParams {
+            pr: pr.clone(),
+            thread_id: p.thread_id.clone(),
+            resolved: p.resolved,
+        };
+        self.forge_mutate(task.id, &pr, protocol::method::FORGE_REVIEW_RESOLVE, params)
+            .await
+    }
+
+    pub async fn review_submit(&self, p: &ReviewSubmitParams) -> Result<()> {
+        let task = self.task(p.task_id)?;
+        let pr = self.reviewable_pr(&task)?;
+        let params = ReviewSubmitForgeParams {
+            pr: pr.clone(),
+            event: p.event,
+            body: p.body.clone(),
+        };
+        self.forge_mutate(task.id, &pr, protocol::method::FORGE_REVIEW_SUBMIT, params)
+            .await
+    }
+
+    /// Posts a local thread to the forge: its first comment opens the thread, the rest follow as one reply.
+    pub async fn review_publish(&self, p: &ReviewPublishParams) -> Result<()> {
+        let task = self.task(p.task_id)?;
+        let comments: Vec<_> = self
+            .store()
+            .review_comments(task.id)?
+            .into_iter()
+            .filter(|c| c.thread_id == p.thread_id)
+            .collect();
+        let Some(first) = comments.first() else {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                format!("thread {} not found", p.thread_id),
+            ));
+        };
+        let body = comments
+            .iter()
+            .map(|c| c.body.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let target = if p.target == CommentTarget::Review {
+            CommentTarget::Review
+        } else {
+            CommentTarget::Single
+        };
+        self.review_comment(&ReviewCommentParams {
+            task_id: task.id,
+            source: ReviewSource::Pr,
+            path: first.path.clone(),
+            line: first.line,
+            side: first.side,
+            body,
+            target,
+        })
+        .await?;
+        self.store()
+            .set_review_thread_published(task.id, &p.thread_id)?;
+        self.changed(task.id);
+        Ok(())
+    }
+
+    pub async fn review_prompt(&self, p: &ReviewPromptParams) -> Result<ReviewPromptResult> {
+        let r = self
+            .review_get(&ReviewGetParams {
+                task_id: p.task_id,
+                source: p.source,
+            })
+            .await?;
+        let threads: Vec<&ReviewThread> = r
+            .threads
+            .iter()
+            .filter(|t| match &p.thread_ids {
+                Some(ids) => ids.contains(&t.id),
+                None => p.include_resolved || !t.resolved,
+            })
+            .collect();
+        Ok(ReviewPromptResult {
+            prompt: review::prompt(&threads, &r.patch),
+        })
     }
 }

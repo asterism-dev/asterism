@@ -414,6 +414,27 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             daemon.review_set_viewed(&params(raw)?).await?;
             Ok(Value::Null)
         }
+        method::REVIEW_COMMENT => {
+            daemon.review_comment(&params(raw)?).await?;
+            Ok(Value::Null)
+        }
+        method::REVIEW_REPLY => {
+            daemon.review_reply(&params(raw)?).await?;
+            Ok(Value::Null)
+        }
+        method::REVIEW_RESOLVE => {
+            daemon.review_resolve(&params(raw)?).await?;
+            Ok(Value::Null)
+        }
+        method::REVIEW_SUBMIT => {
+            daemon.review_submit(&params(raw)?).await?;
+            Ok(Value::Null)
+        }
+        method::REVIEW_PUBLISH => {
+            daemon.review_publish(&params(raw)?).await?;
+            Ok(Value::Null)
+        }
+        method::REVIEW_PROMPT => to_value(daemon.review_prompt(&params(raw)?).await?),
         method::TASK_FILE => {
             let daemon = daemon.clone();
             let params = params::<TaskFileParams>(raw)?;
