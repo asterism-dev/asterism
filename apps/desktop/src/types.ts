@@ -396,6 +396,43 @@ export interface ReviewThread {
   pending: boolean;
   comments: ReviewComment[];
 }
+export type CheckStatus = 'queued' | 'running' | 'done';
+export interface CheckRun {
+  id: string;
+  name: string;
+  workflow: string;
+  status: CheckStatus;
+  conclusion: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  url: string;
+  has_log: boolean;
+  rerunnable: boolean;
+}
+export interface ConversationItem {
+  id: string;
+  kind: 'comment' | 'review';
+  author: string;
+  body: string;
+  created_at: string;
+  state: string | null;
+}
+export interface CheckLog {
+  text: string;
+  truncated: boolean;
+  url: string;
+}
+export interface ReviewCommit {
+  sha: string;
+  short: string;
+  subject: string;
+  author: string;
+  date: string;
+}
+export interface ReviewCommitsResult {
+  commits: ReviewCommit[];
+  uncommitted: boolean;
+}
 export interface PendingReview {
   id: string;
   comments: number;
@@ -406,7 +443,13 @@ export interface ReviewResult {
   reviews_supported: boolean;
   patch: string;
   threads: ReviewThread[];
-  conversation: ReviewComment[];
+  conversation: ConversationItem[];
+  title: string;
+  body: string;
+  author: string;
+  url: string;
+  checks: CheckRun[];
+  commit_checks: Record<string, string>;
   viewed_files: string[];
   pending_review: PendingReview | null;
   local_ahead: boolean;

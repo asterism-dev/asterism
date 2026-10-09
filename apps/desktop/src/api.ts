@@ -3,6 +3,7 @@ import type {
   AgentConfig,
   AgentConfigRaw,
   AgentInfo,
+  CheckLog,
   CommentTarget,
   DiffSide,
   CapabilityKind,
@@ -28,6 +29,7 @@ import type {
   ProjectBranches,
   ProjectCreateResult,
   RemoteTarget,
+  ReviewCommitsResult,
   ReviewEvent,
   ReviewResult,
   ReviewSource,
@@ -188,6 +190,16 @@ export const api = {
     call<null>('review.publish', { task_id: taskId, thread_id: threadId, target }),
   reviewPrompt: (taskId: number, source: ReviewSource, threadIds: string[]) =>
     call<{ prompt: string }>('review.prompt', { task_id: taskId, source, thread_ids: threadIds }),
+  reviewCommits: (taskId: number, source: ReviewSource) =>
+    call<ReviewCommitsResult>('review.commits', { task_id: taskId, source }),
+  reviewCommitDiff: (taskId: number, source: ReviewSource, sha: string | null) =>
+    call<{ patch: string }>('review.commit_diff', { task_id: taskId, source, sha }),
+  reviewAddComment: (taskId: number, body: string) =>
+    call<null>('review.add_comment', { task_id: taskId, body }),
+  reviewCheckLog: (taskId: number, checkId: string) =>
+    call<CheckLog>('review.check_log', { task_id: taskId, check_id: checkId }),
+  reviewCheckRerun: (taskId: number, checkId: string) =>
+    call<null>('review.check_rerun', { task_id: taskId, check_id: checkId }),
   killSession: (sessionId: number) => call<null>('session.kill', { session_id: sessionId }),
   send,
   resize: (sessionId: number, rows: number, cols: number) =>
