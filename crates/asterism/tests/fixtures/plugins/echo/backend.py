@@ -115,6 +115,9 @@ def handle(request):
             files = set(data["viewed_files"])
             (files.add if params["viewed"] else files.discard)(params["path"])
             data["viewed_files"] = sorted(files)
+        elif kind == "add_comment":
+            data["conversation"].append({"id": "I%d" % (len(data["conversation"]) + 1), "kind": "comment",
+                                         "author": "me", "body": params["body"], "created_at": "", "state": None})
         elif kind == "submit":
             data["pending_review"] = None
             for t in data["threads"]:
@@ -122,6 +125,21 @@ def handle(request):
         if kind != "get":
             json.dump(data, open(path, "w"))
         result = data if kind == "get" else None
+    elif method.startswith("forge.checks."):
+        kind = method[len("forge.checks."):]
+        record("checks " + kind + " " + json.dumps(params, sort_keys=True))
+        path = os.environ.get("FIXTURE_REVIEW")
+        data = json.load(open(path)) if path and os.path.exists(path) else {}
+        check = next((c for c in data.get("checks", []) if c["id"] == params["check_id"]), None)
+        if check is None or (kind == "log" and params["check_id"] not in data.get("logs", {})):
+            error(rid, -32008, "plugin_error", "no log for " + params["check_id"])
+            return
+        if kind == "log":
+            result = {"text": data["logs"][params["check_id"]], "truncated": False, "url": check["url"]}
+        else:
+            check["status"], check["conclusion"] = "queued", None
+            json.dump(data, open(path, "w"))
+            result = None
     elif method == "echo.sleep":
         time.sleep(params.get("ms", 0) / 1000)
         result = params

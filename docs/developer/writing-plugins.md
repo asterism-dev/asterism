@@ -166,18 +166,23 @@ Parameter and result types are defined in `crates/asterism-plugin/src/protocol.r
 | `forge.create_remote` | `forge` | `owner`, `name`, `visibility`, `dir`, `git_env` | anything |
 | `forge.pull_requests` | `pull_requests` | `forge`, `project_path`, `branches` | list of `branch`, `pr` (`number`, `url`, `title`, `state`, `review`, `checks`) |
 | `forge.search_pull_requests` | `pull_requests` | `forge`, `project_path`, `query`, `state` (`open`/`closed`) | list of `number`, `title`, `url`, `author`, `head_branch`, `draft`, `from_fork` |
-| `forge.review.get` | `reviews` | `forge`, `project_path`, `number` | `head_sha`, `base_sha`, `head_ref`, `threads`, `conversation`, `viewed_files`, `pending_review` |
+| `forge.review.get` | `reviews` | `forge`, `project_path`, `number` | `title`, `body`, `author`, `url`, `head_sha`, `base_sha`, `head_ref`, `threads`, `conversation`, `checks`, `commit_checks`, `viewed_files`, `pending_review` |
 | `forge.review.comment` | `reviews` | `forge`, `project_path`, `number`, `path`, `line`, `side` (`old`/`new`), `body`, `mode` (`single`/`review`) | `null` |
 | `forge.review.reply` | `reviews` | `forge`, `project_path`, `number`, `thread_id`, `body` | `null` |
 | `forge.review.resolve` | `reviews` | `forge`, `project_path`, `number`, `thread_id`, `resolved` | `null` |
 | `forge.review.set_viewed` | `reviews` | `forge`, `project_path`, `number`, `path`, `viewed` | `null` |
 | `forge.review.submit` | `reviews` | `forge`, `project_path`, `number`, `event` (`comment`/`approve`/`request_changes`), `body` | `null` |
+| `forge.review.add_comment` | `reviews` | `forge`, `project_path`, `number`, `body` | `null` |
+| `forge.checks.log` | `reviews` | `forge`, `project_path`, `number`, `check_id` | `text`, `truncated`, `url` |
+| `forge.checks.rerun` | `reviews` | `forge`, `project_path`, `number`, `check_id` | `null` |
 | `task_source.check` | `task_source` | `source`, `project_path` | `available`, optional `reason` |
 | `task_source.search` | `task_source` | `source`, `query`, `assigned_to_me`, `project_path` | list of `key`, `title`, `url`, `state`, `assignee`, `updated_at` |
 | `task_source.get` | `task_source` | `source`, `key`, `project_path` | `key`, `title`, `url`, `description`, `branch` |
 | `agent.prepare` | `agent` | `agent`, `mode` (`start`/`resume`), `prompt`, `agent_ref`, `settings` (`args`, `mcp_config`, `hooks`), `cwd` | `argv` (non-empty), optional `env` as `[name, value]` pairs |
 
 `visibility` is `public`, `private` or `internal`. In `forge.pull_requests`, `state` is `open`, `draft`, `merged` or `closed`; `review` is `approved`, `changes_requested`, `review_required` or `none`; `checks` is `{"state": ..., "failing": [...]}` with state `pending`, `success`, `failure` or `none`. Leave branches without a pull request out of the result. `task_source.get` may return a `branch` to use for the task; when it is `null`, Asterism derives one.
+
+In `forge.review.get`, a check (in `checks` and `commit_checks`) has `id`, `name`, `workflow`, `status` (`queued`/`running`/`done`), `conclusion`, `started_at`, `completed_at`, `url`, `has_log` and `rerunnable`; a `conversation` item has `id`, `kind` (`comment`/`review`), `author`, `body`, `created_at` and `state`. `forge.checks.*` are only called for checks with `has_log` or `rerunnable` set.
 
 ### Calling back into the daemon
 
@@ -406,6 +411,9 @@ def handle(request):
             files = set(data["viewed_files"])
             (files.add if params["viewed"] else files.discard)(params["path"])
             data["viewed_files"] = sorted(files)
+        elif kind == "add_comment":
+            data["conversation"].append({"id": "I%d" % (len(data["conversation"]) + 1), "kind": "comment",
+                                         "author": "me", "body": params["body"], "created_at": "", "state": None})
         elif kind == "submit":
             data["pending_review"] = None
             for t in data["threads"]:
@@ -413,6 +421,21 @@ def handle(request):
         if kind != "get":
             json.dump(data, open(path, "w"))
         result = data if kind == "get" else None
+    elif method.startswith("forge.checks."):
+        kind = method[len("forge.checks."):]
+        record("checks " + kind + " " + json.dumps(params, sort_keys=True))
+        path = os.environ.get("FIXTURE_REVIEW")
+        data = json.load(open(path)) if path and os.path.exists(path) else {}
+        check = next((c for c in data.get("checks", []) if c["id"] == params["check_id"]), None)
+        if check is None or (kind == "log" and params["check_id"] not in data.get("logs", {})):
+            error(rid, -32008, "plugin_error", "no log for " + params["check_id"])
+            return
+        if kind == "log":
+            result = {"text": data["logs"][params["check_id"]], "truncated": False, "url": check["url"]}
+        else:
+            check["status"], check["conclusion"] = "queued", None
+            json.dump(data, open(path, "w"))
+            result = None
     elif method == "echo.sleep":
         time.sleep(params.get("ms", 0) / 1000)
         result = params
