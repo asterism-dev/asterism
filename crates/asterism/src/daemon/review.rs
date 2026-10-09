@@ -4,9 +4,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use asterism_plugin::protocol::{
-    self, ForgeCommentMode, PrRef, ReviewCommentForgeParams, ReviewGetForgeParams,
-    ReviewReplyForgeParams, ReviewResolveForgeParams, ReviewSubmitForgeParams,
-    ReviewViewedForgeParams,
+    self, CheckForgeParams, ForgeCommentMode, PrRef, ReviewAddCommentForgeParams,
+    ReviewCommentForgeParams, ReviewGetForgeParams, ReviewReplyForgeParams,
+    ReviewResolveForgeParams, ReviewSubmitForgeParams, ReviewViewedForgeParams,
 };
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
@@ -451,6 +451,52 @@ impl Daemon {
             body: p.body.clone(),
         };
         self.forge_mutate(task.id, &pr, protocol::method::FORGE_REVIEW_SUBMIT, params)
+            .await
+    }
+
+    pub async fn review_add_comment(self: &Arc<Self>, p: &ReviewAddCommentParams) -> Result<()> {
+        let task = self.task(p.task_id)?;
+        let pr = self.reviewable_pr(&task).await?;
+        if p.body.trim().is_empty() {
+            return Err(Error::new(ErrorKind::InvalidParams, "the comment is empty"));
+        }
+        let params = ReviewAddCommentForgeParams {
+            pr: pr.clone(),
+            body: p.body.clone(),
+        };
+        self.forge_mutate(
+            task.id,
+            &pr,
+            protocol::method::FORGE_REVIEW_ADD_COMMENT,
+            params,
+        )
+        .await
+    }
+
+    pub async fn review_check_log(self: &Arc<Self>, p: &ReviewCheckParams) -> Result<CheckLog> {
+        let task = self.task(p.task_id)?;
+        let pr = self.reviewable_pr(&task).await?;
+        let params = CheckForgeParams {
+            pr: pr.clone(),
+            check_id: p.check_id.clone(),
+        };
+        self.forge_call(
+            &pr.forge,
+            protocol::method::FORGE_CHECKS_LOG,
+            params,
+            Some(self.call_timeout()),
+        )
+        .await
+    }
+
+    pub async fn review_check_rerun(self: &Arc<Self>, p: &ReviewCheckParams) -> Result<()> {
+        let task = self.task(p.task_id)?;
+        let pr = self.reviewable_pr(&task).await?;
+        let params = CheckForgeParams {
+            pr: pr.clone(),
+            check_id: p.check_id.clone(),
+        };
+        self.forge_mutate(task.id, &pr, protocol::method::FORGE_CHECKS_RERUN, params)
             .await
     }
 

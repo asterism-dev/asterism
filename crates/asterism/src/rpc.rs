@@ -435,6 +435,15 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             Ok(Value::Null)
         }
         method::REVIEW_PROMPT => to_value(daemon.review_prompt(&params(raw)?).await?),
+        method::REVIEW_ADD_COMMENT => {
+            daemon.review_add_comment(&params(raw)?).await?;
+            Ok(Value::Null)
+        }
+        method::REVIEW_CHECK_LOG => to_value(daemon.review_check_log(&params(raw)?).await?),
+        method::REVIEW_CHECK_RERUN => {
+            daemon.review_check_rerun(&params(raw)?).await?;
+            Ok(Value::Null)
+        }
         method::REVIEW_COMMITS => to_value(daemon.review_commits(&params(raw)?).await?),
         method::REVIEW_COMMIT_DIFF => to_value(daemon.review_commit_diff(&params(raw)?).await?),
         method::TASK_FILE => {

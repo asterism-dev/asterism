@@ -645,3 +645,95 @@ async fn commit_diff_rejects_shas_outside_the_range() {
         assert_eq!(err.kind, ErrorKind::InvalidParams, "{sha}: {}", err.message);
     }
 }
+
+fn edit_review(env: &Env, f: impl FnOnce(&mut Value)) {
+    let mut v: Value =
+        serde_json::from_str(&std::fs::read_to_string(&env.review).unwrap()).unwrap();
+    f(&mut v);
+    std::fs::write(&env.review, v.to_string()).unwrap();
+}
+
+fn check(task: &Task, id: &str) -> ReviewCheckParams {
+    ReviewCheckParams {
+        task_id: task.id,
+        check_id: id.into(),
+    }
+}
+
+#[tokio::test]
+async fn checks_comments_and_reruns_go_to_the_forge() {
+    let env = setup();
+    let task = task(&env).await;
+    let head = commit(&task, "one\n");
+    with_pr(&env, &task, &head).await;
+    edit_review(&env, |v| {
+        v["checks"] = json!([{"id": "11", "name": "test", "workflow": "ci", "status": "done",
+            "conclusion": "failure", "url": "https://echo.test/run/11", "has_log": true, "rerunnable": true}]);
+        v["logs"] = json!({"11": "boom\n"});
+    });
+    let d = &env.daemon;
+    let r = d.review_get(&get(ReviewSource::Pr, &task)).await.unwrap();
+    assert_eq!(r.checks[0].conclusion.as_deref(), Some("failure"));
+    let log = d.review_check_log(&check(&task, "11")).await.unwrap();
+    assert_eq!(
+        (log.text.as_str(), log.url.as_str()),
+        ("boom\n", "https://echo.test/run/11")
+    );
+    let mut events = d.subscribe();
+    d.review_add_comment(&ReviewAddCommentParams {
+        task_id: task.id,
+        body: "Looks good".into(),
+    })
+    .await
+    .unwrap();
+    assert!(
+        matches!(events.try_recv(), Ok(Event::ReviewChanged { task_id }) if task_id == task.id)
+    );
+    d.review_check_rerun(&check(&task, "11")).await.unwrap();
+    let r = d.review_get(&get(ReviewSource::Pr, &task)).await.unwrap();
+    assert!(r
+        .conversation
+        .iter()
+        .any(|c| c.body == "Looks good" && c.kind == ConversationKind::Comment));
+    assert_eq!(r.checks[0].status, CheckStatus::Queued);
+}
+
+#[tokio::test]
+async fn check_log_of_unknown_check_is_an_error() {
+    let env = setup();
+    let task = task(&env).await;
+    let head = commit(&task, "one\n");
+    with_pr(&env, &task, &head).await;
+    let err = env
+        .daemon
+        .review_check_log(&check(&task, "404"))
+        .await
+        .unwrap_err();
+    assert!(err.message.contains("no log"), "{}", err.message);
+}
+
+#[tokio::test]
+async fn empty_general_comments_and_tasks_without_a_pr_are_rejected() {
+    let env = setup();
+    let task = task(&env).await;
+    commit(&task, "one\n");
+    let d = &env.daemon;
+    let no_pr = d
+        .review_add_comment(&ReviewAddCommentParams {
+            task_id: task.id,
+            body: "x".into(),
+        })
+        .await
+        .unwrap_err();
+    assert!(no_pr.message.contains("pull request"), "{}", no_pr.message);
+    let head = commit(&task, "two\n");
+    with_pr(&env, &task, &head).await;
+    let empty = d
+        .review_add_comment(&ReviewAddCommentParams {
+            task_id: task.id,
+            body: "  ".into(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(empty.kind, ErrorKind::InvalidParams);
+}
