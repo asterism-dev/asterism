@@ -89,13 +89,14 @@ The top bar also shows the project and branch of the selected task; click the br
 
 **Review** (top bar, or ++cmd+alt+b++) shows the task's changes against its base branch: everything since the
 branch point, including uncommitted and untracked files. It reloads when the task's sessions stop working; click
-**Refresh** to reload it yourself. **Side by side** switches between unified and split view.
+**Refresh** to reload it yourself. **Side by side** switches between unified and split view. Files with more than
+1000 changed lines, and every file after the first 30, start collapsed; click one to expand it.
 
 CLI: `asterism task diff [ID]`.
 
 ### PR and Local
 
-When the task has a pull request, a **PR #<number>** | **Local** toggle appears. **PR** shows the pull request's diff and
+When the task has a pull request on a forge that supports reviews, a `PR #N` | **Local** toggle appears. **PR** shows the pull request's diff and
 its review threads; **Local** shows the worktree. A hint appears when the worktree differs from the PR head, for
 example because of unpushed commits.
 
@@ -115,7 +116,7 @@ Click **+** on a diff line to comment.
 - In **Local** mode there is a single **Comment** button.
 
 Threads carry badges (local, pending, outdated, resolved) and offer **Reply**, **Resolve** / **Unresolve**,
-**Publish** (turns a local thread into a pull request comment; PR mode only), **→ Agent** and a checkbox to
+**Publish** (turns a local thread into a pull request comment, or adds it to your pending review; PR mode only), **→ Agent** and a checkbox to
 select the thread.
 
 A pending review shows a bar with a body field and **Comment**, **Approve** and **Request changes** to submit it.
@@ -127,7 +128,7 @@ conversation.
 
 Use **→ Agent** on a thread or file, or **Send to agent (N)** in the toolbar for the selected threads. With
 nothing selected, N is the number of open threads and all of them are sent. In the dialog, pick an existing agent session of the task or start a new session (and choose its agent),
-and edit the prompt before sending. Asterism warns when an agent in the task is working, because parallel edits
+and edit the prompt before sending. Asterism warns when any agent session in the task is working, because parallel edits
 in one worktree can conflict.
 
 CLI:
