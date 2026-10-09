@@ -3,21 +3,25 @@ use std::path::Path;
 use asterism_plugin::protocol::ForgeCommentMode;
 use asterism_plugin::{ErrorKind, RpcError};
 use asterism_proto::types::{
-    ConversationItem, ConversationKind, DiffSide, ForgeReview, PendingReview, ReviewComment,
-    ReviewEvent, ReviewThread,
+    CheckRun, CheckStatus, ConversationItem, ConversationKind, DiffSide, ForgeReview,
+    PendingReview, ReviewComment, ReviewEvent, ReviewThread,
 };
 use serde_json::Value;
 
 use crate::gh::{origin_repo, parse, run_with_timeout, ISSUE_TIMEOUT};
 
-// ponytail: first 100 files/threads/comments only; paginate with pageInfo if PRs grow beyond that.
+// ponytail: first 100 files/threads/comments/commits/checks only; paginate with pageInfo if PRs grow beyond that.
 const REVIEW_QUERY: &str = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){
-id headRefOid baseRefOid
+id headRefOid baseRefOid title body url author{login}
 files(first:100){nodes{path viewerViewedState}}
 reviewThreads(first:100){nodes{id path line originalLine diffSide isResolved isOutdated
  comments(first:100){nodes{id author{login} body createdAt pullRequestReview{id state}}}}}
 comments(first:100){nodes{id author{login} body createdAt}}
 reviews(first:100){nodes{id author{login} body state submittedAt viewerDidAuthor}}
+commits(last:100){nodes{commit{oid statusCheckRollup{state}}}}
+head:commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename
+ ...on CheckRun{databaseId name status conclusion startedAt completedAt detailsUrl checkSuite{workflowRun{databaseId workflow{name}}}}
+ ...on StatusContext{context state targetUrl createdAt}}}}}}}
 }}}";
 
 pub enum GqlVar {
@@ -76,6 +80,56 @@ fn nodes(v: &Value) -> &[Value] {
 
 fn text(v: &Value) -> String {
     v.as_str().unwrap_or_default().to_string()
+}
+
+fn lower(v: &Value) -> Option<String> {
+    v.as_str().map(str::to_ascii_lowercase)
+}
+
+fn opt_text(v: &Value) -> Option<String> {
+    v.as_str().map(String::from)
+}
+
+fn check_run(c: &Value) -> Option<CheckRun> {
+    if c["__typename"] == "StatusContext" {
+        let state = c["state"].as_str().unwrap_or_default();
+        let context = text(&c["context"]);
+        return Some(CheckRun {
+            id: format!("status:{context}"),
+            name: context,
+            workflow: String::new(),
+            status: match state {
+                "PENDING" => CheckStatus::Running,
+                "EXPECTED" => CheckStatus::Queued,
+                _ => CheckStatus::Done,
+            },
+            conclusion: (!matches!(state, "PENDING" | "EXPECTED"))
+                .then(|| state.to_ascii_lowercase()),
+            started_at: opt_text(&c["createdAt"]),
+            completed_at: None,
+            url: text(&c["targetUrl"]),
+            has_log: false,
+            rerunnable: false,
+        });
+    }
+    let run = &c["checkSuite"]["workflowRun"];
+    let actions = !run.is_null();
+    Some(CheckRun {
+        id: c["databaseId"].as_u64()?.to_string(),
+        name: text(&c["name"]),
+        workflow: text(&run["workflow"]["name"]),
+        status: match c["status"].as_str().unwrap_or_default() {
+            "COMPLETED" => CheckStatus::Done,
+            "IN_PROGRESS" => CheckStatus::Running,
+            _ => CheckStatus::Queued,
+        },
+        conclusion: lower(&c["conclusion"]),
+        started_at: opt_text(&c["startedAt"]),
+        completed_at: opt_text(&c["completedAt"]),
+        url: text(&c["detailsUrl"]),
+        has_log: actions,
+        rerunnable: actions,
+    })
 }
 
 fn to_comment(c: &Value, created_at: &Value) -> ReviewComment {
@@ -155,13 +209,36 @@ pub fn parse_review(value: &Value, number: u64) -> Result<ForgeReview, RpcError>
                 id,
             }
         });
+    let checks = nodes(&pr["head"])
+        .first()
+        .map(|n| nodes(&n["commit"]["statusCheckRollup"]["contexts"]))
+        .unwrap_or_default()
+        .iter()
+        .filter_map(check_run)
+        .collect();
+    let commit_checks = nodes(&pr["commits"])
+        .iter()
+        .filter_map(|n| {
+            Some((
+                text(&n["commit"]["oid"]),
+                lower(&n["commit"]["statusCheckRollup"]["state"])?,
+            ))
+        })
+        .collect();
     let mut conversation: Vec<ConversationItem> = nodes(&pr["comments"])
         .iter()
         .map(|c| conversation_item(c, &c["createdAt"], ConversationKind::Comment, None))
         .chain(
             nodes(&pr["reviews"])
                 .iter()
-                .filter(|r| r["state"] != "PENDING" && !text(&r["body"]).trim().is_empty())
+                .filter(|r| {
+                    r["state"] != "PENDING"
+                        && (!text(&r["body"]).trim().is_empty()
+                            || matches!(
+                                r["state"].as_str(),
+                                Some("APPROVED" | "CHANGES_REQUESTED" | "DISMISSED")
+                            ))
+                })
                 .map(|r| {
                     let state = text(&r["state"]).to_lowercase();
                     conversation_item(r, &r["submittedAt"], ConversationKind::Review, Some(state))
@@ -181,12 +258,12 @@ pub fn parse_review(value: &Value, number: u64) -> Result<ForgeReview, RpcError>
             .map(|f| text(&f["path"]))
             .collect(),
         pending_review,
-        title: String::new(),
-        body: String::new(),
-        author: String::new(),
-        url: String::new(),
-        checks: Vec::new(),
-        commit_checks: Default::default(),
+        title: text(&pr["title"]),
+        body: text(&pr["body"]),
+        author: text(&pr["author"]["login"]),
+        url: text(&pr["url"]),
+        checks,
+        commit_checks,
     })
 }
 
@@ -339,6 +416,7 @@ pub fn submit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use asterism_proto::types::CheckStatus;
     use serde_json::json;
 
     fn sample() -> Value {
@@ -399,6 +477,85 @@ mod tests {
         );
         let bodies: Vec<&str> = r.conversation.iter().map(|c| c.body.as_str()).collect();
         assert_eq!(bodies, vec!["LGTM overall", "Some notes"]);
+    }
+
+    fn sample_with_checks() -> Value {
+        let mut v = sample();
+        let pr = &mut v["data"]["repository"]["pullRequest"];
+        pr["title"] = json!("Add review pane");
+        pr["body"] = json!("Implements the pane.");
+        pr["url"] = json!("https://github.com/acme/api/pull/7");
+        pr["author"] = json!({"login": "carol"});
+        pr["commits"] = json!({"nodes": [
+            {"commit": {"oid": "c1", "statusCheckRollup": {"state": "SUCCESS"}}},
+            {"commit": {"oid": "h1", "statusCheckRollup": null}}
+        ]});
+        pr["head"] = json!({"nodes": [{"commit": {"statusCheckRollup": {"contexts": {"nodes": [
+            {"__typename": "CheckRun", "databaseId": 4242, "name": "test", "status": "COMPLETED",
+             "conclusion": "FAILURE", "startedAt": "2026-10-09T10:00:00Z", "completedAt": "2026-10-09T10:03:00Z",
+             "detailsUrl": "https://github.com/acme/api/actions/runs/9/job/4242",
+             "checkSuite": {"workflowRun": {"databaseId": 9, "workflow": {"name": "CI"}}}},
+            {"__typename": "CheckRun", "databaseId": 4243, "name": "lint", "status": "IN_PROGRESS",
+             "conclusion": null, "startedAt": "2026-10-09T10:00:00Z", "completedAt": null,
+             "detailsUrl": "https://x", "checkSuite": {"workflowRun": {"databaseId": 9, "workflow": {"name": "CI"}}}},
+            {"__typename": "StatusContext", "context": "ci/external", "state": "PENDING",
+             "targetUrl": "https://ext", "createdAt": "2026-10-09T10:00:00Z"}
+        ]}}}}]});
+        pr["reviews"]["nodes"].as_array_mut().unwrap().push(json!(
+            {"id": "R3", "author": {"login": "dave"}, "body": "", "state": "APPROVED",
+             "submittedAt": "2026-10-03T10:00:00Z", "viewerDidAuthor": false}));
+        v
+    }
+
+    #[test]
+    fn pr_metadata_checks_and_commit_states_are_parsed() {
+        let r = parse_review(&sample_with_checks(), 7).unwrap();
+        assert_eq!(
+            (r.title.as_str(), r.body.as_str(), r.author.as_str()),
+            ("Add review pane", "Implements the pane.", "carol")
+        );
+        assert_eq!(r.url, "https://github.com/acme/api/pull/7");
+        assert_eq!(
+            r.commit_checks.get("c1").map(String::as_str),
+            Some("success")
+        );
+        assert!(!r.commit_checks.contains_key("h1"));
+        let test = &r.checks[0];
+        assert_eq!(
+            (test.id.as_str(), test.workflow.as_str(), test.status),
+            ("4242", "CI", CheckStatus::Done)
+        );
+        assert_eq!(test.conclusion.as_deref(), Some("failure"));
+        assert!(test.has_log && test.rerunnable);
+        assert_eq!(r.checks[1].status, CheckStatus::Running);
+        assert!(r.checks[1].conclusion.is_none());
+    }
+
+    #[test]
+    fn status_contexts_have_no_log_or_rerun() {
+        let r = parse_review(&sample_with_checks(), 7).unwrap();
+        let ext = &r.checks[2];
+        assert_eq!(
+            (ext.id.as_str(), ext.name.as_str(), ext.status),
+            ("status:ci/external", "ci/external", CheckStatus::Running)
+        );
+        assert!(!ext.has_log && !ext.rerunnable);
+        assert_eq!(ext.url, "https://ext");
+    }
+
+    #[test]
+    fn approvals_without_a_body_are_conversation_events() {
+        let r = parse_review(&sample_with_checks(), 7).unwrap();
+        let approved = r.conversation.iter().find(|c| c.id == "R3").unwrap();
+        assert_eq!(
+            (
+                approved.kind,
+                approved.state.as_deref(),
+                approved.author.as_str()
+            ),
+            (ConversationKind::Review, Some("approved"), "dave")
+        );
+        assert!(!r.conversation.iter().any(|c| c.id == "R2"));
     }
 
     use std::os::unix::fs::PermissionsExt;
