@@ -7,6 +7,69 @@ pub struct FilePatch<'a> {
     pub text: &'a str,
 }
 
+fn unquote(raw: &str) -> String {
+    let raw = raw.trim_end_matches('\t');
+    let Some(inner) = raw.strip_prefix('"').and_then(|r| r.strip_suffix('"')) else {
+        return raw.to_string();
+    };
+    let (mut out, mut b) = (Vec::new(), inner.bytes().peekable());
+    while let Some(c) = b.next() {
+        if c != b'\\' {
+            out.push(c);
+            continue;
+        }
+        match b.next() {
+            Some(d @ b'0'..=b'7') => {
+                let mut n = d - b'0';
+                for _ in 0..2 {
+                    if let Some(o) = b.next_if(|o| (b'0'..=b'7').contains(o)) {
+                        n = n.wrapping_mul(8).wrapping_add(o - b'0');
+                    }
+                }
+                out.push(n);
+            }
+            Some(b't') => out.push(b'\t'),
+            Some(b'n') => out.push(b'\n'),
+            Some(o) => out.push(o),
+            None => {}
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn patch_path(text: &str) -> String {
+    let header: Vec<&str> = text.lines().take_while(|l| !l.starts_with("@@")).collect();
+    let side = |prefix: &str| {
+        header
+            .iter()
+            .find_map(|l| l.strip_prefix(prefix))
+            .map(unquote)
+            .filter(|p| p != "/dev/null")
+            .map(|p| {
+                p.split_once('/')
+                    .map_or(p.clone(), |(_, rest)| rest.to_string())
+            })
+    };
+    side("+++ ")
+        .or_else(|| side("--- "))
+        .or_else(|| {
+            header
+                .iter()
+                .find_map(|l| l.strip_prefix("rename to "))
+                .map(unquote)
+        })
+        .or_else(|| {
+            let line = header.first()?.strip_prefix("diff --git ")?;
+            let at = if line.ends_with('"') {
+                line.rfind("\"b/")
+            } else {
+                line.rfind(" b/").map(|i| i + 1)
+            }?;
+            Some(unquote(&line[at..]).split_once('/')?.1.to_string())
+        })
+        .unwrap_or_default()
+}
+
 pub fn split_patch(patch: &str) -> Vec<FilePatch<'_>> {
     let mut starts: Vec<usize> = patch
         .match_indices("diff --git ")
@@ -18,16 +81,10 @@ pub fn split_patch(patch: &str) -> Vec<FilePatch<'_>> {
         .windows(2)
         .map(|w| {
             let text = &patch[w[0]..w[1]];
-            let header = |prefix: &str| {
-                text.lines()
-                    .find_map(|l| l.strip_prefix(prefix))
-                    .filter(|p| *p != "/dev/null")
-                    .map(|p| p.split_once('/').map_or(p, |(_, rest)| rest).to_string())
-            };
-            let path = header("+++ ")
-                .or_else(|| header("--- "))
-                .unwrap_or_default();
-            FilePatch { path, text }
+            FilePatch {
+                path: patch_path(text),
+                text,
+            }
         })
         .collect()
 }
@@ -47,18 +104,21 @@ pub fn line_text(patch: &str, path: &str, side: DiffSide, line: u32) -> Option<S
         if !in_hunk || l.starts_with('\\') {
             continue;
         }
-        let (tag, body) = l.split_at(l.len().min(1));
+        let Some(tag @ ('-' | '+' | ' ')) = l.chars().next() else {
+            continue;
+        };
+        let body = &l[1..];
         let hit = match (tag, side) {
-            ("-", DiffSide::Old) | (" ", DiffSide::Old) => old == line,
-            ("+", DiffSide::New) | (" ", DiffSide::New) => new == line,
+            ('-' | ' ', DiffSide::Old) => old == line,
+            ('+' | ' ', DiffSide::New) => new == line,
             _ => false,
         };
         if hit {
             return Some(body.to_string());
         }
         match tag {
-            "-" => old += 1,
-            "+" => new += 1,
+            '-' => old += 1,
+            '+' => new += 1,
             _ => {
                 old += 1;
                 new += 1;
@@ -220,6 +280,69 @@ deleted file mode 100644
         let mut c = stored(1, "local-1", 2, DiffSide::New, "    new();", "ok");
         c.published = true;
         assert!(local_threads(&[c], PATCH).is_empty());
+    }
+
+    const GIT: &str = "diff --git \"a/caf\\303\\251.rs\" \"b/caf\\303\\251.rs\"
+index 587be6b..975fbec 100644
+--- \"a/caf\\303\\251.rs\"
++++ \"b/caf\\303\\251.rs\"
+@@ -1 +1 @@
+-x
++y
+diff --git a/my file.rs b/my file.rs
+index b3addbe..7e43fc4 100644
+--- a/my file.rs\t
++++ b/my file.rs\t
+@@ -1,2 +1,2 @@
+ one
+-last
+\\ No newline at end of file
++last2
+\\ No newline at end of file
+diff --git a/old.rs b/new.rs
+similarity index 100%
+rename from old.rs
+rename to new.rs
+diff --git a/u.rs b/u.rs
+index 66b4ba3..f971f2b 100644
+--- a/u.rs
++++ b/u.rs
+@@ -1 +1,2 @@
+ \u{e9} line
++z
+";
+
+    #[test]
+    fn real_git_output_paths_and_lines() {
+        let paths: Vec<String> = split_patch(GIT).into_iter().map(|f| f.path).collect();
+        assert_eq!(paths, vec!["caf\u{e9}.rs", "my file.rs", "new.rs", "u.rs"]);
+        assert_eq!(
+            line_text(GIT, "caf\u{e9}.rs", DiffSide::New, 1).as_deref(),
+            Some("y")
+        );
+        assert_eq!(
+            line_text(GIT, "my file.rs", DiffSide::New, 2).as_deref(),
+            Some("last2")
+        );
+        assert_eq!(
+            line_text(GIT, "my file.rs", DiffSide::Old, 2).as_deref(),
+            Some("last")
+        );
+        assert_eq!(line_text(GIT, "my file.rs", DiffSide::New, 3), None);
+        assert_eq!(
+            line_text(GIT, "u.rs", DiffSide::New, 1).as_deref(),
+            Some("\u{e9} line")
+        );
+        assert_eq!(
+            line_text(GIT, "u.rs", DiffSide::New, 2).as_deref(),
+            Some("z")
+        );
+    }
+
+    #[test]
+    fn multibyte_garbage_lines_do_not_panic() {
+        let p = "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n\u{e9}x\n+ok\n";
+        assert_eq!(line_text(p, "a", DiffSide::New, 1).as_deref(), Some("ok"));
     }
 
     #[test]
