@@ -95,7 +95,7 @@ CLI: `asterism task diff [ID]`.
 
 ### PR and Local
 
-When the task has a pull request, a **PR** | **Local** toggle appears. **PR** shows the pull request's diff and
+When the task has a pull request, a **PR #<number>** | **Local** toggle appears. **PR** shows the pull request's diff and
 its review threads; **Local** shows the worktree. A hint appears when the worktree differs from the PR head, for
 example because of unpushed commits.
 
@@ -125,8 +125,8 @@ conversation.
 
 ### Send to agent
 
-Use **→ Agent** on a thread or file, or send the selected threads. With nothing selected, all open threads are
-sent. In the dialog, pick an existing agent session of the task or start a new session (and choose its agent),
+Use **→ Agent** on a thread or file, or **Send to agent (N)** in the toolbar for the selected threads. With
+nothing selected, N is the number of open threads and all of them are sent. In the dialog, pick an existing agent session of the task or start a new session (and choose its agent),
 and edit the prompt before sending. Asterism warns when an agent in the task is working, because parallel edits
 in one worktree can conflict.
 
@@ -137,7 +137,7 @@ asterism review comments [--task ID] [--all] [--local] [--json]
 ```
 
 This prints the task's open review threads as a prompt for an agent; `--all` includes resolved threads,
-`--local` the local ones, and `--json` prints the threads instead. `--task` defaults to `ASTERISM_TASK`.
+`--local` reads comments against the worktree instead of the pull request, and `--json` prints the threads instead. `--task` defaults to `ASTERISM_TASK`.
 
 ## File tabs
 

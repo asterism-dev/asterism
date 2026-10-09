@@ -83,10 +83,10 @@ function copyBranch() {
       <button
         :disabled="!mainApi"
         :class="{ active: paneState('diff') === 'front' }"
-        :title="withHint('Toggle diff', 'toggleDiff')"
+        :title="withHint('Toggle review', 'toggleDiff')"
         @click="togglePane('diff')"
       >
-        <GitCompare />Diff
+        <GitCompare />Review
       </button>
       <button
         :disabled="!mainApi"
