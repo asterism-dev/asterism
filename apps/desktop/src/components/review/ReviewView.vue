@@ -11,7 +11,8 @@ import type {
   ReviewThread,
   Task,
 } from '../../types';
-import CommentOverview from './CommentOverview.vue';
+import CommitsTab from './CommitsTab.vue';
+import ConversationTab from './ConversationTab.vue';
 import FilesTab from './FilesTab.vue';
 import ReviewSubmitBar from './ReviewSubmitBar.vue';
 import ReviewTabs from './ReviewTabs.vue';
@@ -155,9 +156,6 @@ onUnmounted(() => {
   disposed = true;
   clearTimeout(timer);
 });
-
-// Task 10 wires the Commits tab to openCommit; exposed until then so it is not dead code.
-defineExpose({ openCommit });
 </script>
 
 <template>
@@ -196,13 +194,21 @@ defineExpose({ openCommit });
     />
     <p v-if="error" class="error message">{{ error }} <button @click="load">Retry</button></p>
     <div v-if="review" class="content">
-      <CommentOverview
+      <ConversationTab
         v-if="tab === 'conversation'"
         :task-id="task.id"
         :review="review"
         :selected="selected"
         @select="select"
         @to-agent="(t) => (sending = { threads: t })"
+      />
+      <CommitsTab
+        v-else-if="tab === 'commits' && commits"
+        :commits="commits"
+        :checks="review.commit_checks"
+        :source="review.source"
+        :current="commit"
+        @open="openCommit"
       />
       <template v-else-if="tab === 'files'">
         <p v-if="commitError" class="error message">
