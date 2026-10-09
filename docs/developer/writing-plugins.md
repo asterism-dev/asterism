@@ -182,7 +182,7 @@ Parameter and result types are defined in `crates/asterism-plugin/src/protocol.r
 
 `visibility` is `public`, `private` or `internal`. In `forge.pull_requests`, `state` is `open`, `draft`, `merged` or `closed`; `review` is `approved`, `changes_requested`, `review_required` or `none`; `checks` is `{"state": ..., "failing": [...]}` with state `pending`, `success`, `failure` or `none`. Leave branches without a pull request out of the result. `task_source.get` may return a `branch` to use for the task; when it is `null`, Asterism derives one.
 
-In `forge.review.get`, a check (in `checks` and `commit_checks`) has `id`, `name`, `workflow`, `status` (`queued`/`running`/`done`), `conclusion`, `started_at`, `completed_at`, `url`, `has_log` and `rerunnable`; a `conversation` item has `id`, `kind` (`comment`/`review`), `author`, `body`, `created_at` and `state`. `forge.checks.*` are only called for checks with `has_log` or `rerunnable` set.
+In `forge.review.get`, a check (in `checks`) has `id`, `name`, `workflow`, `status` (`queued`/`running`/`done`), `conclusion`, `started_at`, `completed_at`, `url`, `has_log` and `rerunnable`; a `conversation` item has `id`, `kind` (`comment`/`review`), `author`, `body`, `created_at` and `state`. `commit_checks` maps a commit sha to its combined check state as a lowercase string (for example `success`, `failure`, `pending`). `forge.checks.*` are only called for checks with `has_log` or `rerunnable` set.
 
 ### Calling back into the daemon
 

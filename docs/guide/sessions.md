@@ -106,7 +106,7 @@ changes** (**Finish review** once a review is pending). It opens a body field wi
 **Request changes**.
 
 The tabs below are **Conversation**, **Commits**, **Checks** (PR mode only) and **Files changed**, each with a
-count. Asterism remembers the last tab per task. The `+` / `−` totals on the right summarize the diff. In PR mode
+count. Asterism remembers the last tab per task until the app quits. The `+` / `−` totals on the right summarize the diff. In PR mode
 the pane polls the forge every 15 seconds while any check is queued or running, otherwise every minute.
 
 ### Conversation
@@ -180,8 +180,8 @@ asterism review checks [--task ID] [--log CHECK_ID] [--json]
 
 `review comments` prints the task's open review threads as a prompt for an agent; `--all` includes resolved
 threads, `--local` reads comments against the worktree instead of the pull request, and `--json` prints the
-threads instead. `review checks` lists the pull request's checks (`--json` prints them as JSON); `--log CHECK_ID`
-prints one check's log instead. `--task` defaults to `ASTERISM_TASK`.
+threads instead. `review checks` lists the pull request's checks, each with its id in brackets (`--json` prints them as JSON), and
+fails when the task has no pull request; `--log CHECK_ID` prints one check's log instead. `--task` defaults to `ASTERISM_TASK`.
 
 ## File tabs
 
