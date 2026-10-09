@@ -409,7 +409,7 @@ pub fn fetch(repo: &Path, remote: &str, extra: &GitEnv) -> Result<()> {
 pub fn fetch_branch(repo: &Path, remote: &str, branch: &str, extra: &GitEnv) -> Result<()> {
     run_with_env(
         Some(repo),
-        &["fetch", "-q", remote, branch],
+        &["fetch", "-q", "--", remote, branch],
         &clone_env(extra),
     )
     .map(|_| ())

@@ -130,6 +130,15 @@ fn origin_only_branches_check_out_with_upstream() {
 }
 
 #[test]
+fn fetch_branch_never_reads_the_branch_as_an_option() {
+    let (_origin, repo) = repo_with_origin();
+    let marker = repo.path().join("pwned");
+    let evil = format!("--upload-pack=touch {}", marker.display());
+    assert!(git::fetch_branch(repo.path(), "origin", &evil, &[]).is_err());
+    assert!(!marker.exists());
+}
+
+#[test]
 fn push_upstream_publishes_and_tracks_the_branch() {
     let (origin, repo) = repo_with_origin();
     let parent = tempfile::tempdir().unwrap();
