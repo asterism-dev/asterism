@@ -349,6 +349,18 @@ pub fn comment(
     Ok(())
 }
 
+pub fn add_comment(gh: &Path, project: &Path, number: u64, body: &str) -> Result<(), RpcError> {
+    let ids = pr_ids(gh, project, number)?;
+    let q = "mutation($subject:ID!,$body:String!){addComment(input:{subjectId:$subject,body:$body}){clientMutationId}}";
+    graphql(
+        gh,
+        project,
+        q,
+        &[("subject", GqlVar::Str(ids.pr)), ("body", s(body))],
+    )
+    .map(|_| ())
+}
+
 pub fn reply(gh: &Path, project: &Path, thread_id: &str, body: &str) -> Result<(), RpcError> {
     let q = "mutation($thread:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$thread,body:$body}){comment{id}}}";
     graphql(
@@ -607,6 +619,19 @@ echo '{{"data":{{"repository":{{"pullRequest":{{"id":"PR_1","headRefOid":"h1","r
             .filter(|c| !c.is_empty())
             .map(String::from)
             .collect()
+    }
+
+    #[test]
+    fn general_comments_use_add_comment_on_the_pull_request() {
+        let dir = tempfile::tempdir().unwrap();
+        add_comment(&fake_gh(dir.path(), false), &project(dir.path()), 7, "LGTM").unwrap();
+        let last = calls(dir.path()).pop().unwrap();
+        assert!(
+            last.contains("addComment(")
+                && last.contains("subject=PR_1")
+                && last.contains("body=LGTM"),
+            "{last}"
+        );
     }
 
     #[test]

@@ -1,14 +1,16 @@
+mod checks;
 mod gh;
 mod review;
 
 use std::path::{Path, PathBuf};
 
 use asterism_plugin::protocol::{
-    method, CloneParams, CreateRemoteParams, GetIssueParams, InitializeResult, ListReposParams,
-    PullRequestsParams, ResolveOwnerParams, ResolveOwnerResult, ReviewCommentForgeParams,
-    ReviewGetForgeParams, ReviewReplyForgeParams, ReviewResolveForgeParams,
-    ReviewSubmitForgeParams, ReviewViewedForgeParams, SearchIssuesParams, SearchPullRequestsParams,
-    TaskSourceCheck, TaskSourceCheckParams,
+    method, CheckForgeParams, CloneParams, CreateRemoteParams, GetIssueParams, InitializeResult,
+    ListReposParams, PullRequestsParams, ResolveOwnerParams, ResolveOwnerResult,
+    ReviewAddCommentForgeParams, ReviewCommentForgeParams, ReviewGetForgeParams,
+    ReviewReplyForgeParams, ReviewResolveForgeParams, ReviewSubmitForgeParams,
+    ReviewViewedForgeParams, SearchIssuesParams, SearchPullRequestsParams, TaskSourceCheck,
+    TaskSourceCheckParams,
 };
 use asterism_plugin::{params, serve, to_value, ErrorKind, Host, RpcError};
 use serde_json::Value;
@@ -82,6 +84,24 @@ fn handle(method_name: &str, raw: Value) -> Result<Value, RpcError> {
                 p.event,
                 &p.body,
             )?;
+            Ok(Value::Null)
+        }
+        method::FORGE_REVIEW_ADD_COMMENT => {
+            let p: ReviewAddCommentForgeParams = params(raw)?;
+            review::add_comment(&gh, Path::new(&p.pr.project_path), p.pr.number, &p.body)?;
+            Ok(Value::Null)
+        }
+        method::FORGE_CHECKS_LOG => {
+            let p: CheckForgeParams = params(raw)?;
+            to_value(checks::log(
+                &gh,
+                Path::new(&p.pr.project_path),
+                &p.check_id,
+            )?)
+        }
+        method::FORGE_CHECKS_RERUN => {
+            let p: CheckForgeParams = params(raw)?;
+            checks::rerun(&gh, Path::new(&p.pr.project_path), &p.check_id)?;
             Ok(Value::Null)
         }
         method::FORGE_STATUS => to_value(gh::status(&gh)),
