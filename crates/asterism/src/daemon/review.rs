@@ -1,11 +1,12 @@
-use std::path::Path;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use asterism_plugin::protocol::{self, PrRef, ReviewGetForgeParams};
+use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
 
 use super::Daemon;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::{git, lock, pr_status, review};
 
 const CACHE_TTL: Duration = Duration::from_secs(30);
@@ -74,13 +75,29 @@ impl Daemon {
         let local_comments = self.store().review_comments(task.id)?;
         if let (ReviewSource::Pr, Some((pr, true))) = (p.source, pr.clone()) {
             let forge = self.forge_review(task.id, &pr).await?;
-            if !git::resolves(&repo, &forge.head_sha) {
-                git::fetch_branch(&repo, "origin", &forge.head_ref, &self.options.git_env)?;
-            }
-            let base = self.effective_base(&repo, &task);
-            let patch = git::diff_range(&repo, &base, &forge.head_sha)?;
-            let wt = Path::new(&task.worktree_path);
-            let local_ahead = git::is_dirty(wt)? || !git::resolves_to(wt, "HEAD", &forge.head_sha);
+            let fallback_base = self.effective_base(&repo, &task);
+            let env = self.options.git_env.clone();
+            let (head_sha, head_ref, base_sha) = (
+                forge.head_sha.clone(),
+                forge.head_ref.clone(),
+                forge.base_sha.clone(),
+            );
+            let wt = PathBuf::from(&task.worktree_path);
+            let (patch, local_ahead) = tokio::task::spawn_blocking(move || -> Result<_> {
+                if !git::resolves(&repo, &head_sha) {
+                    git::fetch_branch(&repo, "origin", &head_ref, &env)?;
+                }
+                let base = if !base_sha.is_empty() && git::resolves(&repo, &base_sha) {
+                    base_sha
+                } else {
+                    fallback_base
+                };
+                let patch = git::diff_range(&repo, &base, &head_sha)?;
+                let local_ahead = git::is_dirty(&wt)? || !git::resolves_to(&wt, "HEAD", &head_sha);
+                Ok((patch, local_ahead))
+            })
+            .await
+            .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))??;
             let mut threads = forge.threads;
             threads.extend(review::local_threads(&local_comments, &patch));
             return Ok(ReviewResult {

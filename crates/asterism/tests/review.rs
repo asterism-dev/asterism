@@ -143,6 +143,32 @@ async fn pr_mode_diffs_merge_base_to_head() {
 }
 
 #[tokio::test]
+async fn pr_mode_diffs_from_the_forge_base() {
+    let env = setup();
+    let task = task(&env).await;
+    let base = commit(&task, "one\n");
+    let head = commit(&task, "one\ntwo\n");
+    with_pr(&env, &task, &head).await;
+    std::fs::write(
+        &env.review,
+        json!({"head_sha": head, "base_sha": base, "head_ref": "refs/pull/7/head",
+        "threads": [], "conversation": [], "viewed_files": [], "pending_review": null})
+        .to_string(),
+    )
+    .unwrap();
+    let r = env
+        .daemon
+        .review_get(&get(ReviewSource::Pr, &task))
+        .await
+        .unwrap();
+    assert!(
+        r.patch.contains("+two") && !r.patch.contains("+one"),
+        "{}",
+        r.patch
+    );
+}
+
+#[tokio::test]
 async fn pr_mode_reports_forge_errors_and_local_still_works() {
     let env = setup();
     let task = task(&env).await;
@@ -159,11 +185,17 @@ async fn pr_mode_reports_forge_errors_and_local_still_works() {
         .await
         .unwrap_err();
     assert!(err.message.contains("not logged in"), "{}", err.message);
+    let forge_calls = log_lines(&env, "review get").len();
     assert!(env
         .daemon
         .review_get(&get(ReviewSource::Local, &task))
         .await
         .is_ok());
+    assert_eq!(
+        log_lines(&env, "review get").len(),
+        forge_calls,
+        "Local mode called the forge"
+    );
 }
 
 #[tokio::test]
