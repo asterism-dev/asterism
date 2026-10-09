@@ -17,7 +17,7 @@ use crate::error::{Error, Result};
 use crate::store::StoredReviewComment;
 use crate::{git, lock, pr_status, review};
 
-const CACHE_TTL: Duration = Duration::from_secs(30);
+const CACHE_TTL: Duration = Duration::from_secs(10);
 
 /// Forge reviews per task; every write bumps the task's generation so a fetch started before it never caches stale data.
 #[derive(Default)]
