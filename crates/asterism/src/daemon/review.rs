@@ -125,15 +125,7 @@ impl Daemon {
             let task = task.clone();
             let (patch, local_ahead) = self
                 .off_runtime(move |d| {
-                    let repo = d.project_path(task.project_id)?;
-                    if !git::resolves(&repo, &head_sha) {
-                        git::fetch_branch(&repo, "origin", &head_ref, &d.options.git_env)?;
-                    }
-                    let base = if !base_sha.is_empty() && git::resolves(&repo, &base_sha) {
-                        base_sha
-                    } else {
-                        d.effective_base(&repo, &task)
-                    };
+                    let (repo, base) = pr_range(d, &task, &head_sha, &head_ref, &base_sha)?;
                     let patch = git::diff_range(&repo, &base, &head_sha)?;
                     let wt = PathBuf::from(&task.worktree_path);
                     let local_ahead =
@@ -195,6 +187,79 @@ impl Daemon {
             checks: Vec::new(),
             commit_checks: BTreeMap::new(),
         })
+    }
+
+    pub async fn review_commits(
+        self: &Arc<Self>,
+        p: &ReviewCommitsParams,
+    ) -> Result<ReviewCommitsResult> {
+        let task = self.task(p.task_id)?;
+        if let (ReviewSource::Pr, Some((pr, true))) = (p.source, self.review_pr(&task).await?) {
+            let forge = self.forge_review(task.id, &pr).await?;
+            return self
+                .off_runtime(move |d| {
+                    let (repo, base) =
+                        pr_range(d, &task, &forge.head_sha, &forge.head_ref, &forge.base_sha)?;
+                    Ok(ReviewCommitsResult {
+                        commits: git::log_range(&repo, &base, &forge.head_sha)?,
+                        uncommitted: false,
+                    })
+                })
+                .await;
+        }
+        self.off_runtime(move |d| {
+            let wt = PathBuf::from(&task.worktree_path);
+            let base = d.effective_base(&d.project_path(task.project_id)?, &task);
+            Ok(ReviewCommitsResult {
+                commits: git::log_range(&wt, &base, "HEAD")?,
+                uncommitted: git::is_dirty(&wt)?,
+            })
+        })
+        .await
+    }
+
+    pub async fn review_commit_diff(
+        self: &Arc<Self>,
+        p: &ReviewCommitDiffParams,
+    ) -> Result<TaskDiffResult> {
+        let task = self.task(p.task_id)?;
+        let wt = PathBuf::from(&task.worktree_path);
+        let Some(sha) = p.sha.as_deref().map(str::to_ascii_lowercase) else {
+            return self
+                .off_runtime(move |_| {
+                    Ok(TaskDiffResult {
+                        patch: git::diff(&wt, "HEAD")?,
+                    })
+                })
+                .await;
+        };
+        let invalid = || {
+            Error::new(
+                ErrorKind::InvalidParams,
+                format!("{sha} is not a commit of this task's changes"),
+            )
+        };
+        if !(7..=40).contains(&sha.len()) || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(invalid());
+        }
+        let commits = self
+            .review_commits(&ReviewCommitsParams {
+                task_id: task.id,
+                source: p.source,
+            })
+            .await?
+            .commits;
+        let full = commits
+            .into_iter()
+            .find(|c| c.sha.starts_with(&sha))
+            .ok_or_else(invalid)?
+            .sha;
+        self.off_runtime(move |_| {
+            Ok(TaskDiffResult {
+                patch: git::show_patch(&wt, &full)?,
+            })
+        })
+        .await
     }
 
     pub async fn review_set_viewed(self: &Arc<Self>, p: &ReviewViewedParams) -> Result<()> {
@@ -450,6 +515,26 @@ impl Daemon {
             ),
         })
     }
+}
+
+/// Fetches the PR head when it is missing and picks the diff base: the forge's base when it resolves, else the task's.
+fn pr_range(
+    d: &Daemon,
+    task: &Task,
+    head_sha: &str,
+    head_ref: &str,
+    base_sha: &str,
+) -> Result<(PathBuf, String)> {
+    let repo = d.project_path(task.project_id)?;
+    if !git::resolves(&repo, head_sha) {
+        git::fetch_branch(&repo, "origin", head_ref, &d.options.git_env)?;
+    }
+    let base = if !base_sha.is_empty() && git::resolves(&repo, base_sha) {
+        base_sha.to_string()
+    } else {
+        d.effective_base(&repo, task)
+    };
+    Ok((repo, base))
 }
 
 #[cfg(test)]

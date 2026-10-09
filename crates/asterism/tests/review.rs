@@ -538,3 +538,110 @@ async fn publishing_emits_one_change() {
         .count();
     assert_eq!(changes, 1);
 }
+
+/// Commits `content` to `file` in the task worktree with `msg`; returns the sha.
+fn commit_file(task: &Task, file: &str, content: &str, msg: &str) -> String {
+    let wt = std::path::Path::new(&task.worktree_path);
+    std::fs::write(wt.join(file), content).unwrap();
+    common::run_git(wt, &["add", "."]);
+    common::run_git(wt, &["commit", "-q", "-m", msg]);
+    common::run_git(wt, &["rev-parse", "HEAD"])
+        .trim()
+        .to_string()
+}
+
+fn commits(task: &Task, source: ReviewSource) -> ReviewCommitsParams {
+    ReviewCommitsParams {
+        task_id: task.id,
+        source,
+    }
+}
+
+fn commit_diff(task: &Task, sha: Option<&str>) -> ReviewCommitDiffParams {
+    ReviewCommitDiffParams {
+        task_id: task.id,
+        source: ReviewSource::Local,
+        sha: sha.map(Into::into),
+    }
+}
+
+#[tokio::test]
+async fn commits_list_the_pull_request_and_the_worktree() {
+    let env = setup();
+    let task = task(&env).await;
+    let first = commit_file(&task, "a.rs", "one\n", "first");
+    let head = commit_file(&task, "b.rs", "two\n", "second");
+    with_pr(&env, &task, &head).await;
+    let pr = env
+        .daemon
+        .review_commits(&commits(&task, ReviewSource::Pr))
+        .await
+        .unwrap();
+    assert_eq!(
+        pr.commits.iter().map(|c| c.sha.clone()).collect::<Vec<_>>(),
+        vec![head.clone(), first]
+    );
+    assert!(!pr.uncommitted);
+    let local = env
+        .daemon
+        .review_commits(&commits(&task, ReviewSource::Local))
+        .await
+        .unwrap();
+    assert_eq!(local.commits.len(), 2);
+    assert!(!local.uncommitted);
+    std::fs::write(
+        std::path::Path::new(&task.worktree_path).join("c.rs"),
+        "draft\n",
+    )
+    .unwrap();
+    assert!(
+        env.daemon
+            .review_commits(&commits(&task, ReviewSource::Local))
+            .await
+            .unwrap()
+            .uncommitted
+    );
+}
+
+#[tokio::test]
+async fn commit_diff_shows_one_commit_or_the_uncommitted_changes() {
+    let env = setup();
+    let task = task(&env).await;
+    let first = commit_file(&task, "a.rs", "one\n", "first");
+    commit_file(&task, "b.rs", "two\n", "second");
+    let one = env
+        .daemon
+        .review_commit_diff(&commit_diff(&task, Some(&first[..10])))
+        .await
+        .unwrap();
+    assert!(one.patch.contains("+one") && !one.patch.contains("+two"));
+    std::fs::write(
+        std::path::Path::new(&task.worktree_path).join("c.rs"),
+        "draft\n",
+    )
+    .unwrap();
+    let wip = env
+        .daemon
+        .review_commit_diff(&commit_diff(&task, None))
+        .await
+        .unwrap();
+    assert!(wip.patch.contains("+draft") && !wip.patch.contains("+one"));
+}
+
+#[tokio::test]
+async fn commit_diff_rejects_shas_outside_the_range() {
+    let env = setup();
+    let task = task(&env).await;
+    commit_file(&task, "a.rs", "one\n", "first");
+    let base = common::run_git(env.repo.path(), &["rev-parse", "main"])
+        .trim()
+        .to_string();
+    for sha in [base.as_str(), "--upload-pack=x", "zzzzzzz"] {
+        let err = env
+            .daemon
+            .review_commit_diff(&commit_diff(&task, Some(sha)))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::InvalidParams, "{sha}: {}", err.message);
+    }
+}
