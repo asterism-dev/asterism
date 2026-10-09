@@ -15,11 +15,7 @@ const error = ref<string | null>(null);
 const busy = ref(false);
 
 const sessions = computed(() => agentSessions(state.sessions, props.taskId));
-const busyWarning = computed(() =>
-  sessions.value.some(
-    (s) => s.status === 'working' && (target.value === 'new' || s.id === target.value),
-  ),
-);
+const busyWarning = computed(() => sessions.value.some((s) => s.status === 'working'));
 
 onMounted(async () => {
   try {

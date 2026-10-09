@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { defaultTarget, editorButtons, extendDataFor, splitPatch } from './review';
+import {
+  defaultTarget,
+  editorButtons,
+  extendDataFor,
+  formatTime,
+  isLargeDiff,
+  splitPatch,
+  startsCollapsed,
+} from './review';
 import type { ReviewThread, Session } from './types';
 
 const PATCH = `diff --git a/a.rs b/a.rs
@@ -125,4 +133,29 @@ describe('defaultTarget', () => {
     expect(defaultTarget([s(2, 'working')], 1)).toBe(2);
     expect(defaultTarget([s(5, 'exited')], 1)).toBeNull();
   });
+});
+
+describe('startsCollapsed', () => {
+  const file = (additions: number, deletions: number) => ({
+    path: 'a',
+    patch: '',
+    additions,
+    deletions,
+  });
+  it('collapses large diffs and files past the first 30', () => {
+    expect(startsCollapsed(file(600, 400), 0)).toBe(false);
+    expect(startsCollapsed(file(600, 401), 0)).toBe(true);
+    expect(isLargeDiff(file(600, 401))).toBe(true);
+    expect(startsCollapsed(file(1, 1), 29)).toBe(false);
+    expect(startsCollapsed(file(1, 1), 30)).toBe(true);
+    expect(isLargeDiff(file(1, 1))).toBe(false);
+  });
+});
+
+describe('formatTime', () => {
+  it('formats forge ISO strings and local epoch seconds alike', () => {
+    expect(formatTime('1700000000')).toBe(formatTime('2023-11-14T22:13:20Z'));
+    expect(formatTime('1700000000')).not.toBe('1700000000');
+  });
+  it('leaves unparseable values alone', () => expect(formatTime('')).toBe(''));
 });

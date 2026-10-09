@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { api, errorMessage } from '../../api';
+import { formatTime } from '../../review';
 import type { ReviewThread } from '../../types';
 import CommentEditor from './CommentEditor.vue';
 
@@ -8,6 +9,7 @@ const props = defineProps<{
   taskId: number;
   thread: ReviewThread;
   canPublish: boolean;
+  pendingReview: boolean;
   selected: boolean;
 }>();
 const emit = defineEmits<{ toAgent: [thread: ReviewThread]; select: [selected: boolean] }>();
@@ -26,7 +28,10 @@ async function act(action: () => Promise<unknown>) {
 
 const toggleResolved = () =>
   act(() => api.reviewResolve(props.taskId, props.thread.id, !props.thread.resolved));
-const publish = () => act(() => api.reviewPublish(props.taskId, props.thread.id, 'single'));
+const publish = () =>
+  act(() =>
+    api.reviewPublish(props.taskId, props.thread.id, props.pendingReview ? 'review' : 'single'),
+  );
 
 async function reply(body: string) {
   await api.reviewReply(props.taskId, props.thread.id, body);
@@ -52,7 +57,7 @@ async function reply(body: string) {
     <template v-if="open">
       <div v-for="c in thread.comments" :key="c.id" class="comment">
         <strong>{{ thread.local ? 'local' : '@' + c.author }}</strong>
-        <span class="muted">{{ c.created_at }}</span>
+        <span class="muted">{{ formatTime(c.created_at) }}</span>
         <p class="body">{{ c.body }}</p>
       </div>
       <p v-if="error" class="error">{{ error }}</p>

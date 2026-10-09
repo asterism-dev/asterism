@@ -3,7 +3,13 @@ import { DiffModeEnum, DiffView, SplitSide } from '@git-diff-view/vue';
 import '@git-diff-view/vue/styles/diff-view-pure.css';
 import { computed, ref, shallowRef, watch } from 'vue';
 import { api, errorMessage } from '../../api';
-import { editorButtons, extendDataFor, type FileDiff } from '../../review';
+import {
+  editorButtons,
+  extendDataFor,
+  isLargeDiff,
+  startsCollapsed,
+  type FileDiff,
+} from '../../review';
 import { activeTheme } from '../../theme';
 import type { CommentTarget, ReviewResult, ReviewThread } from '../../types';
 import CommentEditor from './CommentEditor.vue';
@@ -12,6 +18,7 @@ import ThreadView from './ThreadView.vue';
 const props = defineProps<{
   taskId: number;
   file: FileDiff;
+  index: number;
   review: ReviewResult;
   threads: ReviewThread[];
   split: boolean;
@@ -22,7 +29,7 @@ const emit = defineEmits<{
   toAgent: [threads: ReviewThread[]];
   select: [id: string, selected: boolean];
 }>();
-const open = ref(!props.viewed);
+const open = ref(!props.viewed && !startsCollapsed(props.file, props.index));
 const isViewed = ref(props.viewed);
 const viewedError = ref<string | null>(null);
 
@@ -95,6 +102,9 @@ async function comment(
       </label>
     </header>
     <p v-if="viewedError" class="error">{{ viewedError }}</p>
+    <button v-if="!open && !isViewed && isLargeDiff(file)" class="link hint" @click="open = true">
+      Large diff — click to expand
+    </button>
     <!-- Rendered only while open: the library has no virtual scrolling. -->
     <DiffView
       v-if="open"
@@ -119,6 +129,7 @@ async function comment(
           :task-id="taskId"
           :thread="t"
           :can-publish="review.source === 'pr' && review.reviews_supported"
+          :pending-review="!!review.pending_review"
           :selected="selected.has(t.id)"
           @select="(s) => emit('select', t.id, s)"
           @to-agent="(th) => emit('toAgent', [th])"
@@ -165,5 +176,9 @@ async function comment(
   background: none;
   border: none;
   font-weight: 600;
+}
+.hint {
+  font-weight: normal;
+  padding: 0 10px 8px;
 }
 </style>

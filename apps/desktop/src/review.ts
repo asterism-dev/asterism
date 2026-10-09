@@ -114,3 +114,18 @@ export function defaultTarget(sessions: Session[], taskId: number): number | nul
   const live = agentSessions(sessions, taskId).sort((a, b) => b.id - a.id);
   return (live.find((s) => s.status === 'idle') ?? live[0])?.id ?? null;
 }
+
+const LARGE_DIFF_LINES = 1000;
+const MAX_OPEN_FILES = 30;
+
+export const isLargeDiff = (f: FileDiff) => f.additions + f.deletions > LARGE_DIFF_LINES;
+
+/** The diff view has no virtual scrolling, so big or late files start collapsed. */
+export const startsCollapsed = (f: FileDiff, index: number) =>
+  isLargeDiff(f) || index >= MAX_OPEN_FILES;
+
+/** Forge timestamps are ISO strings, local ones unix seconds. */
+export function formatTime(raw: string): string {
+  const date = new Date(/^\d+$/.test(raw) ? Number(raw) * 1000 : raw);
+  return isNaN(date.getTime()) ? raw : date.toLocaleString();
+}

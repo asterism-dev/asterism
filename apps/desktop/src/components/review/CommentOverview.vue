@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { formatTime } from '../../review';
 import type { ReviewResult, ReviewThread } from '../../types';
 import ThreadView from './ThreadView.vue';
 
@@ -32,7 +33,7 @@ const shown = computed(() =>
       </label>
     </div>
     <div v-for="c in review.conversation" :key="c.id" class="comment">
-      <strong>@{{ c.author }}</strong> <span class="muted">{{ c.created_at }}</span>
+      <strong>@{{ c.author }}</strong> <span class="muted">{{ formatTime(c.created_at) }}</span>
       <p class="body">{{ c.body }}</p>
     </div>
     <ThreadView
@@ -41,6 +42,7 @@ const shown = computed(() =>
       :task-id="taskId"
       :thread="t"
       :can-publish="review.source === 'pr' && review.reviews_supported"
+      :pending-review="!!review.pending_review"
       :selected="selected.has(t.id)"
       @select="(s) => emit('select', t.id, s)"
       @to-agent="(th) => emit('toAgent', [th])"

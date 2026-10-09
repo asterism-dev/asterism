@@ -36,6 +36,8 @@ async function load() {
     const result = await api.review(props.task.id, source.value);
     if (request !== latestLoad) return;
     review.value = result;
+    // The daemon falls back to local when the forge has no reviews.
+    source.value = result.source;
     error.value = null;
   } catch (e) {
     if (request === latestLoad) error.value = errorMessage(e);
@@ -72,7 +74,8 @@ async function submit(event: ReviewEvent) {
   }
 }
 
-watch(source, () => {
+watch(source, (next) => {
+  if (review.value?.source === next) return;
   selected.value = new Set();
   load();
 });
@@ -94,7 +97,7 @@ onUnmounted(() => clearInterval(poll));
 <template>
   <div class="review-view">
     <div class="toolbar">
-      <div v-if="pr" class="segmented">
+      <div v-if="pr && review?.reviews_supported" class="segmented">
         <button :class="{ on: source === 'pr' }" @click="source = 'pr'">PR #{{ pr.number }}</button>
         <button :class="{ on: source === 'local' }" @click="source = 'local'">Local</button>
       </div>
@@ -160,10 +163,11 @@ onUnmounted(() => clearInterval(poll));
         </nav>
         <div class="files">
           <FileDiff
-            v-for="f in files"
+            v-for="(f, i) in files"
             :key="f.path + (viewed.has(f.path) ? ':v' : '')"
             :task-id="task.id"
             :file="f"
+            :index="i"
             :review="review"
             :threads="byFile.get(f.path) ?? []"
             :split="split"
