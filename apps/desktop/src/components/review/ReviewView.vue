@@ -25,6 +25,7 @@ const source = ref<ReviewSource>(pr.value ? 'pr' : 'local');
 const review = ref<ReviewResult | null>(null);
 const commits = ref<ReviewCommitsResult | null>(null);
 const error = ref<string | null>(null);
+const commitsError = ref<string | null>(null);
 const loading = ref(false);
 const tab = ref<ReviewTab>(lastReviewTab.get(props.task.id) ?? 'files');
 // undefined: all changes; null: uncommitted changes; string: one commit.
@@ -69,13 +70,18 @@ async function load() {
   const request = ++latestLoad;
   loading.value = true;
   try {
+    let listError: string | null = null;
     const [result, list] = await Promise.all([
       api.review(props.task.id, source.value),
-      api.reviewCommits(props.task.id, source.value).catch(() => null),
+      api.reviewCommits(props.task.id, source.value).catch((e) => {
+        listError = errorMessage(e);
+        return null;
+      }),
     ]);
     if (request !== latestLoad) return;
     review.value = result;
     commits.value = list;
+    commitsError.value = listError;
     // The daemon falls back to local when the forge has no reviews.
     source.value = result.source;
     if (result.source === 'local' && tab.value === 'checks') tab.value = 'files';
@@ -177,7 +183,7 @@ onUnmounted(() => {
         <template v-else>{{ task.title }}</template>
       </h3>
       <span class="spacer" />
-      <div v-if="pr && review?.reviews_supported" class="segmented">
+      <div v-if="pr && (!review || review.reviews_supported)" class="segmented">
         <button :class="{ on: source === 'pr' }" @click="source = 'pr'">PR #{{ pr.number }}</button>
         <button :class="{ on: source === 'local' }" @click="source = 'local'">Local</button>
       </div>
@@ -203,6 +209,9 @@ onUnmounted(() => {
         @select="select"
         @to-agent="(t) => (sending = { threads: t })"
       />
+      <p v-else-if="tab === 'commits' && !commits" class="error message">
+        {{ commitsError ?? 'Loading…' }} <button v-if="commitsError" @click="load">Retry</button>
+      </p>
       <CommitsTab
         v-else-if="tab === 'commits' && commits"
         :commits="commits"

@@ -260,6 +260,10 @@ describe('logs', () => {
     '2026-10-09T10:00:06.0000000Z ##[error]Process completed with exit code 101.',
     '',
   ].join('\n');
+  it('ignores a BOM and CRLF line endings', () => {
+    const s = logSections('\uFEFF##[group]Run a\r\nhello\r\n##[endgroup]\r\n');
+    expect(s.map((x) => [x.title, x.lines])).toEqual([['Run a', ['hello']]]);
+  });
   it('strips ANSI and timestamps and splits on groups', () => {
     const s = logSections(log);
     expect(s.map((x) => [x.title, x.failed])).toEqual([

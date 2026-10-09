@@ -27,7 +27,7 @@ const shows = (t: ReviewThread) =>
         : true;
 const entries = computed(() =>
   timeline(props.review).filter((e) =>
-    e.kind === 'thread' ? shows(e.thread) : filter.value === 'all',
+    e.kind === 'thread' ? shows(e.thread) : ['open', 'all'].includes(filter.value),
   ),
 );
 const STATES: Record<string, string> = {

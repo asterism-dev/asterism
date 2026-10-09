@@ -66,11 +66,10 @@ async function loadLog(c: CheckRun) {
 function show(c: CheckRun) {
   if (!c.has_log) return;
   selectedId.value = c.id;
-  return loadLog(c);
 }
 
 watch(
-  () => current.value?.status,
+  () => [current.value?.id, current.value?.status],
   () => current.value && loadLog(current.value),
 );
 
@@ -145,7 +144,14 @@ async function toAgent(c: CheckRun, excerpt?: string) {
         <button v-if="failed(c) && c.has_log" :disabled="agentBusy.has(c.id)" @click="toAgent(c)">
           → Agent
         </button>
-        <button class="link" title="Open in browser" @click="openExternal(c.url)">↗</button>
+        <button
+          class="link"
+          title="Open in browser"
+          aria-label="Open in browser"
+          @click="openExternal(c.url)"
+        >
+          ↗
+        </button>
         <p v-if="rerunError[c.id] || agentError[c.id]" class="error">
           {{ rerunError[c.id] ?? agentError[c.id] }}
         </p>

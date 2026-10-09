@@ -250,7 +250,9 @@ export interface LogSection {
 export function logSections(text: string): LogSection[] {
   const sections: LogSection[] = [];
   let current: LogSection = { title: null, lines: [], failed: false };
-  for (const raw of stripAnsi(text).replace(/\n$/, '').split('\n')) {
+  for (const raw of stripAnsi(text.replace(/^\uFEFF/, '').replace(/\r/g, ''))
+    .replace(/\n$/, '')
+    .split('\n')) {
     const line = raw.replace(STAMP, '');
     if (line.startsWith('##[group]')) {
       if (current.title !== null || current.lines.length) sections.push(current);
