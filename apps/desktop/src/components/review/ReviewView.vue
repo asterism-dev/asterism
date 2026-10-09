@@ -21,6 +21,8 @@ const sending = ref<ReviewThread[] | null>(null);
 const submitOpen = ref(false);
 const submitBody = ref('');
 const submitError = ref<string | null>(null);
+const submitting = ref(false);
+let latestLoad = 0;
 
 const files = computed(() => splitPatch(review.value?.patch ?? ''));
 const byFile = computed(() => threadsByFile(review.value?.threads ?? []));
@@ -28,14 +30,17 @@ const viewed = computed(() => new Set(review.value?.viewed_files ?? []));
 const openThreads = computed(() => (review.value?.threads ?? []).filter((t) => !t.resolved));
 
 async function load() {
+  const request = ++latestLoad;
   loading.value = true;
   try {
-    review.value = await api.review(props.task.id, source.value);
+    const result = await api.review(props.task.id, source.value);
+    if (request !== latestLoad) return;
+    review.value = result;
     error.value = null;
   } catch (e) {
-    error.value = errorMessage(e);
+    if (request === latestLoad) error.value = errorMessage(e);
   } finally {
-    loading.value = false;
+    if (request === latestLoad) loading.value = false;
   }
 }
 
@@ -54,6 +59,7 @@ function sendSelection() {
 }
 
 async function submit(event: ReviewEvent) {
+  submitting.value = true;
   submitError.value = null;
   try {
     await api.reviewSubmit(props.task.id, event, submitBody.value);
@@ -61,10 +67,15 @@ async function submit(event: ReviewEvent) {
     submitBody.value = '';
   } catch (e) {
     submitError.value = errorMessage(e);
+  } finally {
+    submitting.value = false;
   }
 }
 
-watch(source, load);
+watch(source, () => {
+  selected.value = new Set();
+  load();
+});
 watch(() => state.reviewVersion[props.task.id], load);
 // ponytail: reloads when the task's sessions settle instead of watching the worktree; add a daemon fs-watch event if agents edit while idle.
 watch(
@@ -114,9 +125,9 @@ onUnmounted(() => clearInterval(poll));
         <textarea v-model="submitBody" rows="3" placeholder="Leave a comment" />
         <p v-if="submitError" class="error">{{ submitError }}</p>
         <div class="actions">
-          <button @click="submit('comment')">Comment</button>
-          <button @click="submit('approve')">Approve</button>
-          <button @click="submit('request_changes')">Request changes</button>
+          <button :disabled="submitting" @click="submit('comment')">Comment</button>
+          <button :disabled="submitting" @click="submit('approve')">Approve</button>
+          <button :disabled="submitting" @click="submit('request_changes')">Request changes</button>
         </div>
       </div>
     </div>
@@ -165,9 +176,9 @@ onUnmounted(() => clearInterval(poll));
       </template>
     </div>
     <SendToAgentDialog
-      v-if="sending"
+      v-if="sending && review"
       :task-id="task.id"
-      :source="source"
+      :source="review.source"
       :threads="sending"
       @close="sending = null"
     />

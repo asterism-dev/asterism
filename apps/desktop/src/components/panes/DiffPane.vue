@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, defineAsyncComponent } from 'vue';
 import { state } from '../../store';
-import ReviewView from '../review/ReviewView.vue';
+
+// Lazy so the diff library and its highlighter grammars stay out of the main chunk.
+const ReviewView = defineAsyncComponent(() => import('../review/ReviewView.vue'));
 
 defineProps<{ params: unknown }>();
 const task = computed(() => state.tasks.find((t) => t.id === state.selectedTaskId) ?? null);

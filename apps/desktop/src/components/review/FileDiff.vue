@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { DiffModeEnum, DiffView, SplitSide } from '@git-diff-view/vue';
 import '@git-diff-view/vue/styles/diff-view-pure.css';
-import { computed, ref } from 'vue';
+import { computed, ref, shallowRef, watch } from 'vue';
 import { api, errorMessage } from '../../api';
 import { editorButtons, extendDataFor, type FileDiff } from '../../review';
 import { activeTheme } from '../../theme';
@@ -23,14 +23,21 @@ const emit = defineEmits<{
   select: [id: string, selected: boolean];
 }>();
 const open = ref(!props.viewed);
+const isViewed = ref(props.viewed);
 const viewedError = ref<string | null>(null);
 
 // The parser needs the `---`/`+++` header, so each file passes its whole `diff --git` chunk.
-const data = computed(() => ({
+const diffData = () => ({
   oldFile: { fileName: props.file.path },
   newFile: { fileName: props.file.path },
   hunks: [props.file.patch],
-}));
+});
+// DiffView rebuilds its DiffFile and closes open comment editors whenever `data` changes, so only a new patch replaces it.
+const data = shallowRef(diffData());
+watch(
+  () => props.file.patch,
+  () => (data.value = diffData()),
+);
 const extend = computed(() => extendDataFor(props.threads));
 const buttons = computed(() =>
   editorButtons(props.review.source, props.review.reviews_supported, !!props.review.pending_review),
@@ -38,11 +45,14 @@ const buttons = computed(() =>
 const openThreads = computed(() => props.threads.filter((t) => !t.resolved));
 
 async function toggleViewed(viewed: boolean) {
+  isViewed.value = viewed;
   open.value = !viewed;
   viewedError.value = null;
   try {
     await api.reviewSetViewed(props.taskId, props.review.source, props.file.path, viewed);
   } catch (e) {
+    isViewed.value = !viewed;
+    open.value = viewed;
     viewedError.value = errorMessage(e);
   }
 }
@@ -78,7 +88,7 @@ async function comment(
       <label>
         <input
           type="checkbox"
-          :checked="viewed"
+          :checked="isViewed"
           @change="toggleViewed(($event.target as HTMLInputElement).checked)"
         />
         Viewed
