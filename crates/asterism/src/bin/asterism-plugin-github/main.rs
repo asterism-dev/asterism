@@ -1,11 +1,12 @@
 mod gh;
+mod review;
 
 use std::path::{Path, PathBuf};
 
 use asterism_plugin::protocol::{
     method, CloneParams, CreateRemoteParams, GetIssueParams, InitializeResult, ListReposParams,
-    PullRequestsParams, ResolveOwnerParams, ResolveOwnerResult, SearchIssuesParams,
-    SearchPullRequestsParams, TaskSourceCheck, TaskSourceCheckParams,
+    PullRequestsParams, ResolveOwnerParams, ResolveOwnerResult, ReviewGetForgeParams,
+    SearchIssuesParams, SearchPullRequestsParams, TaskSourceCheck, TaskSourceCheckParams,
 };
 use asterism_plugin::{params, serve, to_value, ErrorKind, Host, RpcError};
 use serde_json::Value;
@@ -20,8 +21,21 @@ fn handle(method_name: &str, raw: Value) -> Result<Value, RpcError> {
     let gh = gh_bin();
     match method_name {
         method::INITIALIZE => to_value(InitializeResult {
-            capabilities: vec!["forge".into(), "task_source".into(), "pull_requests".into()],
+            capabilities: vec![
+                "forge".into(),
+                "task_source".into(),
+                "pull_requests".into(),
+                "reviews".into(),
+            ],
         }),
+        method::FORGE_REVIEW_GET => {
+            let p: ReviewGetForgeParams = params(raw)?;
+            to_value(review::get(
+                &gh,
+                Path::new(&p.pr.project_path),
+                p.pr.number,
+            )?)
+        }
         method::FORGE_STATUS => to_value(gh::status(&gh)),
         method::FORGE_LIST_REPOS => {
             to_value(gh::repos(&gh, &params::<ListReposParams>(raw)?.owner)?)
