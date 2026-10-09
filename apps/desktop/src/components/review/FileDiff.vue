@@ -24,6 +24,7 @@ const props = defineProps<{
   split: boolean;
   viewed: boolean;
   selected: Set<string>;
+  readOnly?: boolean;
 }>();
 const emit = defineEmits<{
   toAgent: [threads: ReviewThread[]];
@@ -45,7 +46,7 @@ watch(
   () => props.file.patch,
   () => (data.value = diffData()),
 );
-const extend = computed(() => extendDataFor(props.threads));
+const extend = computed(() => extendDataFor(props.readOnly ? [] : props.threads));
 const buttons = computed(() =>
   editorButtons(props.review.source, props.review.reviews_supported, !!props.review.pending_review),
 );
@@ -91,8 +92,10 @@ async function comment(
       <span class="add">+{{ file.additions }}</span>
       <span class="del">−{{ file.deletions }}</span>
       <span class="spacer" />
-      <button v-if="openThreads.length" @click="emit('toAgent', openThreads)">→ Agent</button>
-      <label>
+      <button v-if="!readOnly && openThreads.length" @click="emit('toAgent', openThreads)">
+        → Agent
+      </button>
+      <label v-if="!readOnly">
         <input
           type="checkbox"
           :checked="isViewed"
@@ -113,7 +116,7 @@ async function comment(
       :diff-view-mode="split ? DiffModeEnum.Split : DiffModeEnum.Unified"
       :diff-view-theme="activeTheme"
       :diff-view-highlight="true"
-      :diff-view-add-widget="true"
+      :diff-view-add-widget="!readOnly"
     >
       <template #widget="{ lineNumber, side, onClose }">
         <CommentEditor

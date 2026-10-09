@@ -5,7 +5,12 @@ import { agentSessions, defaultTarget } from '../../review';
 import { state } from '../../store';
 import type { ReviewSource, ReviewThread } from '../../types';
 
-const props = defineProps<{ taskId: number; source: ReviewSource; threads: ReviewThread[] }>();
+const props = defineProps<{
+  taskId: number;
+  source: ReviewSource;
+  threads: ReviewThread[];
+  initialPrompt?: string;
+}>();
 const emit = defineEmits<{ close: [] }>();
 const prompt = ref('');
 const target = ref<number | 'new'>(defaultTarget(state.sessions, props.taskId) ?? 'new');
@@ -18,6 +23,10 @@ const sessions = computed(() => agentSessions(state.sessions, props.taskId));
 const busyWarning = computed(() => sessions.value.some((s) => s.status === 'working'));
 
 onMounted(async () => {
+  if (props.initialPrompt) {
+    prompt.value = props.initialPrompt;
+    return;
+  }
   try {
     const ids = props.threads.map((t) => t.id);
     prompt.value = (await api.reviewPrompt(props.taskId, props.source, ids)).prompt;
@@ -49,7 +58,8 @@ async function send() {
 <template>
   <div class="modal-backdrop" tabindex="-1" @click.self="close" @keydown.esc="close">
     <div class="modal" role="dialog" aria-modal="true" aria-label="Send to an agent">
-      <strong>
+      <strong v-if="!threads.length">Send to an agent</strong>
+      <strong v-else>
         Send {{ threads.length }} thread{{ threads.length === 1 ? '' : 's' }} to an agent
       </strong>
       <label>

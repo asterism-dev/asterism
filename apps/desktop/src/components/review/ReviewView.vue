@@ -1,49 +1,108 @@
 <script setup lang="ts">
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../../api';
-import { splitPatch, threadsByFile } from '../../review';
-import { state, taskStatus } from '../../store';
-import type { ReviewEvent, ReviewResult, ReviewSource, ReviewThread, Task } from '../../types';
+import { lastReviewTab, pollInterval, splitPatch, type ReviewTab } from '../../review';
+import { state, taskStatus, toast } from '../../store';
+import type {
+  ReviewCommitsResult,
+  ReviewResult,
+  ReviewSource,
+  ReviewThread,
+  Task,
+} from '../../types';
 import CommentOverview from './CommentOverview.vue';
-import FileDiff from './FileDiff.vue';
+import FilesTab from './FilesTab.vue';
+import ReviewSubmitBar from './ReviewSubmitBar.vue';
+import ReviewTabs from './ReviewTabs.vue';
 import SendToAgentDialog from './SendToAgentDialog.vue';
 
 const props = defineProps<{ task: Task }>();
 const pr = computed(() => state.prs[props.task.id] ?? null);
 const source = ref<ReviewSource>(pr.value ? 'pr' : 'local');
 const review = ref<ReviewResult | null>(null);
+const commits = ref<ReviewCommitsResult | null>(null);
 const error = ref<string | null>(null);
 const loading = ref(false);
-const split = ref(false);
-const showOverview = ref(false);
+const tab = ref<ReviewTab>(lastReviewTab.get(props.task.id) ?? 'files');
+// undefined: all changes; null: uncommitted changes; string: one commit.
+const commit = ref<string | null | undefined>(undefined);
+const commitPatch = ref<string | null>(null);
+const commitError = ref<string | null>(null);
 const selected = ref(new Set<string>());
-const sending = ref<ReviewThread[] | null>(null);
-const submitOpen = ref(false);
-const submitBody = ref('');
-const submitError = ref<string | null>(null);
-const submitting = ref(false);
+const sending = ref<{ threads: ReviewThread[]; prompt?: string } | null>(null);
 let latestLoad = 0;
+let timer: ReturnType<typeof setTimeout> | undefined;
 
+const isPr = computed(() => review.value?.source === 'pr');
 const files = computed(() => splitPatch(review.value?.patch ?? ''));
-const byFile = computed(() => threadsByFile(review.value?.threads ?? []));
-const viewed = computed(() => new Set(review.value?.viewed_files ?? []));
-const openThreads = computed(() => (review.value?.threads ?? []).filter((t) => !t.resolved));
+const additions = computed(() => files.value.reduce((n, f) => n + f.additions, 0));
+const deletions = computed(() => files.value.reduce((n, f) => n + f.deletions, 0));
+const tabs = computed(() => {
+  const r = review.value;
+  const list: { id: ReviewTab; label: string; count: number }[] = [
+    {
+      id: 'conversation',
+      label: 'Conversation',
+      count: (r?.conversation.length ?? 0) + (r?.threads.length ?? 0),
+    },
+    {
+      id: 'commits',
+      label: 'Commits',
+      count: (commits.value?.commits.length ?? 0) + (commits.value?.uncommitted ? 1 : 0),
+    },
+  ];
+  if (isPr.value) list.push({ id: 'checks', label: 'Checks', count: r?.checks.length ?? 0 });
+  list.push({ id: 'files', label: 'Files changed', count: files.value.length });
+  return list;
+});
+
+function schedule() {
+  clearTimeout(timer);
+  if (source.value === 'pr') timer = setTimeout(load, pollInterval(review.value));
+}
 
 async function load() {
   const request = ++latestLoad;
   loading.value = true;
   try {
-    const result = await api.review(props.task.id, source.value);
+    const [result, list] = await Promise.all([
+      api.review(props.task.id, source.value),
+      api.reviewCommits(props.task.id, source.value).catch(() => null),
+    ]);
     if (request !== latestLoad) return;
     review.value = result;
+    commits.value = list;
     // The daemon falls back to local when the forge has no reviews.
     source.value = result.source;
     error.value = null;
   } catch (e) {
     if (request === latestLoad) error.value = errorMessage(e);
   } finally {
-    if (request === latestLoad) loading.value = false;
+    if (request === latestLoad) {
+      loading.value = false;
+      schedule();
+    }
   }
+}
+
+async function openCommit(sha: string | null) {
+  commit.value = sha;
+  commitPatch.value = null;
+  commitError.value = null;
+  tab.value = 'files';
+  try {
+    const result = await api.reviewCommitDiff(props.task.id, source.value, sha);
+    if (commit.value === sha) commitPatch.value = result.patch;
+  } catch (e) {
+    if (commit.value === sha) commitError.value = errorMessage(e);
+  }
+}
+
+function showAll() {
+  commit.value = undefined;
+  commitPatch.value = null;
+  commitError.value = null;
 }
 
 function select(id: string, on: boolean) {
@@ -55,28 +114,23 @@ function select(id: string, on: boolean) {
 
 function sendSelection() {
   const threads = review.value?.threads ?? [];
-  sending.value = selected.value.size
-    ? threads.filter((t) => selected.value.has(t.id))
-    : openThreads.value;
+  sending.value = {
+    threads: selected.value.size
+      ? threads.filter((t) => selected.value.has(t.id))
+      : threads.filter((t) => !t.resolved),
+  };
 }
 
-async function submit(event: ReviewEvent) {
-  submitting.value = true;
-  submitError.value = null;
-  try {
-    await api.reviewSubmit(props.task.id, event, submitBody.value);
-    submitOpen.value = false;
-    submitBody.value = '';
-  } catch (e) {
-    submitError.value = errorMessage(e);
-  } finally {
-    submitting.value = false;
-  }
+function openExternal(url: string) {
+  openUrl(url).catch((e) => toast(errorMessage(e)));
 }
 
+watch(tab, (t) => lastReviewTab.set(props.task.id, t));
 watch(source, (next) => {
   if (review.value?.source === next) return;
   selected.value = new Set();
+  showAll();
+  if (next === 'local' && tab.value === 'checks') tab.value = 'files';
   load();
 });
 watch(() => state.reviewVersion[props.task.id], load);
@@ -87,103 +141,81 @@ watch(
     if (status !== 'working' && source.value === 'local') load();
   },
 );
-const poll = setInterval(() => {
-  if (source.value === 'pr') load();
-}, 60_000);
 onMounted(load);
-onUnmounted(() => clearInterval(poll));
+onUnmounted(() => clearTimeout(timer));
+
+// Task 10 wires the Commits tab to openCommit; exposed until then so it is not dead code.
+defineExpose({ openCommit });
 </script>
 
 <template>
   <div class="review-view">
-    <div class="toolbar">
+    <header class="head">
+      <h3 class="title">
+        <template v-if="isPr && review">
+          <span class="muted">#{{ review.pr }}</span> {{ review.title }}
+          <button
+            v-if="review.url"
+            class="link"
+            title="Open in browser"
+            @click="openExternal(review.url)"
+          >
+            ↗
+          </button>
+        </template>
+        <template v-else>{{ task.title }}</template>
+      </h3>
+      <span class="spacer" />
       <div v-if="pr && review?.reviews_supported" class="segmented">
         <button :class="{ on: source === 'pr' }" @click="source = 'pr'">PR #{{ pr.number }}</button>
         <button :class="{ on: source === 'local' }" @click="source = 'local'">Local</button>
       </div>
-      <span v-if="review?.local_ahead" class="hint">
-        The worktree differs from the pull request.
-      </span>
-      <span v-if="files.length" class="muted">
-        {{ files.filter((f) => viewed.has(f.path)).length }} / {{ files.length }} files viewed
-      </span>
-      <span class="spacer" />
-      <label><input v-model="split" type="checkbox" /> Side by side</label>
-      <button @click="showOverview = !showOverview">
-        {{ showOverview ? 'Files' : 'All comments' }}
-      </button>
-      <button :disabled="!review?.threads.length" @click="sendSelection">
-        Send to agent ({{ selected.size || openThreads.length }})
-      </button>
       <button :disabled="loading" @click="load">Refresh</button>
-    </div>
-    <div v-if="review?.source === 'pr' && review.reviews_supported" class="review-bar">
-      <span v-if="review.pending_review">
-        Review: {{ review.pending_review.comments }} comment(s) pending
-      </span>
-      <button @click="submitOpen = !submitOpen">
-        {{ review.pending_review ? 'Finish review' : 'Review changes' }} ▾
-      </button>
-      <div v-if="submitOpen" class="submit-box">
-        <textarea v-model="submitBody" rows="3" placeholder="Leave a comment" />
-        <p v-if="submitError" class="error">{{ submitError }}</p>
-        <div class="actions">
-          <button :disabled="submitting" @click="submit('comment')">Comment</button>
-          <button :disabled="submitting" @click="submit('approve')">Approve</button>
-          <button :disabled="submitting" @click="submit('request_changes')">Request changes</button>
-        </div>
-      </div>
-    </div>
+    </header>
+    <p v-if="review?.local_ahead" class="hint">The worktree differs from the pull request.</p>
+    <ReviewSubmitBar v-if="isPr && review?.reviews_supported" :task-id="task.id" :review="review" />
+    <ReviewTabs
+      v-if="review"
+      :tabs="tabs"
+      :active="tab"
+      :additions="additions"
+      :deletions="deletions"
+      @select="(t) => (tab = t)"
+    />
     <p v-if="error" class="error message">{{ error }} <button @click="load">Retry</button></p>
-    <p v-else-if="review && !files.length" class="muted message">
-      No changes against {{ task.base_branch }}.
-    </p>
-    <div v-if="review" class="body">
+    <div v-if="review" class="content">
       <CommentOverview
-        v-if="showOverview"
+        v-if="tab === 'conversation'"
         :task-id="task.id"
         :review="review"
         :selected="selected"
         @select="select"
-        @to-agent="(t) => (sending = t)"
+        @to-agent="(t) => (sending = { threads: t })"
       />
-      <template v-else>
-        <nav class="file-list">
-          <a
-            v-for="f in files"
-            :key="f.path"
-            :href="'#file-' + f.path"
-            :class="{ done: viewed.has(f.path) }"
-          >
-            {{ viewed.has(f.path) ? '✓' : '·' }} {{ f.path }}
-            <span v-if="byFile.get(f.path)?.length" class="count">
-              {{ byFile.get(f.path)?.length }}
-            </span>
-          </a>
-        </nav>
-        <div class="files">
-          <FileDiff
-            v-for="(f, i) in files"
-            :key="f.path + (viewed.has(f.path) ? ':v' : '')"
-            :task-id="task.id"
-            :file="f"
-            :index="i"
-            :review="review"
-            :threads="byFile.get(f.path) ?? []"
-            :split="split"
-            :viewed="viewed.has(f.path)"
-            :selected="selected"
-            @select="select"
-            @to-agent="(t) => (sending = t)"
-          />
-        </div>
+      <template v-else-if="tab === 'files'">
+        <p v-if="commitError" class="error message">
+          {{ commitError }} <button @click="showAll">Show all changes</button>
+        </p>
+        <FilesTab
+          v-else
+          :task-id="task.id"
+          :review="review"
+          :patch="commit === undefined ? review.patch : (commitPatch ?? '')"
+          :commit="commit"
+          :selected="selected"
+          @select="select"
+          @to-agent="(t) => (sending = { threads: t })"
+          @send-selection="sendSelection"
+          @show-all="showAll"
+        />
       </template>
     </div>
     <SendToAgentDialog
       v-if="sending && review"
       :task-id="task.id"
       :source="review.source"
-      :threads="sending"
+      :threads="sending.threads"
+      :initial-prompt="sending.prompt"
       @close="sending = null"
     />
   </div>
@@ -196,21 +228,19 @@ onUnmounted(() => clearInterval(poll));
   display: flex;
   flex-direction: column;
 }
-.toolbar,
-.review-bar {
+.head {
   display: flex;
   gap: 10px;
   align-items: center;
   padding: 8px 14px;
-  flex-wrap: wrap;
 }
-.toolbar label {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-.toolbar input {
-  width: auto;
+.title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .spacer {
   flex: 1;
@@ -219,53 +249,21 @@ onUnmounted(() => clearInterval(poll));
   font-weight: 600;
   background: var(--select);
 }
+.link {
+  background: none;
+  border: none;
+  padding: 0 4px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.hint,
 .message {
   padding: 0 14px;
 }
-.body {
+.content {
   flex: 1;
   min-height: 0;
   display: flex;
-}
-.file-list {
-  width: 220px;
-  flex: none;
-  overflow: auto;
-  padding: 8px;
-  display: flex;
   flex-direction: column;
-  gap: 2px;
-  font-size: 12px;
-  border-right: 1px solid var(--border);
-}
-.file-list a {
-  color: inherit;
-  text-decoration: none;
-  overflow-wrap: anywhere;
-}
-.file-list .done {
-  opacity: 0.6;
-}
-.files {
-  flex: 1;
-  min-width: 0;
-  overflow: auto;
-  padding: 8px 14px;
-}
-.count {
-  margin-left: 4px;
-  font-size: 11px;
-  color: var(--muted);
-}
-.submit-box {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.submit-box .actions {
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
 }
 </style>
