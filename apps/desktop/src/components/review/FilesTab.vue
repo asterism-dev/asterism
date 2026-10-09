@@ -48,7 +48,13 @@ function open(path: string) {
     </div>
     <p v-if="!files.length" class="muted message">No changes.</p>
     <div v-else class="body">
-      <FileTree :files="files" :viewed="viewed" :counts="counts" @open="open" />
+      <FileTree
+        :files="files"
+        :viewed="viewed"
+        :counts="counts"
+        :hide-progress="readOnly"
+        @open="open"
+      />
       <div class="files">
         <FileDiff
           v-for="(f, i) in files"

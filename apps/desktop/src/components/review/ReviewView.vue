@@ -33,6 +33,7 @@ const selected = ref(new Set<string>());
 const sending = ref<{ threads: ReviewThread[]; prompt?: string } | null>(null);
 let latestLoad = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
+let disposed = false;
 
 const isPr = computed(() => review.value?.source === 'pr');
 const files = computed(() => splitPatch(review.value?.patch ?? ''));
@@ -59,7 +60,7 @@ const tabs = computed(() => {
 
 function schedule() {
   clearTimeout(timer);
-  if (source.value === 'pr') timer = setTimeout(load, pollInterval(review.value));
+  if (!disposed && source.value === 'pr') timer = setTimeout(load, pollInterval(review.value));
 }
 
 async function load() {
@@ -75,6 +76,8 @@ async function load() {
     commits.value = list;
     // The daemon falls back to local when the forge has no reviews.
     source.value = result.source;
+    if (result.source === 'local' && tab.value === 'checks') tab.value = 'files';
+    if (commit.value === null) fetchCommitDiff(null);
     error.value = null;
   } catch (e) {
     if (request === latestLoad) error.value = errorMessage(e);
@@ -86,17 +89,24 @@ async function load() {
   }
 }
 
-async function openCommit(sha: string | null) {
+async function fetchCommitDiff(sha: string | null) {
+  try {
+    const result = await api.reviewCommitDiff(props.task.id, source.value, sha);
+    if (commit.value === sha) {
+      commitPatch.value = result.patch;
+      commitError.value = null;
+    }
+  } catch (e) {
+    if (commit.value === sha) commitError.value = errorMessage(e);
+  }
+}
+
+function openCommit(sha: string | null) {
   commit.value = sha;
   commitPatch.value = null;
   commitError.value = null;
   tab.value = 'files';
-  try {
-    const result = await api.reviewCommitDiff(props.task.id, source.value, sha);
-    if (commit.value === sha) commitPatch.value = result.patch;
-  } catch (e) {
-    if (commit.value === sha) commitError.value = errorMessage(e);
-  }
+  return fetchCommitDiff(sha);
 }
 
 function showAll() {
@@ -130,7 +140,6 @@ watch(source, (next) => {
   if (review.value?.source === next) return;
   selected.value = new Set();
   showAll();
-  if (next === 'local' && tab.value === 'checks') tab.value = 'files';
   load();
 });
 watch(() => state.reviewVersion[props.task.id], load);
@@ -142,7 +151,10 @@ watch(
   },
 );
 onMounted(load);
-onUnmounted(() => clearTimeout(timer));
+onUnmounted(() => {
+  disposed = true;
+  clearTimeout(timer);
+});
 
 // Task 10 wires the Commits tab to openCommit; exposed until then so it is not dead code.
 defineExpose({ openCommit });
@@ -195,6 +207,9 @@ defineExpose({ openCommit });
       <template v-else-if="tab === 'files'">
         <p v-if="commitError" class="error message">
           {{ commitError }} <button @click="showAll">Show all changes</button>
+        </p>
+        <p v-else-if="commit !== undefined && commitPatch === null" class="muted message">
+          Loading…
         </p>
         <FilesTab
           v-else

@@ -11,7 +11,12 @@ import {
 import { computed, ref } from 'vue';
 import { buildTree, filterFiles, flattenTree, type FileDiff as Diff } from '../../review';
 
-const props = defineProps<{ files: Diff[]; viewed: Set<string>; counts: Map<string, number> }>();
+const props = defineProps<{
+  files: Diff[];
+  viewed: Set<string>;
+  counts: Map<string, number>;
+  hideProgress?: boolean;
+}>();
 const emit = defineEmits<{ open: [path: string] }>();
 const query = ref('');
 const collapsed = ref(new Set<string>());
@@ -31,7 +36,7 @@ function toggle(path: string) {
 <template>
   <div class="tree">
     <input v-model="query" class="filter" placeholder="Filter files…" />
-    <div class="muted progress">
+    <div v-if="!hideProgress" class="muted progress">
       {{ files.filter((f) => viewed.has(f.path)).length }} / {{ files.length }} viewed
     </div>
     <div
