@@ -20,7 +20,7 @@ Every main action has a keyboard shortcut, shown next to the action (on buttons 
 | Search sidebar | ⌘F | Ctrl+Shift+F |
 | Next waiting session | ⌘J | Ctrl+Shift+J |
 | Toggle sidebar | ⌘B | Ctrl+Shift+B |
-| Toggle diff | ⌥⌘B | Ctrl+Alt+Shift+B |
+| Toggle review | ⌥⌘B | Ctrl+Alt+Shift+B |
 | Confirm dialog | ⌘↩ | Ctrl+↩ |
 
 To change one, click its shortcut and press the new keys (Esc cancels). A shortcut must include ⌘, ⌃ or ⌥
@@ -88,7 +88,7 @@ See [Install → Updates](install.md#updates).
 | ++cmd+j++ | Jump to the next session waiting for input |
 | ++cmd+f++ | Search projects and tasks |
 | ++cmd+b++ | Show or hide the sidebar |
-| ++cmd+alt+b++ | Show or hide the Diff |
+| ++cmd+alt+b++ | Show or hide the Review pane |
 | ++cmd+q++ | Quit (asks what to do with running sessions) |
 | ++cmd+enter++ | Create the task (in the **Create Task** dialog) |
 | ++esc++ | Close a dialog or picker; clear the sidebar search |

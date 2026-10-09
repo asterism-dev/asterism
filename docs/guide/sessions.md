@@ -8,7 +8,7 @@ tasks, and keep running after you close the window or quit the app if you choose
 
 - When you [create a task](projects-and-tasks.md#create-a-task), its first session starts automatically.
 - Click **+** (**New tab**) in a tab bar of the task's workspace and choose an agent, **Terminal**,
-  **Terminal below** or **Terminal right**. The same menu reopens **Diff** or **Activity Monitor** if they are
+  **Terminal below** or **Terminal right**. The same menu reopens **Review** or **Activity Monitor** if they are
   closed.
 - In an empty workspace, click **New session**.
 - Right-click a task in the sidebar and choose **New *agent* session** or **New shell**.
@@ -82,16 +82,62 @@ last.
 The top bar also shows the project and branch of the selected task; click the branch to copy its name.
 **Reveal worktree** opens the worktree in Finder.
 
-## Diff
+## Review
 
-![The diff pane](../assets/screenshots/diff-light.png#only-light)
-![The diff pane](../assets/screenshots/diff-dark.png#only-dark)
+![The review pane](../assets/screenshots/diff-light.png#only-light)
+![The review pane](../assets/screenshots/diff-dark.png#only-dark)
 
-**Diff** (top bar, or ++cmd+alt+b++) shows the task's changes against its base branch: everything since the
+**Review** (top bar, or ++cmd+alt+b++) shows the task's changes against its base branch: everything since the
 branch point, including uncommitted and untracked files. It reloads when the task's sessions stop working; click
 **Refresh** to reload it yourself. **Side by side** switches between unified and split view.
 
 CLI: `asterism task diff [ID]`.
+
+### PR and Local
+
+When the task has a pull request, a **PR** | **Local** toggle appears. **PR** shows the pull request's diff and
+its review threads; **Local** shows the worktree. A hint appears when the worktree differs from the PR head, for
+example because of unpushed commits.
+
+### Viewed files
+
+The counter shows how many files you have viewed (**N / M files viewed**). Check **Viewed** on a file to mark it
+and collapse it. In **PR** mode this syncs with GitHub's viewed flag. In **Local** mode it is stored on your
+machine and resets when that file's diff changes.
+
+### Comments
+
+Click **+** on a diff line to comment.
+
+- In **PR** mode you can choose **Local comment** (kept in Asterism only), **Comment** (posted to the pull
+  request immediately) or **Start a review** (a pending comment). Once a review is pending, the last option
+  reads **Add review comment**.
+- In **Local** mode there is a single **Comment** button.
+
+Threads carry badges (local, pending, outdated, resolved) and offer **Reply**, **Resolve** / **Unresolve**,
+**Publish** (turns a local thread into a pull request comment; PR mode only), **→ Agent** and a checkbox to
+select the thread.
+
+A pending review shows a bar with a body field and **Comment**, **Approve** and **Request changes** to submit it.
+
+**All comments** lists every thread, with filters for open, resolved, local and all, and shows the pull request
+conversation.
+
+### Send to agent
+
+Use **→ Agent** on a thread or file, or send the selected threads. With nothing selected, all open threads are
+sent. In the dialog, pick an existing agent session of the task or start a new session (and choose its agent),
+and edit the prompt before sending. Asterism warns when an agent in the task is working, because parallel edits
+in one worktree can conflict.
+
+CLI:
+
+```sh
+asterism review comments [--task ID] [--all] [--local] [--json]
+```
+
+This prints the task's open review threads as a prompt for an agent; `--all` includes resolved threads,
+`--local` the local ones, and `--json` prints the threads instead. `--task` defaults to `ASTERISM_TASK`.
 
 ## File tabs
 
