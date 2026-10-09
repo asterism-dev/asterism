@@ -69,7 +69,7 @@ function show(c: CheckRun) {
 }
 
 watch(
-  () => [current.value?.id, current.value?.status],
+  [() => current.value?.id, () => current.value?.status],
   () => current.value && loadLog(current.value),
 );
 
