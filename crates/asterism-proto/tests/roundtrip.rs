@@ -437,3 +437,34 @@ fn plugin_info_defaults_to_no_panels_and_panels_are_a_capability() {
     assert!(info.panels.is_empty());
     assert_eq!(info.capabilities[0].kind, CapabilityKind::Panel);
 }
+
+#[test]
+fn review_types_use_snake_case_on_the_wire() {
+    let params = ReviewCommentParams {
+        task_id: 1,
+        source: ReviewSource::Pr,
+        path: "src/a.rs".into(),
+        line: 3,
+        side: DiffSide::New,
+        body: "hi".into(),
+        target: CommentTarget::Single,
+    };
+    let v = serde_json::to_value(&params).unwrap();
+    assert_eq!(v["source"], "pr");
+    assert_eq!(v["side"], "new");
+    assert_eq!(v["target"], "single");
+    assert_eq!(
+        serde_json::to_value(ReviewEvent::RequestChanges).unwrap(),
+        "request_changes"
+    );
+    let event = Event::ReviewChanged { task_id: 4 };
+    let n = serde_json::to_value(&event).unwrap();
+    assert_eq!(n["method"], "review.changed");
+    assert_eq!(n["params"]["task_id"], 4);
+    let thread: ReviewThread = serde_json::from_value(serde_json::json!({
+        "id": "t", "path": "a", "line": 1, "side": "old", "outdated": false,
+        "resolved": false, "comments": []
+    }))
+    .unwrap();
+    assert!(!thread.local && !thread.pending);
+}

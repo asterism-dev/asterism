@@ -78,6 +78,9 @@ pub struct ForgeDecl {
     /// The backend answers `forge.pull_requests`.
     #[serde(default)]
     pub pull_requests: bool,
+    /// The backend answers `forge.review.*`.
+    #[serde(default)]
+    pub reviews: bool,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -141,6 +144,7 @@ impl Manifest {
                 "pull_requests",
                 provides.forge.iter().any(|f| f.pull_requests),
             ),
+            ("reviews", provides.forge.iter().any(|f| f.reviews)),
             (
                 "agent",
                 provides
@@ -513,6 +517,21 @@ required = true
         assert!(
             !plain.provides.forge[0].pull_requests
                 && !plain.backend_capabilities().contains("pull_requests")
+        );
+    }
+
+    #[test]
+    fn forges_with_reviews_must_confirm_them() {
+        let m = parse(&GITHUB.replace(
+            "hosts = [\"github.com\"]",
+            "hosts = [\"github.com\"]\nreviews = true",
+        ))
+        .unwrap();
+        assert!(m.provides.forge[0].reviews);
+        assert!(m.backend_capabilities().contains("reviews"));
+        let plain = parse(GITHUB).unwrap();
+        assert!(
+            !plain.provides.forge[0].reviews && !plain.backend_capabilities().contains("reviews")
         );
     }
 
