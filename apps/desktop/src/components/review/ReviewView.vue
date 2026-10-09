@@ -11,6 +11,7 @@ import type {
   ReviewThread,
   Task,
 } from '../../types';
+import ChecksTab from './ChecksTab.vue';
 import CommitsTab from './CommitsTab.vue';
 import ConversationTab from './ConversationTab.vue';
 import FilesTab from './FilesTab.vue';
@@ -209,6 +210,12 @@ onUnmounted(() => {
         :source="review.source"
         :current="commit"
         @open="openCommit"
+      />
+      <ChecksTab
+        v-else-if="tab === 'checks' && isPr"
+        :task-id="task.id"
+        :checks="review.checks"
+        @to-agent="(prompt) => (sending = { threads: [], prompt })"
       />
       <template v-else-if="tab === 'files'">
         <p v-if="commitError" class="error message">
