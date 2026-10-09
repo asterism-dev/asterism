@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use asterism_plugin::protocol::{
@@ -17,9 +19,43 @@ use crate::{git, lock, pr_status, review};
 
 const CACHE_TTL: Duration = Duration::from_secs(30);
 
+/// Forge reviews per task; every write bumps the task's generation so a fetch started before it never caches stale data.
+#[derive(Default)]
+pub(super) struct ReviewCache(HashMap<i64, (u64, Option<(Instant, ForgeReview)>)>);
+
+impl ReviewCache {
+    fn get(&self, task_id: i64) -> (u64, Option<(Instant, ForgeReview)>) {
+        self.0.get(&task_id).cloned().unwrap_or_default()
+    }
+
+    fn put(&mut self, task_id: i64, generation: u64, review: ForgeReview) {
+        let entry = self.0.entry(task_id).or_default();
+        if entry.0 == generation {
+            entry.1 = Some((Instant::now(), review));
+        }
+    }
+
+    fn invalidate(&mut self, task_id: i64) {
+        let entry = self.0.entry(task_id).or_default();
+        entry.0 += 1;
+        entry.1 = None;
+    }
+}
+
 impl Daemon {
+    /// Runs blocking work (git, mostly) off the async runtime.
+    async fn off_runtime<T: Send + 'static>(
+        self: &Arc<Self>,
+        f: impl FnOnce(&Daemon) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        let daemon = self.clone();
+        tokio::task::spawn_blocking(move || f(&daemon))
+            .await
+            .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?
+    }
+
     /// The task's pull request and its forge, when the forge is installed.
-    pub(super) fn review_pr(&self, task: &Task) -> Result<Option<(PrRef, bool)>> {
+    pub(super) async fn review_pr(self: &Arc<Self>, task: &Task) -> Result<Option<(PrRef, bool)>> {
         let Some(number) = lock(&self.pr_status)
             .entries
             .get(&task.id)
@@ -28,7 +64,8 @@ impl Daemon {
             return Ok(None);
         };
         let repo = self.project_path(task.project_id)?;
-        let Some(forge) = self.pr_forge(&repo) else {
+        let lookup = repo.clone();
+        let Some(forge) = self.off_runtime(move |d| Ok(d.pr_forge(&lookup))).await? else {
             return Ok(None);
         };
         let reviews = self
@@ -45,7 +82,7 @@ impl Daemon {
     }
 
     pub(super) async fn forge_review(&self, task_id: i64, pr: &PrRef) -> Result<ForgeReview> {
-        let cached = lock(&self.review_cache).get(&task_id).cloned();
+        let (generation, cached) = lock(&self.review_cache).get(task_id);
         if let Some((at, review)) = &cached {
             if at.elapsed() < CACHE_TTL {
                 return Ok(review.clone());
@@ -61,7 +98,7 @@ impl Daemon {
             .await;
         match fetched {
             Ok(review) => {
-                lock(&self.review_cache).insert(task_id, (Instant::now(), review.clone()));
+                lock(&self.review_cache).put(task_id, generation, review.clone());
                 Ok(review)
             }
             // Rate limited: keep showing the last answer rather than an error.
@@ -73,37 +110,37 @@ impl Daemon {
         }
     }
 
-    pub async fn review_get(&self, p: &ReviewGetParams) -> Result<ReviewResult> {
+    pub async fn review_get(self: &Arc<Self>, p: &ReviewGetParams) -> Result<ReviewResult> {
         let task = self.task(p.task_id)?;
-        let repo = self.project_path(task.project_id)?;
-        let pr = self.review_pr(&task)?;
+        let pr = self.review_pr(&task).await?;
         let reviews_supported = pr.as_ref().is_some_and(|(_, r)| *r);
         let local_comments = self.store().review_comments(task.id)?;
         if let (ReviewSource::Pr, Some((pr, true))) = (p.source, pr.clone()) {
             let forge = self.forge_review(task.id, &pr).await?;
-            let fallback_base = self.effective_base(&repo, &task);
-            let env = self.options.git_env.clone();
             let (head_sha, head_ref, base_sha) = (
                 forge.head_sha.clone(),
                 forge.head_ref.clone(),
                 forge.base_sha.clone(),
             );
-            let wt = PathBuf::from(&task.worktree_path);
-            let (patch, local_ahead) = tokio::task::spawn_blocking(move || -> Result<_> {
-                if !git::resolves(&repo, &head_sha) {
-                    git::fetch_branch(&repo, "origin", &head_ref, &env)?;
-                }
-                let base = if !base_sha.is_empty() && git::resolves(&repo, &base_sha) {
-                    base_sha
-                } else {
-                    fallback_base
-                };
-                let patch = git::diff_range(&repo, &base, &head_sha)?;
-                let local_ahead = git::is_dirty(&wt)? || !git::resolves_to(&wt, "HEAD", &head_sha);
-                Ok((patch, local_ahead))
-            })
-            .await
-            .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))??;
+            let task = task.clone();
+            let (patch, local_ahead) = self
+                .off_runtime(move |d| {
+                    let repo = d.project_path(task.project_id)?;
+                    if !git::resolves(&repo, &head_sha) {
+                        git::fetch_branch(&repo, "origin", &head_ref, &d.options.git_env)?;
+                    }
+                    let base = if !base_sha.is_empty() && git::resolves(&repo, &base_sha) {
+                        base_sha
+                    } else {
+                        d.effective_base(&repo, &task)
+                    };
+                    let patch = git::diff_range(&repo, &base, &head_sha)?;
+                    let wt = PathBuf::from(&task.worktree_path);
+                    let local_ahead =
+                        git::is_dirty(&wt)? || !git::resolves_to(&wt, "HEAD", &head_sha);
+                    Ok((patch, local_ahead))
+                })
+                .await?;
             let mut threads = forge.threads;
             threads.extend(review::local_threads(&local_comments, &patch));
             return Ok(ReviewResult {
@@ -118,7 +155,10 @@ impl Daemon {
                 local_ahead,
             });
         }
-        let patch = self.diff(task.id)?.patch;
+        let task_id = task.id;
+        let patch = self
+            .off_runtime(move |d| Ok(d.diff(task_id)?.patch))
+            .await?;
         let viewed = self.store().review_viewed(task.id)?;
         let files = review::split_patch(&patch);
         let viewed_files = viewed
@@ -143,10 +183,10 @@ impl Daemon {
         })
     }
 
-    pub async fn review_set_viewed(&self, p: &ReviewViewedParams) -> Result<()> {
+    pub async fn review_set_viewed(self: &Arc<Self>, p: &ReviewViewedParams) -> Result<()> {
         if p.source == ReviewSource::Pr {
             let task = self.task(p.task_id)?;
-            let pr = self.reviewable_pr(&task)?;
+            let pr = self.reviewable_pr(&task).await?;
             let params = ReviewViewedForgeParams {
                 pr: pr.clone(),
                 path: p.path.clone(),
@@ -162,7 +202,10 @@ impl Daemon {
                 .await;
         }
         let task = self.task(p.task_id)?;
-        let patch = self.diff(task.id)?.patch;
+        let task_id = task.id;
+        let patch = self
+            .off_runtime(move |d| Ok(d.diff(task_id)?.patch))
+            .await?;
         let hash = review::split_patch(&patch)
             .into_iter()
             .find(|f| f.path == p.path)
@@ -173,8 +216,8 @@ impl Daemon {
         Ok(())
     }
 
-    fn reviewable_pr(&self, task: &Task) -> Result<PrRef> {
-        match self.review_pr(task)? {
+    async fn reviewable_pr(self: &Arc<Self>, task: &Task) -> Result<PrRef> {
+        match self.review_pr(task).await? {
             Some((pr, true)) => Ok(pr),
             Some((_, false)) => Err(Error::new(
                 ErrorKind::InvalidParams,
@@ -198,7 +241,7 @@ impl Daemon {
         let result: Result<serde_json::Value> = self
             .forge_call(&pr.forge, method, params, Some(self.call_timeout()))
             .await;
-        lock(&self.review_cache).remove(&task_id);
+        lock(&self.review_cache).invalidate(task_id);
         result.map(|_| ())
     }
 
@@ -242,7 +285,7 @@ impl Daemon {
         self.emit(Event::ReviewChanged { task_id });
     }
 
-    pub async fn review_comment(&self, p: &ReviewCommentParams) -> Result<()> {
+    pub async fn review_comment(self: &Arc<Self>, p: &ReviewCommentParams) -> Result<()> {
         let task = self.task(p.task_id)?;
         let mode = match p.target {
             CommentTarget::Local => {
@@ -262,7 +305,7 @@ impl Daemon {
             CommentTarget::Single => ForgeCommentMode::Single,
             CommentTarget::Review => ForgeCommentMode::Review,
         };
-        let pr = self.reviewable_pr(&task)?;
+        let pr = self.reviewable_pr(&task).await?;
         let params = ReviewCommentForgeParams {
             pr: pr.clone(),
             path: p.path.clone(),
@@ -275,7 +318,7 @@ impl Daemon {
             .await
     }
 
-    pub async fn review_reply(&self, p: &ReviewReplyParams) -> Result<()> {
+    pub async fn review_reply(self: &Arc<Self>, p: &ReviewReplyParams) -> Result<()> {
         let task = self.task(p.task_id)?;
         if p.thread_id.starts_with("local-") {
             let first = self.local_thread(task.id, &p.thread_id)?.remove(0);
@@ -291,7 +334,7 @@ impl Daemon {
             self.changed(task.id);
             return Ok(());
         }
-        let pr = self.reviewable_pr(&task)?;
+        let pr = self.reviewable_pr(&task).await?;
         let params = ReviewReplyForgeParams {
             pr: pr.clone(),
             thread_id: p.thread_id.clone(),
@@ -301,7 +344,7 @@ impl Daemon {
             .await
     }
 
-    pub async fn review_resolve(&self, p: &ReviewResolveParams) -> Result<()> {
+    pub async fn review_resolve(self: &Arc<Self>, p: &ReviewResolveParams) -> Result<()> {
         let task = self.task(p.task_id)?;
         if p.thread_id.starts_with("local-") {
             self.local_thread(task.id, &p.thread_id)?;
@@ -310,7 +353,7 @@ impl Daemon {
             self.changed(task.id);
             return Ok(());
         }
-        let pr = self.reviewable_pr(&task)?;
+        let pr = self.reviewable_pr(&task).await?;
         let params = ReviewResolveForgeParams {
             pr: pr.clone(),
             thread_id: p.thread_id.clone(),
@@ -320,9 +363,9 @@ impl Daemon {
             .await
     }
 
-    pub async fn review_submit(&self, p: &ReviewSubmitParams) -> Result<()> {
+    pub async fn review_submit(self: &Arc<Self>, p: &ReviewSubmitParams) -> Result<()> {
         let task = self.task(p.task_id)?;
-        let pr = self.reviewable_pr(&task)?;
+        let pr = self.reviewable_pr(&task).await?;
         let params = ReviewSubmitForgeParams {
             pr: pr.clone(),
             event: p.event,
@@ -333,10 +376,10 @@ impl Daemon {
     }
 
     /// Posts a local thread to the forge as one comment: its replies are joined into the body.
-    pub async fn review_publish(&self, p: &ReviewPublishParams) -> Result<()> {
+    pub async fn review_publish(self: &Arc<Self>, p: &ReviewPublishParams) -> Result<()> {
         let task = self.task(p.task_id)?;
         let comments = self.local_thread(task.id, &p.thread_id)?;
-        let pr = self.reviewable_pr(&task)?;
+        let pr = self.reviewable_pr(&task).await?;
         let first = &comments[0];
         let params = ReviewCommentForgeParams {
             pr: pr.clone(),
@@ -367,7 +410,10 @@ impl Daemon {
         result
     }
 
-    pub async fn review_prompt(&self, p: &ReviewPromptParams) -> Result<ReviewPromptResult> {
+    pub async fn review_prompt(
+        self: &Arc<Self>,
+        p: &ReviewPromptParams,
+    ) -> Result<ReviewPromptResult> {
         let r = self
             .review_get(&ReviewGetParams {
                 task_id: p.task_id,
@@ -383,7 +429,40 @@ impl Daemon {
             })
             .collect();
         Ok(ReviewPromptResult {
-            prompt: review::prompt(&threads, &r.patch),
+            prompt: review::prompt(
+                &threads,
+                &r.patch,
+                &self.store().review_comments(p.task_id)?,
+            ),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn review(head: &str) -> ForgeReview {
+        ForgeReview {
+            head_sha: head.into(),
+            base_sha: String::new(),
+            head_ref: String::new(),
+            threads: Vec::new(),
+            conversation: Vec::new(),
+            viewed_files: Vec::new(),
+            pending_review: None,
+        }
+    }
+
+    #[test]
+    fn a_fetch_started_before_a_write_is_not_cached() {
+        let mut cache = ReviewCache::default();
+        let (generation, _) = cache.get(1);
+        cache.invalidate(1);
+        cache.put(1, generation, review("stale"));
+        assert!(cache.get(1).1.is_none());
+        let (generation, _) = cache.get(1);
+        cache.put(1, generation, review("fresh"));
+        assert_eq!(cache.get(1).1.unwrap().1.head_sha, "fresh");
     }
 }

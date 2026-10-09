@@ -162,7 +162,7 @@ pub struct Daemon {
     waking: tokio::sync::Mutex<()>,
     /// Subagents per session, kept after exit until the session is removed.
     subagents: Mutex<HashMap<i64, SessionSubagents>>,
-    review_cache: Mutex<HashMap<i64, (std::time::Instant, ForgeReview)>>,
+    review_cache: Mutex<review::ReviewCache>,
 }
 
 #[derive(Default)]
@@ -211,7 +211,7 @@ impl Daemon {
                 pr_status: Mutex::new(PrStatus::default()),
                 waking: tokio::sync::Mutex::new(()),
                 subagents: Mutex::new(HashMap::new()),
-                review_cache: Mutex::new(HashMap::new()),
+                review_cache: Mutex::new(review::ReviewCache::default()),
             }
         }))
     }

@@ -164,7 +164,8 @@ pub fn local_threads(comments: &[StoredReviewComment], patch: &str) -> Vec<Revie
     threads
 }
 
-pub fn prompt(threads: &[&ReviewThread], patch: &str) -> String {
+/// `stored` supplies the originally commented line of outdated local threads.
+pub fn prompt(threads: &[&ReviewThread], patch: &str, stored: &[StoredReviewComment]) -> String {
     let mut out = String::from("Review comments on your changes:\n");
     for t in threads {
         let side = if t.side == DiffSide::Old {
@@ -172,8 +173,17 @@ pub fn prompt(threads: &[&ReviewThread], patch: &str) -> String {
         } else {
             ""
         };
-        out.push_str(&format!("\n{}:{}{side}\n", t.path, t.line));
-        if let Some(code) = line_text(patch, &t.path, t.side, t.line) {
+        let outdated = if t.outdated { " (outdated)" } else { "" };
+        out.push_str(&format!("\n{}:{}{side}{outdated}\n", t.path, t.line));
+        let code = if t.outdated {
+            stored
+                .iter()
+                .find(|c| c.thread_id == t.id && !c.line_text.is_empty())
+                .map(|c| c.line_text.clone())
+        } else {
+            line_text(patch, &t.path, t.side, t.line)
+        };
+        if let Some(code) = code {
             out.push_str(&format!("> {code}\n"));
         }
         for c in &t.comments {
@@ -382,8 +392,42 @@ index 66b4ba3..f971f2b 100644
         });
         let refs: Vec<&ReviewThread> = t.iter().collect();
         assert_eq!(
-            prompt(&refs, PATCH),
+            prompt(&refs, PATCH, &[]),
             "Review comments on your changes:\n\na.rs:2\n>     new();\n- (local) Add a test.\n\na.rs:2 (old)\n>     old();\n- (@alice) Why?\n"
+        );
+    }
+
+    #[test]
+    fn outdated_threads_quote_the_commented_line_not_the_current_one() {
+        let stored = [stored(
+            1,
+            "local-1",
+            2,
+            DiffSide::New,
+            "    gone();",
+            "Fix.",
+        )];
+        let mut t = local_threads(&stored, PATCH);
+        t.push(ReviewThread {
+            id: "T1".into(),
+            path: "a.rs".into(),
+            line: 2,
+            side: DiffSide::New,
+            outdated: true,
+            resolved: false,
+            local: false,
+            pending: false,
+            comments: vec![ReviewComment {
+                id: "C".into(),
+                author: "alice".into(),
+                body: "Why?".into(),
+                created_at: "".into(),
+            }],
+        });
+        let refs: Vec<&ReviewThread> = t.iter().collect();
+        assert_eq!(
+            prompt(&refs, PATCH, &stored),
+            "Review comments on your changes:\n\na.rs:2 (outdated)\n>     gone();\n- (local) Fix.\n\na.rs:2 (outdated)\n- (@alice) Why?\n"
         );
     }
 }
