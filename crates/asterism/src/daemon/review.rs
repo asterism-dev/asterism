@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -141,6 +141,8 @@ impl Daemon {
                     Ok((patch, local_ahead))
                 })
                 .await?;
+            let (title, body, author, url) = (forge.title, forge.body, forge.author, forge.url);
+            let (checks, commit_checks) = (forge.checks, forge.commit_checks);
             let mut threads = forge.threads;
             threads.extend(review::local_threads(&local_comments, &patch));
             return Ok(ReviewResult {
@@ -153,6 +155,12 @@ impl Daemon {
                 viewed_files: forge.viewed_files,
                 pending_review: forge.pending_review,
                 local_ahead,
+                title,
+                body,
+                author,
+                url,
+                checks,
+                commit_checks,
             });
         }
         let task_id = task.id;
@@ -180,6 +188,12 @@ impl Daemon {
             viewed_files,
             pending_review: None,
             local_ahead: false,
+            title: String::new(),
+            body: String::new(),
+            author: String::new(),
+            url: String::new(),
+            checks: Vec::new(),
+            commit_checks: BTreeMap::new(),
         })
     }
 
@@ -451,6 +465,12 @@ mod tests {
             conversation: Vec::new(),
             viewed_files: Vec::new(),
             pending_review: None,
+            title: String::new(),
+            body: String::new(),
+            author: String::new(),
+            url: String::new(),
+            checks: Vec::new(),
+            commit_checks: BTreeMap::new(),
         }
     }
 

@@ -3,7 +3,8 @@ use std::path::Path;
 use asterism_plugin::protocol::ForgeCommentMode;
 use asterism_plugin::{ErrorKind, RpcError};
 use asterism_proto::types::{
-    DiffSide, ForgeReview, PendingReview, ReviewComment, ReviewEvent, ReviewThread,
+    ConversationItem, ConversationKind, DiffSide, ForgeReview, PendingReview, ReviewComment,
+    ReviewEvent, ReviewThread,
 };
 use serde_json::Value;
 
@@ -86,6 +87,22 @@ fn to_comment(c: &Value, created_at: &Value) -> ReviewComment {
     }
 }
 
+fn conversation_item(
+    c: &Value,
+    created_at: &Value,
+    kind: ConversationKind,
+    state: Option<String>,
+) -> ConversationItem {
+    ConversationItem {
+        id: text(&c["id"]),
+        kind,
+        author: text(&c["author"]["login"]),
+        body: text(&c["body"]),
+        created_at: text(created_at),
+        state,
+    }
+}
+
 pub fn parse_review(value: &Value, number: u64) -> Result<ForgeReview, RpcError> {
     let pr = &value["data"]["repository"]["pullRequest"];
     if pr.is_null() {
@@ -138,14 +155,17 @@ pub fn parse_review(value: &Value, number: u64) -> Result<ForgeReview, RpcError>
                 id,
             }
         });
-    let mut conversation: Vec<ReviewComment> = nodes(&pr["comments"])
+    let mut conversation: Vec<ConversationItem> = nodes(&pr["comments"])
         .iter()
-        .map(|c| to_comment(c, &c["createdAt"]))
+        .map(|c| conversation_item(c, &c["createdAt"], ConversationKind::Comment, None))
         .chain(
             nodes(&pr["reviews"])
                 .iter()
                 .filter(|r| r["state"] != "PENDING" && !text(&r["body"]).trim().is_empty())
-                .map(|r| to_comment(r, &r["submittedAt"])),
+                .map(|r| {
+                    let state = text(&r["state"]).to_lowercase();
+                    conversation_item(r, &r["submittedAt"], ConversationKind::Review, Some(state))
+                }),
         )
         .collect();
     conversation.sort_by(|a, b| a.created_at.cmp(&b.created_at));
@@ -161,6 +181,12 @@ pub fn parse_review(value: &Value, number: u64) -> Result<ForgeReview, RpcError>
             .map(|f| text(&f["path"]))
             .collect(),
         pending_review,
+        title: String::new(),
+        body: String::new(),
+        author: String::new(),
+        url: String::new(),
+        checks: Vec::new(),
+        commit_checks: Default::default(),
     })
 }
 

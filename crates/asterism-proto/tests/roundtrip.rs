@@ -468,3 +468,47 @@ fn review_types_use_snake_case_on_the_wire() {
     .unwrap();
     assert!(!thread.local && !thread.pending);
 }
+
+#[test]
+fn check_and_conversation_types_use_snake_case() {
+    let check: CheckRun = serde_json::from_value(serde_json::json!({
+        "id": "11", "name": "test", "status": "running", "url": "https://x"
+    }))
+    .unwrap();
+    assert_eq!(check.status, CheckStatus::Running);
+    assert!(
+        check.conclusion.is_none()
+            && !check.has_log
+            && !check.rerunnable
+            && check.workflow.is_empty()
+    );
+    let item = ConversationItem {
+        id: "R1".into(),
+        kind: ConversationKind::Review,
+        author: "alice".into(),
+        body: String::new(),
+        created_at: "2026-10-09T10:00:00Z".into(),
+        state: Some("approved".into()),
+    };
+    let v = serde_json::to_value(&item).unwrap();
+    assert_eq!(
+        (v["kind"].as_str(), v["state"].as_str()),
+        (Some("review"), Some("approved"))
+    );
+    // Older forge payloads without the new fields still parse.
+    let old: ForgeReview = serde_json::from_value(serde_json::json!({
+        "head_sha": "h", "base_sha": "", "head_ref": "r", "threads": [], "conversation": [],
+        "viewed_files": [], "pending_review": null
+    }))
+    .unwrap();
+    assert!(old.checks.is_empty() && old.title.is_empty() && old.commit_checks.is_empty());
+    let diff = ReviewCommitDiffParams {
+        task_id: 1,
+        source: ReviewSource::Local,
+        sha: None,
+    };
+    assert_eq!(
+        serde_json::to_value(&diff).unwrap()["sha"],
+        serde_json::Value::Null
+    );
+}

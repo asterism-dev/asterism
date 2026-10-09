@@ -16,6 +16,9 @@ pub mod method {
     pub const FORGE_REVIEW_RESOLVE: &str = "forge.review.resolve";
     pub const FORGE_REVIEW_SET_VIEWED: &str = "forge.review.set_viewed";
     pub const FORGE_REVIEW_SUBMIT: &str = "forge.review.submit";
+    pub const FORGE_REVIEW_ADD_COMMENT: &str = "forge.review.add_comment";
+    pub const FORGE_CHECKS_LOG: &str = "forge.checks.log";
+    pub const FORGE_CHECKS_RERUN: &str = "forge.checks.rerun";
     pub const TASK_SOURCE_CHECK: &str = "task_source.check";
     pub const TASK_SOURCE_SEARCH: &str = "task_source.search";
     pub const TASK_SOURCE_GET: &str = "task_source.get";
@@ -233,4 +236,18 @@ pub struct ReviewSubmitForgeParams {
     pub pr: PrRef,
     pub event: ReviewEvent,
     pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewAddCommentForgeParams {
+    #[serde(flatten)]
+    pub pr: PrRef,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CheckForgeParams {
+    #[serde(flatten)]
+    pub pr: PrRef,
+    pub check_id: String,
 }
