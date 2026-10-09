@@ -129,6 +129,10 @@ pub fn resolves(repo: &Path, rev: &str) -> bool {
         .is_ok()
 }
 
+pub fn resolves_to(repo: &Path, rev: &str, sha: &str) -> bool {
+    git(repo, &["rev-parse", "--verify", "-q", rev]).is_ok_and(|out| out.trim() == sha)
+}
+
 /// Branch names stay symbolic; anything else (`HEAD~2`, tags, SHAs) is pinned to its commit so it can't drift later.
 pub fn pin_base(repo: &Path, base: &str) -> Result<String> {
     let is_branch = ["refs/heads/", "refs/remotes/"].iter().any(|prefix| {
@@ -291,6 +295,19 @@ pub fn diff(worktree: &Path, base: &str) -> Result<String> {
         patch.push_str(&String::from_utf8_lossy(&out.stdout));
     }
     Ok(patch)
+}
+
+/// The changes of `head` since it forked from `base` (`base...head`).
+pub fn diff_range(repo: &Path, base: &str, head: &str) -> Result<String> {
+    git(
+        repo,
+        &[
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            &format!("{base}...{head}"),
+        ],
+    )
 }
 
 pub type GitEnv = [(String, String)];

@@ -409,6 +409,11 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             blocking(move || to_value(daemon.delete_task(p.task_id, p.delete_branch)?)).await
         }
         method::TASK_DIFF => to_value(daemon.diff(params::<TaskIdParams>(raw)?.task_id)?),
+        method::REVIEW_GET => to_value(daemon.review_get(&params(raw)?).await?),
+        method::REVIEW_SET_VIEWED => {
+            daemon.review_set_viewed(&params(raw)?).await?;
+            Ok(Value::Null)
+        }
         method::TASK_FILE => {
             let daemon = daemon.clone();
             let params = params::<TaskFileParams>(raw)?;
