@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { api, errorMessage } from '../../api';
 import { checkPrompt, failed, logExcerpt, logSections, timeValue } from '../../review';
 import { toast } from '../../store';
@@ -9,11 +9,16 @@ import LogViewer from './LogViewer.vue';
 
 const props = defineProps<{ taskId: number; checks: CheckRun[] }>();
 const emit = defineEmits<{ toAgent: [prompt: string] }>();
-const current = ref<CheckRun | null>(null);
+const selectedId = ref<string | null>(null);
+const current = computed(() => props.checks.find((c) => c.id === selectedId.value) ?? null);
 const log = ref<CheckLog | null>(null);
 const logError = ref<string | null>(null);
 const rerunError = ref<Record<string, string>>({});
+const agentError = ref<Record<string, string>>({});
 const busy = ref(new Set<string>());
+const agentBusy = ref(new Set<string>());
+// id -> conclusion at request time, kept until the check leaves that state.
+const requested = ref<Record<string, string | null>>({});
 
 const summary = computed(() => {
   const n = (f: (c: CheckRun) => boolean) => props.checks.filter(f).length;
@@ -45,20 +50,41 @@ function openExternal(url: string) {
   openUrl(url).catch((e) => toast(errorMessage(e)));
 }
 
-async function show(c: CheckRun) {
-  if (!c.has_log) return;
-  current.value = c;
+async function loadLog(c: CheckRun) {
   log.value = null;
   logError.value =
     c.status !== 'done' ? 'Still running — the log is available when the job finishes.' : null;
   if (c.status !== 'done') return;
   try {
     const result = await api.reviewCheckLog(props.taskId, c.id);
-    if (current.value?.id === c.id) log.value = result;
+    if (selectedId.value === c.id) log.value = result;
   } catch (e) {
-    if (current.value?.id === c.id) logError.value = errorMessage(e);
+    if (selectedId.value === c.id) logError.value = errorMessage(e);
   }
 }
+
+function show(c: CheckRun) {
+  if (!c.has_log) return;
+  selectedId.value = c.id;
+  return loadLog(c);
+}
+
+watch(
+  () => current.value?.status,
+  () => current.value && loadLog(current.value),
+);
+
+watch(
+  () => props.checks,
+  (checks) => {
+    const next = { ...requested.value };
+    for (const id of Object.keys(next)) {
+      const c = checks.find((x) => x.id === id);
+      if (!c || c.status !== 'done' || c.conclusion !== next[id]) delete next[id];
+    }
+    requested.value = next;
+  },
+);
 
 async function rerun(c: CheckRun) {
   busy.value = new Set(busy.value).add(c.id);
@@ -67,6 +93,7 @@ async function rerun(c: CheckRun) {
   );
   try {
     await api.reviewCheckRerun(props.taskId, c.id);
+    requested.value = { ...requested.value, [c.id]: c.conclusion };
   } catch (e) {
     rerunError.value = { ...rerunError.value, [c.id]: errorMessage(e) };
   } finally {
@@ -78,13 +105,22 @@ async function rerun(c: CheckRun) {
 
 async function toAgent(c: CheckRun, excerpt?: string) {
   if (excerpt === undefined) {
+    if (agentBusy.value.has(c.id)) return;
+    agentBusy.value = new Set(agentBusy.value).add(c.id);
     try {
       excerpt = logExcerpt(logSections((await api.reviewCheckLog(props.taskId, c.id)).text));
     } catch (e) {
-      rerunError.value = { ...rerunError.value, [c.id]: errorMessage(e) };
+      agentError.value = { ...agentError.value, [c.id]: errorMessage(e) };
       return;
+    } finally {
+      const next = new Set(agentBusy.value);
+      next.delete(c.id);
+      agentBusy.value = next;
     }
   }
+  agentError.value = Object.fromEntries(
+    Object.entries(agentError.value).filter(([id]) => id !== c.id),
+  );
   emit('toAgent', checkPrompt(c.workflow ? `${c.workflow} / ${c.name}` : c.name, excerpt));
 }
 </script>
@@ -99,12 +135,20 @@ async function toAgent(c: CheckRun, excerpt?: string) {
           <span v-if="c.workflow" class="muted">{{ c.workflow }} / </span>{{ c.name }}
         </button>
         <span class="muted">{{ duration(c) }}</span>
-        <button v-if="failed(c) && c.rerunnable" :disabled="busy.has(c.id)" @click="rerun(c)">
-          Re-run
+        <button
+          v-if="failed(c) && c.rerunnable"
+          :disabled="busy.has(c.id) || c.id in requested"
+          @click="rerun(c)"
+        >
+          {{ c.id in requested ? 'Re-run requested' : 'Re-run' }}
         </button>
-        <button v-if="failed(c) && c.has_log" @click="toAgent(c)">→ Agent</button>
+        <button v-if="failed(c) && c.has_log" :disabled="agentBusy.has(c.id)" @click="toAgent(c)">
+          → Agent
+        </button>
         <button class="link" title="Open in browser" @click="openExternal(c.url)">↗</button>
-        <p v-if="rerunError[c.id]" class="error">{{ rerunError[c.id] }}</p>
+        <p v-if="rerunError[c.id] || agentError[c.id]" class="error">
+          {{ rerunError[c.id] ?? agentError[c.id] }}
+        </p>
       </div>
     </div>
     <div v-if="current" class="viewer">
