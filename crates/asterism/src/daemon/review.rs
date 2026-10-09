@@ -12,6 +12,7 @@ use serde::Serialize;
 
 use super::Daemon;
 use crate::error::{Error, Result};
+use crate::store::StoredReviewComment;
 use crate::{git, lock, pr_status, review};
 
 const CACHE_TTL: Duration = Duration::from_secs(30);
@@ -186,7 +187,8 @@ impl Daemon {
         }
     }
 
-    async fn forge_mutate<P: Serialize>(
+    /// Calls the forge and drops the cached review whether or not the call succeeded.
+    async fn forge_write<P: Serialize>(
         &self,
         task_id: i64,
         pr: &PrRef,
@@ -197,8 +199,43 @@ impl Daemon {
             .forge_call(&pr.forge, method, params, Some(self.call_timeout()))
             .await;
         lock(&self.review_cache).remove(&task_id);
-        self.emit(Event::ReviewChanged { task_id });
         result.map(|_| ())
+    }
+
+    async fn forge_mutate<P: Serialize>(
+        &self,
+        task_id: i64,
+        pr: &PrRef,
+        method: &str,
+        params: P,
+    ) -> Result<()> {
+        let result = self.forge_write(task_id, pr, method, params).await;
+        self.changed(task_id);
+        result
+    }
+
+    /// The unpublished comments of a local thread; published threads live on the forge now.
+    fn local_thread(&self, task_id: i64, thread_id: &str) -> Result<Vec<StoredReviewComment>> {
+        let rows: Vec<_> = self
+            .store()
+            .review_comments(task_id)?
+            .into_iter()
+            .filter(|c| c.thread_id == thread_id)
+            .collect();
+        if rows.is_empty() {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                format!("thread {thread_id} not found"),
+            ));
+        }
+        let open: Vec<_> = rows.into_iter().filter(|c| !c.published).collect();
+        if open.is_empty() {
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                format!("thread {thread_id} was already published"),
+            ));
+        }
+        Ok(open)
     }
 
     fn changed(&self, task_id: i64) {
@@ -241,17 +278,7 @@ impl Daemon {
     pub async fn review_reply(&self, p: &ReviewReplyParams) -> Result<()> {
         let task = self.task(p.task_id)?;
         if p.thread_id.starts_with("local-") {
-            let first = self
-                .store()
-                .review_comments(task.id)?
-                .into_iter()
-                .find(|c| c.thread_id == p.thread_id)
-                .ok_or_else(|| {
-                    Error::new(
-                        ErrorKind::NotFound,
-                        format!("thread {} not found", p.thread_id),
-                    )
-                })?;
+            let first = self.local_thread(task.id, &p.thread_id)?.remove(0);
             self.store().add_review_comment(
                 task.id,
                 Some(&p.thread_id),
@@ -277,6 +304,7 @@ impl Daemon {
     pub async fn review_resolve(&self, p: &ReviewResolveParams) -> Result<()> {
         let task = self.task(p.task_id)?;
         if p.thread_id.starts_with("local-") {
+            self.local_thread(task.id, &p.thread_id)?;
             self.store()
                 .set_review_thread_resolved(task.id, &p.thread_id, p.resolved)?;
             self.changed(task.id);
@@ -304,45 +332,39 @@ impl Daemon {
             .await
     }
 
-    /// Posts a local thread to the forge: its first comment opens the thread, the rest follow as one reply.
+    /// Posts a local thread to the forge as one comment: its replies are joined into the body.
     pub async fn review_publish(&self, p: &ReviewPublishParams) -> Result<()> {
         let task = self.task(p.task_id)?;
-        let comments: Vec<_> = self
-            .store()
-            .review_comments(task.id)?
-            .into_iter()
-            .filter(|c| c.thread_id == p.thread_id)
-            .collect();
-        let Some(first) = comments.first() else {
-            return Err(Error::new(
-                ErrorKind::NotFound,
-                format!("thread {} not found", p.thread_id),
-            ));
-        };
-        let body = comments
-            .iter()
-            .map(|c| c.body.as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        let target = if p.target == CommentTarget::Review {
-            CommentTarget::Review
-        } else {
-            CommentTarget::Single
-        };
-        self.review_comment(&ReviewCommentParams {
-            task_id: task.id,
-            source: ReviewSource::Pr,
+        let comments = self.local_thread(task.id, &p.thread_id)?;
+        let pr = self.reviewable_pr(&task)?;
+        let first = &comments[0];
+        let params = ReviewCommentForgeParams {
+            pr: pr.clone(),
             path: first.path.clone(),
             line: first.line,
             side: first.side,
-            body,
-            target,
-        })
-        .await?;
-        self.store()
-            .set_review_thread_published(task.id, &p.thread_id)?;
+            body: comments
+                .iter()
+                .map(|c| c.body.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+            mode: if p.target == CommentTarget::Review {
+                ForgeCommentMode::Review
+            } else {
+                ForgeCommentMode::Single
+            },
+        };
+        let result = self
+            .forge_write(task.id, &pr, protocol::method::FORGE_REVIEW_COMMENT, params)
+            .await
+            .and_then(|_| {
+                self.store()
+                    .set_review_thread_published(task.id, &p.thread_id)?;
+                Ok(())
+            });
+        // Emitted once, after the thread is marked published, so clients never see it twice.
         self.changed(task.id);
-        Ok(())
+        result
     }
 
     pub async fn review_prompt(&self, p: &ReviewPromptParams) -> Result<ReviewPromptResult> {

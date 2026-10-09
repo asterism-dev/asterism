@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use asterism_core::daemon::{Daemon, DaemonOptions};
 use asterism_core::paths::Paths;
+use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -429,4 +430,111 @@ async fn forge_targets_without_a_pull_request_are_rejected() {
         .await
         .unwrap_err();
     assert!(err.message.contains("pull request"), "{}", err.message);
+}
+
+#[tokio::test]
+async fn published_local_threads_cannot_be_published_replied_or_resolved_again() {
+    let env = setup();
+    let task = task(&env).await;
+    let head = commit(&task, "one\n");
+    with_pr(&env, &task, &head).await;
+    let d = &env.daemon;
+    d.review_comment(&comment(
+        &task,
+        ReviewSource::Pr,
+        CommentTarget::Local,
+        "local first",
+    ))
+    .await
+    .unwrap();
+    let local = d
+        .review_get(&get(ReviewSource::Local, &task))
+        .await
+        .unwrap()
+        .threads[0]
+        .id
+        .clone();
+    let publish = ReviewPublishParams {
+        task_id: task.id,
+        thread_id: local.clone(),
+        target: CommentTarget::Single,
+    };
+    d.review_publish(&publish).await.unwrap();
+    let again = d.review_publish(&publish).await.unwrap_err();
+    assert_eq!(again.kind, ErrorKind::InvalidParams, "{}", again.message);
+    assert_eq!(
+        log_lines(&env, "review comment").len(),
+        1,
+        "published twice"
+    );
+    let reply = ReviewReplyParams {
+        task_id: task.id,
+        thread_id: local.clone(),
+        body: "more".into(),
+    };
+    assert_eq!(
+        d.review_reply(&reply).await.unwrap_err().kind,
+        ErrorKind::InvalidParams
+    );
+    let resolve = ReviewResolveParams {
+        task_id: task.id,
+        thread_id: local,
+        resolved: true,
+    };
+    assert_eq!(
+        d.review_resolve(&resolve).await.unwrap_err().kind,
+        ErrorKind::InvalidParams
+    );
+    assert!(d
+        .review_get(&get(ReviewSource::Local, &task))
+        .await
+        .unwrap()
+        .threads
+        .is_empty());
+}
+
+#[tokio::test]
+async fn resolving_an_unknown_local_thread_is_not_found() {
+    let env = setup();
+    let task = task(&env).await;
+    let resolve = ReviewResolveParams {
+        task_id: task.id,
+        thread_id: "local-999".into(),
+        resolved: true,
+    };
+    assert_eq!(
+        env.daemon.review_resolve(&resolve).await.unwrap_err().kind,
+        ErrorKind::NotFound
+    );
+}
+
+#[tokio::test]
+async fn publishing_emits_one_change() {
+    let env = setup();
+    let task = task(&env).await;
+    let head = commit(&task, "one\n");
+    with_pr(&env, &task, &head).await;
+    let d = &env.daemon;
+    d.review_comment(&comment(&task, ReviewSource::Pr, CommentTarget::Local, "x"))
+        .await
+        .unwrap();
+    let thread_id = d
+        .review_get(&get(ReviewSource::Local, &task))
+        .await
+        .unwrap()
+        .threads[0]
+        .id
+        .clone();
+    let mut events = d.subscribe();
+    d.review_publish(&ReviewPublishParams {
+        task_id: task.id,
+        thread_id,
+        target: CommentTarget::Single,
+    })
+    .await
+    .unwrap();
+    let changes = std::iter::from_fn(|| events.try_recv().ok())
+        .filter(|e| matches!(e, Event::ReviewChanged { .. }))
+        .count();
+    assert_eq!(changes, 1);
 }
