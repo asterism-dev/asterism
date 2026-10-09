@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::Instant;
 
 use asterism_plugin::{ErrorKind, RpcError};
 use asterism_proto::types::CheckLog;
@@ -32,12 +33,18 @@ fn job_id(check_id: &str) -> Result<&str, RpcError> {
 }
 
 /// The job's run id and web URL.
-fn job(gh: &Path, project: &Path, repo: &str, id: &str) -> Result<(String, String), RpcError> {
+fn job(
+    gh: &Path,
+    project: &Path,
+    repo: &str,
+    id: &str,
+    deadline: Instant,
+) -> Result<(String, String), RpcError> {
     let path = format!("repos/{repo}/actions/jobs/{id}");
     let out = run_with_timeout(
         gh,
         &["api", &path, "--jq", ".run_id, .html_url"],
-        ISSUE_TIMEOUT,
+        deadline.saturating_duration_since(Instant::now()),
         Some(project),
     )?;
     let mut parts = out.split_whitespace();
@@ -53,9 +60,15 @@ fn job(gh: &Path, project: &Path, repo: &str, id: &str) -> Result<(String, Strin
 pub fn log(gh: &Path, project: &Path, check_id: &str) -> Result<CheckLog, RpcError> {
     let id = job_id(check_id)?;
     let repo = origin_repo(project)?;
-    let (_, url) = job(gh, project, &repo, id)?;
+    let deadline = Instant::now() + ISSUE_TIMEOUT;
+    let (_, url) = job(gh, project, &repo, id, deadline)?;
     let path = format!("repos/{repo}/actions/jobs/{id}/logs");
-    let text = run_with_timeout(gh, &["api", &path], ISSUE_TIMEOUT, Some(project))?;
+    let text = run_with_timeout(
+        gh,
+        &["api", &path],
+        deadline.saturating_duration_since(Instant::now()),
+        Some(project),
+    )?;
     let (text, truncated) = tail(&text, LOG_LIMIT);
     Ok(CheckLog {
         text: text.to_string(),
@@ -67,12 +80,13 @@ pub fn log(gh: &Path, project: &Path, check_id: &str) -> Result<CheckLog, RpcErr
 pub fn rerun(gh: &Path, project: &Path, check_id: &str) -> Result<(), RpcError> {
     let id = job_id(check_id)?;
     let repo = origin_repo(project)?;
-    let (run, _) = job(gh, project, &repo, id)?;
+    let deadline = Instant::now() + ISSUE_TIMEOUT;
+    let (run, _) = job(gh, project, &repo, id, deadline)?;
     let path = format!("repos/{repo}/actions/runs/{run}/rerun-failed-jobs");
     run_with_timeout(
         gh,
         &["api", "-X", "POST", &path],
-        ISSUE_TIMEOUT,
+        deadline.saturating_duration_since(Instant::now()),
         Some(project),
     )
     .map(|_| ())
