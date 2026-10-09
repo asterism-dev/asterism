@@ -130,6 +130,15 @@ fn origin_only_branches_check_out_with_upstream() {
 }
 
 #[test]
+fn fetch_branch_never_reads_the_branch_as_an_option() {
+    let (_origin, repo) = repo_with_origin();
+    let marker = repo.path().join("pwned");
+    let evil = format!("--upload-pack=touch {}", marker.display());
+    assert!(git::fetch_branch(repo.path(), "origin", &evil, &[]).is_err());
+    assert!(!marker.exists());
+}
+
+#[test]
 fn push_upstream_publishes_and_tracks_the_branch() {
     let (origin, repo) = repo_with_origin();
     let parent = tempfile::tempdir().unwrap();
@@ -194,4 +203,31 @@ fn push_upstream_skips_pre_push_hooks() {
         origin.path(),
         &["rev-parse", "--verify", "refs/heads/asterism/h"],
     );
+}
+
+#[test]
+fn log_range_lists_commits_newest_first() {
+    let dir = tempfile::tempdir().unwrap();
+    init_repo(dir.path());
+    let base = run_git(dir.path(), &["rev-parse", "HEAD"])
+        .trim()
+        .to_string();
+    for (file, msg) in [("a.rs", "first"), ("b.rs", "second")] {
+        std::fs::write(dir.path().join(file), "x\n").unwrap();
+        run_git(dir.path(), &["add", "."]);
+        run_git(dir.path(), &["commit", "-q", "-m", msg]);
+    }
+    let commits = git::log_range(dir.path(), &base, "HEAD").unwrap();
+    assert_eq!(
+        commits
+            .iter()
+            .map(|c| c.subject.as_str())
+            .collect::<Vec<_>>(),
+        vec!["second", "first"]
+    );
+    assert_eq!(commits[0].author, "test");
+    assert!(commits[0].short.len() >= 7 && commits[0].sha.starts_with(&commits[0].short));
+    assert!(commits[0].date.contains('T'));
+    let patch = git::show_patch(dir.path(), &commits[1].sha).unwrap();
+    assert!(patch.contains("a.rs") && !patch.contains("b.rs"));
 }

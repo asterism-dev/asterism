@@ -1,11 +1,16 @@
+mod checks;
 mod gh;
+mod review;
 
 use std::path::{Path, PathBuf};
 
 use asterism_plugin::protocol::{
-    method, CloneParams, CreateRemoteParams, GetIssueParams, InitializeResult, ListReposParams,
-    PullRequestsParams, ResolveOwnerParams, ResolveOwnerResult, SearchIssuesParams,
-    SearchPullRequestsParams, TaskSourceCheck, TaskSourceCheckParams,
+    method, CheckForgeParams, CloneParams, CreateRemoteParams, GetIssueParams, InitializeResult,
+    ListReposParams, PullRequestsParams, ResolveOwnerParams, ResolveOwnerResult,
+    ReviewAddCommentForgeParams, ReviewCommentForgeParams, ReviewGetForgeParams,
+    ReviewReplyForgeParams, ReviewResolveForgeParams, ReviewSubmitForgeParams,
+    ReviewViewedForgeParams, SearchIssuesParams, SearchPullRequestsParams, TaskSourceCheck,
+    TaskSourceCheckParams,
 };
 use asterism_plugin::{params, serve, to_value, ErrorKind, Host, RpcError};
 use serde_json::Value;
@@ -20,8 +25,85 @@ fn handle(method_name: &str, raw: Value) -> Result<Value, RpcError> {
     let gh = gh_bin();
     match method_name {
         method::INITIALIZE => to_value(InitializeResult {
-            capabilities: vec!["forge".into(), "task_source".into(), "pull_requests".into()],
+            capabilities: vec![
+                "forge".into(),
+                "task_source".into(),
+                "pull_requests".into(),
+                "reviews".into(),
+            ],
         }),
+        method::FORGE_REVIEW_GET => {
+            let p: ReviewGetForgeParams = params(raw)?;
+            to_value(review::get(
+                &gh,
+                Path::new(&p.pr.project_path),
+                p.pr.number,
+            )?)
+        }
+        method::FORGE_REVIEW_COMMENT => {
+            let p: ReviewCommentForgeParams = params(raw)?;
+            review::comment(
+                &gh,
+                Path::new(&p.pr.project_path),
+                p.pr.number,
+                &p.path,
+                p.line,
+                p.side,
+                &p.body,
+                p.mode,
+            )?;
+            Ok(Value::Null)
+        }
+        method::FORGE_REVIEW_REPLY => {
+            let p: ReviewReplyForgeParams = params(raw)?;
+            review::reply(&gh, Path::new(&p.pr.project_path), &p.thread_id, &p.body)?;
+            Ok(Value::Null)
+        }
+        method::FORGE_REVIEW_RESOLVE => {
+            let p: ReviewResolveForgeParams = params(raw)?;
+            review::resolve(&gh, Path::new(&p.pr.project_path), &p.thread_id, p.resolved)?;
+            Ok(Value::Null)
+        }
+        method::FORGE_REVIEW_SET_VIEWED => {
+            let p: ReviewViewedForgeParams = params(raw)?;
+            review::set_viewed(
+                &gh,
+                Path::new(&p.pr.project_path),
+                p.pr.number,
+                &p.path,
+                p.viewed,
+            )?;
+            Ok(Value::Null)
+        }
+        method::FORGE_REVIEW_SUBMIT => {
+            let p: ReviewSubmitForgeParams = params(raw)?;
+            review::submit(
+                &gh,
+                Path::new(&p.pr.project_path),
+                p.pr.number,
+                p.event,
+                &p.body,
+            )?;
+            Ok(Value::Null)
+        }
+        method::FORGE_REVIEW_ADD_COMMENT => {
+            let p: ReviewAddCommentForgeParams = params(raw)?;
+            review::add_comment(&gh, Path::new(&p.pr.project_path), p.pr.number, &p.body)?;
+            Ok(Value::Null)
+        }
+        method::FORGE_CHECKS_LOG => {
+            let p: CheckForgeParams = params(raw)?;
+            to_value(checks::log(
+                &gh,
+                Path::new(&p.pr.project_path),
+                &p.check_id,
+            )?)
+        }
+        method::FORGE_CHECKS_RERUN => {
+            let p: CheckForgeParams = params(raw)?;
+            checks::rerun(&gh, Path::new(&p.pr.project_path), &p.check_id)?;
+            Ok(Value::Null)
+        }
         method::FORGE_STATUS => to_value(gh::status(&gh)),
         method::FORGE_LIST_REPOS => {
             to_value(gh::repos(&gh, &params::<ListReposParams>(raw)?.owner)?)

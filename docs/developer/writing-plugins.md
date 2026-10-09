@@ -49,6 +49,7 @@ A `[backend]` section is required when the plugin provides a forge, a command, a
 | `display_name` | string | yes | Name shown in the UI. |
 | `hosts` | array of strings | no | Git remote hosts this forge serves, e.g. `"github.com"`. Pull request status is fetched from the forge whose `hosts` contains the host of the project's `origin` remote. |
 | `pull_requests` | bool | no, default `false` | The backend answers `forge.pull_requests` and `forge.search_pull_requests`. |
+| `reviews` | bool | no, default `false` | The backend answers `forge.review.*`. |
 
 ### `[[provides.agent]]`
 
@@ -132,7 +133,7 @@ The backend gets a fixed environment, not the user's shell environment: the daem
 ### Lifecycle
 
 - **Handshake.** The first request is always `initialize`. Its reply must list exactly the capabilities the manifest implies, otherwise the plugin is marked failing until it is reloaded:
-    - `forge` if it provides a forge, `pull_requests` if any forge has `pull_requests = true`,
+    - `forge` if it provides a forge, `pull_requests` if any forge has `pull_requests = true`, `reviews` if any forge has `reviews = true`,
     - `agent` if any agent has `launch = "backend"`,
     - `command` if it provides a command, `task_source` if it provides a task source.
 - **Timeouts.** Calls time out after 20 s, except `forge.clone` and `forge.create_remote`, which have no timeout.
@@ -165,12 +166,23 @@ Parameter and result types are defined in `crates/asterism-plugin/src/protocol.r
 | `forge.create_remote` | `forge` | `owner`, `name`, `visibility`, `dir`, `git_env` | anything |
 | `forge.pull_requests` | `pull_requests` | `forge`, `project_path`, `branches` | list of `branch`, `pr` (`number`, `url`, `title`, `state`, `review`, `checks`) |
 | `forge.search_pull_requests` | `pull_requests` | `forge`, `project_path`, `query`, `state` (`open`/`closed`) | list of `number`, `title`, `url`, `author`, `head_branch`, `draft`, `from_fork` |
+| `forge.review.get` | `reviews` | `forge`, `project_path`, `number` | `title`, `body`, `author`, `url`, `head_sha`, `base_sha`, `head_ref`, `threads`, `conversation`, `checks`, `commit_checks`, `viewed_files`, `pending_review` |
+| `forge.review.comment` | `reviews` | `forge`, `project_path`, `number`, `path`, `line`, `side` (`old`/`new`), `body`, `mode` (`single`/`review`) | `null` |
+| `forge.review.reply` | `reviews` | `forge`, `project_path`, `number`, `thread_id`, `body` | `null` |
+| `forge.review.resolve` | `reviews` | `forge`, `project_path`, `number`, `thread_id`, `resolved` | `null` |
+| `forge.review.set_viewed` | `reviews` | `forge`, `project_path`, `number`, `path`, `viewed` | `null` |
+| `forge.review.submit` | `reviews` | `forge`, `project_path`, `number`, `event` (`comment`/`approve`/`request_changes`), `body` | `null` |
+| `forge.review.add_comment` | `reviews` | `forge`, `project_path`, `number`, `body` | `null` |
+| `forge.checks.log` | `reviews` | `forge`, `project_path`, `number`, `check_id` | `text`, `truncated`, `url` |
+| `forge.checks.rerun` | `reviews` | `forge`, `project_path`, `number`, `check_id` | `null` |
 | `task_source.check` | `task_source` | `source`, `project_path` | `available`, optional `reason` |
 | `task_source.search` | `task_source` | `source`, `query`, `assigned_to_me`, `project_path` | list of `key`, `title`, `url`, `state`, `assignee`, `updated_at` |
 | `task_source.get` | `task_source` | `source`, `key`, `project_path` | `key`, `title`, `url`, `description`, `branch` |
 | `agent.prepare` | `agent` | `agent`, `mode` (`start`/`resume`), `prompt`, `agent_ref`, `settings` (`args`, `mcp_config`, `hooks`), `cwd` | `argv` (non-empty), optional `env` as `[name, value]` pairs |
 
 `visibility` is `public`, `private` or `internal`. In `forge.pull_requests`, `state` is `open`, `draft`, `merged` or `closed`; `review` is `approved`, `changes_requested`, `review_required` or `none`; `checks` is `{"state": ..., "failing": [...]}` with state `pending`, `success`, `failure` or `none`. Leave branches without a pull request out of the result. `task_source.get` may return a `branch` to use for the task; when it is `null`, Asterism derives one.
+
+In `forge.review.get`, a check (in `checks`) has `id`, `name`, `workflow`, `status` (`queued`/`running`/`done`), `conclusion`, `started_at`, `completed_at`, `url`, `has_log` and `rerunnable`; a `conversation` item has `id`, `kind` (`comment`/`review`), `author`, `body`, `created_at` and `state`. `commit_checks` maps a commit sha to its combined check state as a lowercase string (for example `success`, `failure`, `pending`). `forge.checks.*` are only called for checks with `has_log` or `rerunnable` set.
 
 ### Calling back into the daemon
 
@@ -240,6 +252,7 @@ id = "echo-forge"
 display_name = "Echo"
 hosts = ["echo.test"]
 pull_requests = true
+reviews = true
 
 [[provides.command]]
 name = "echo-cmd"
@@ -273,10 +286,10 @@ default = "eu"
 ```
 
 - The backend is `./backend.py`, resolved relative to the plugin directory. It must be executable.
-- `echo-forge` sets `pull_requests = true`, so the backend must answer the pull request methods and report `pull_requests` in `initialize`.
+- `echo-forge` sets `pull_requests = true` and `reviews = true`, so the backend must answer the pull request and review methods and report `pull_requests` and `reviews` in `initialize`.
 - `echo-agent` is a static agent: no backend call is needed to start it. Starting it runs `sh -c 'echo started "$@"; sleep 30' echo <args...>`, and `(y/n)` on screen marks the session as waiting for input. Only the `args` agent setting applies.
 - `token` is a required secret, so the plugin needs setup until it is set. `region` is an enum with a default.
-- The implied backend capabilities are `forge`, `pull_requests`, `command` and `task_source`; the static agent adds none.
+- The implied backend capabilities are `forge`, `pull_requests`, `reviews`, `command` and `task_source`; the static agent adds none.
 
 ### `backend.py`
 
@@ -338,7 +351,7 @@ def handle(request):
         if mode == "hang-init":
             time.sleep(60)
         record("init " + json.dumps(params.get("settings", {}), sort_keys=True))
-        caps = [c for c in os.environ.get("FIXTURE_CAPS", "command,forge,task_source,pull_requests").split(",") if c]
+        caps = [c for c in os.environ.get("FIXTURE_CAPS", "command,forge,task_source,pull_requests,reviews").split(",") if c]
         result = {"capabilities": caps}
     elif method == "forge.status":
         result = {"available": True, "authenticated": True, "account": "me", "owners": ["acme"], "error": None}
@@ -375,6 +388,54 @@ def handle(request):
         record("search " + params.get("state", "open") + " " + params.get("query", ""))
         result = [{"number": 7, "title": "Add search", "url": "https://echo.test/pr/7", "author": "octo",
                    "head_branch": "feature/search", "draft": False, "from_fork": False}]
+    elif method.startswith("forge.review."):
+        record("review " + method[len("forge.review."):] + " " + json.dumps(params, sort_keys=True))
+        path = os.environ.get("FIXTURE_REVIEW")
+        data = json.load(open(path)) if path and os.path.exists(path) else None
+        if data is None or "error" in data:
+            error(rid, -32008, "plugin_error", (data or {}).get("error", "no review fixture"))
+            return
+        kind = method[len("forge.review."):]
+        if kind == "comment":
+            data["threads"].append({"id": "F%d" % (len(data["threads"]) + 1), "path": params["path"],
+                                    "line": params["line"], "side": params["side"], "outdated": False,
+                                    "resolved": False, "pending": params["mode"] == "review",
+                                    "comments": [{"id": "c", "author": "me", "body": params["body"], "created_at": ""}]})
+            if params["mode"] == "review":
+                data["pending_review"] = {"id": "R1", "comments": sum(t["pending"] for t in data["threads"])}
+        elif kind == "resolve":
+            for t in data["threads"]:
+                if t["id"] == params["thread_id"]:
+                    t["resolved"] = params["resolved"]
+        elif kind == "set_viewed":
+            files = set(data["viewed_files"])
+            (files.add if params["viewed"] else files.discard)(params["path"])
+            data["viewed_files"] = sorted(files)
+        elif kind == "add_comment":
+            data["conversation"].append({"id": "I%d" % (len(data["conversation"]) + 1), "kind": "comment",
+                                         "author": "me", "body": params["body"], "created_at": "", "state": None})
+        elif kind == "submit":
+            data["pending_review"] = None
+            for t in data["threads"]:
+                t["pending"] = False
+        if kind != "get":
+            json.dump(data, open(path, "w"))
+        result = data if kind == "get" else None
+    elif method.startswith("forge.checks."):
+        kind = method[len("forge.checks."):]
+        record("checks " + kind + " " + json.dumps(params, sort_keys=True))
+        path = os.environ.get("FIXTURE_REVIEW")
+        data = json.load(open(path)) if path and os.path.exists(path) else {}
+        check = next((c for c in data.get("checks", []) if c["id"] == params["check_id"]), None)
+        if check is None or (kind == "log" and params["check_id"] not in data.get("logs", {})):
+            error(rid, -32008, "plugin_error", "no log for " + params["check_id"])
+            return
+        if kind == "log":
+            result = {"text": data["logs"][params["check_id"]], "truncated": False, "url": check["url"]}
+        else:
+            check["status"], check["conclusion"] = "queued", None
+            json.dump(data, open(path, "w"))
+            result = None
     elif method == "echo.sleep":
         time.sleep(params.get("ms", 0) / 1000)
         result = params

@@ -152,6 +152,7 @@ export type NodeEvent =
   | { method: 'project.removed'; params: { project_id: number } }
   | { method: 'plugins.changed'; params: Record<string, never> }
   | { method: 'stores.changed'; params: Record<string, never> }
+  | { method: 'review.changed'; params: { task_id: number } }
   | { method: 'pr.changed'; params: { task_id: number; pr: PullRequest | null } }
   | { method: 'subagent.started'; params: { session_id: number; subagent: Subagent } }
   | { method: 'subagent.updated'; params: { session_id: number; subagent: Subagent } };
@@ -221,9 +222,6 @@ export type TaskCreateRequest = {
   checkout: string | null;
   push: boolean;
 };
-export interface TaskDiffResult {
-  patch: string;
-}
 export interface TaskFileResult {
   path: string;
   mtime: number;
@@ -375,4 +373,84 @@ export interface PluginSettings {
   schema: SettingSpec[];
   values: Record<string, SettingValue>;
   secrets_set: string[];
+}
+
+export type DiffSide = 'old' | 'new';
+export type ReviewSource = 'pr' | 'local';
+export type CommentTarget = 'local' | 'single' | 'review';
+export type ReviewEvent = 'comment' | 'approve' | 'request_changes';
+export interface ReviewComment {
+  id: string;
+  author: string;
+  body: string;
+  created_at: string;
+}
+export interface ReviewThread {
+  id: string;
+  path: string;
+  line: number;
+  side: DiffSide;
+  outdated: boolean;
+  resolved: boolean;
+  local: boolean;
+  pending: boolean;
+  comments: ReviewComment[];
+}
+export type CheckStatus = 'queued' | 'running' | 'done';
+export interface CheckRun {
+  id: string;
+  name: string;
+  workflow: string;
+  status: CheckStatus;
+  conclusion: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  url: string;
+  has_log: boolean;
+  rerunnable: boolean;
+}
+export interface ConversationItem {
+  id: string;
+  kind: 'comment' | 'review';
+  author: string;
+  body: string;
+  created_at: string;
+  state: string | null;
+}
+export interface CheckLog {
+  text: string;
+  truncated: boolean;
+  url: string;
+}
+export interface ReviewCommit {
+  sha: string;
+  short: string;
+  subject: string;
+  author: string;
+  date: string;
+}
+export interface ReviewCommitsResult {
+  commits: ReviewCommit[];
+  uncommitted: boolean;
+}
+export interface PendingReview {
+  id: string;
+  comments: number;
+}
+export interface ReviewResult {
+  source: ReviewSource;
+  pr: number | null;
+  reviews_supported: boolean;
+  patch: string;
+  threads: ReviewThread[];
+  conversation: ConversationItem[];
+  title: string;
+  body: string;
+  author: string;
+  url: string;
+  checks: CheckRun[];
+  commit_checks: Record<string, string>;
+  viewed_files: string[];
+  pending_review: PendingReview | null;
+  local_ahead: boolean;
 }

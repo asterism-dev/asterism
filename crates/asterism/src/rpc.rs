@@ -409,6 +409,43 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             blocking(move || to_value(daemon.delete_task(p.task_id, p.delete_branch)?)).await
         }
         method::TASK_DIFF => to_value(daemon.diff(params::<TaskIdParams>(raw)?.task_id)?),
+        method::REVIEW_GET => to_value(daemon.review_get(&params(raw)?).await?),
+        method::REVIEW_SET_VIEWED => {
+            daemon.review_set_viewed(&params(raw)?).await?;
+            Ok(Value::Null)
+        }
+        method::REVIEW_COMMENT => {
+            daemon.review_comment(&params(raw)?).await?;
+            Ok(Value::Null)
+        }
+        method::REVIEW_REPLY => {
+            daemon.review_reply(&params(raw)?).await?;
+            Ok(Value::Null)
+        }
+        method::REVIEW_RESOLVE => {
+            daemon.review_resolve(&params(raw)?).await?;
+            Ok(Value::Null)
+        }
+        method::REVIEW_SUBMIT => {
+            daemon.review_submit(&params(raw)?).await?;
+            Ok(Value::Null)
+        }
+        method::REVIEW_PUBLISH => {
+            daemon.review_publish(&params(raw)?).await?;
+            Ok(Value::Null)
+        }
+        method::REVIEW_PROMPT => to_value(daemon.review_prompt(&params(raw)?).await?),
+        method::REVIEW_ADD_COMMENT => {
+            daemon.review_add_comment(&params(raw)?).await?;
+            Ok(Value::Null)
+        }
+        method::REVIEW_CHECK_LOG => to_value(daemon.review_check_log(&params(raw)?).await?),
+        method::REVIEW_CHECK_RERUN => {
+            daemon.review_check_rerun(&params(raw)?).await?;
+            Ok(Value::Null)
+        }
+        method::REVIEW_COMMITS => to_value(daemon.review_commits(&params(raw)?).await?),
+        method::REVIEW_COMMIT_DIFF => to_value(daemon.review_commit_diff(&params(raw)?).await?),
         method::TASK_FILE => {
             let daemon = daemon.clone();
             let params = params::<TaskFileParams>(raw)?;

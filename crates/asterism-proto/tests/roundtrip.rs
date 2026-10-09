@@ -437,3 +437,78 @@ fn plugin_info_defaults_to_no_panels_and_panels_are_a_capability() {
     assert!(info.panels.is_empty());
     assert_eq!(info.capabilities[0].kind, CapabilityKind::Panel);
 }
+
+#[test]
+fn review_types_use_snake_case_on_the_wire() {
+    let params = ReviewCommentParams {
+        task_id: 1,
+        source: ReviewSource::Pr,
+        path: "src/a.rs".into(),
+        line: 3,
+        side: DiffSide::New,
+        body: "hi".into(),
+        target: CommentTarget::Single,
+    };
+    let v = serde_json::to_value(&params).unwrap();
+    assert_eq!(v["source"], "pr");
+    assert_eq!(v["side"], "new");
+    assert_eq!(v["target"], "single");
+    assert_eq!(
+        serde_json::to_value(ReviewEvent::RequestChanges).unwrap(),
+        "request_changes"
+    );
+    let event = Event::ReviewChanged { task_id: 4 };
+    let n = serde_json::to_value(&event).unwrap();
+    assert_eq!(n["method"], "review.changed");
+    assert_eq!(n["params"]["task_id"], 4);
+    let thread: ReviewThread = serde_json::from_value(serde_json::json!({
+        "id": "t", "path": "a", "line": 1, "side": "old", "outdated": false,
+        "resolved": false, "comments": []
+    }))
+    .unwrap();
+    assert!(!thread.local && !thread.pending);
+}
+
+#[test]
+fn check_and_conversation_types_use_snake_case() {
+    let check: CheckRun = serde_json::from_value(serde_json::json!({
+        "id": "11", "name": "test", "status": "running", "url": "https://x"
+    }))
+    .unwrap();
+    assert_eq!(check.status, CheckStatus::Running);
+    assert!(
+        check.conclusion.is_none()
+            && !check.has_log
+            && !check.rerunnable
+            && check.workflow.is_empty()
+    );
+    let item = ConversationItem {
+        id: "R1".into(),
+        kind: ConversationKind::Review,
+        author: "alice".into(),
+        body: String::new(),
+        created_at: "2026-10-09T10:00:00Z".into(),
+        state: Some("approved".into()),
+    };
+    let v = serde_json::to_value(&item).unwrap();
+    assert_eq!(
+        (v["kind"].as_str(), v["state"].as_str()),
+        (Some("review"), Some("approved"))
+    );
+    // Older forge payloads without the new fields still parse.
+    let old: ForgeReview = serde_json::from_value(serde_json::json!({
+        "head_sha": "h", "base_sha": "", "head_ref": "r", "threads": [], "conversation": [],
+        "viewed_files": [], "pending_review": null
+    }))
+    .unwrap();
+    assert!(old.checks.is_empty() && old.title.is_empty() && old.commit_checks.is_empty());
+    let diff = ReviewCommitDiffParams {
+        task_id: 1,
+        source: ReviewSource::Local,
+        sha: None,
+    };
+    assert_eq!(
+        serde_json::to_value(&diff).unwrap()["sha"],
+        serde_json::Value::Null
+    );
+}

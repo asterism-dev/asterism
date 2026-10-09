@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use asterism_proto::rpc::ErrorKind;
+use asterism_proto::types::ReviewCommit;
 
 use crate::error::{Error, Result};
 
@@ -127,6 +128,10 @@ pub fn resolves(repo: &Path, rev: &str) -> bool {
             ],
         )
         .is_ok()
+}
+
+pub fn resolves_to(repo: &Path, rev: &str, sha: &str) -> bool {
+    git(repo, &["rev-parse", "--verify", "-q", rev]).is_ok_and(|out| out.trim() == sha)
 }
 
 /// Branch names stay symbolic; anything else (`HEAD~2`, tags, SHAs) is pinned to its commit so it can't drift later.
@@ -293,6 +298,63 @@ pub fn diff(worktree: &Path, base: &str) -> Result<String> {
     Ok(patch)
 }
 
+/// The changes of `head` since it forked from `base` (`base...head`).
+pub fn diff_range(repo: &Path, base: &str, head: &str) -> Result<String> {
+    git(
+        repo,
+        &[
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            &format!("{base}...{head}"),
+        ],
+    )
+}
+
+/// Commits reachable from `head` but not from `base`, newest first.
+pub fn log_range(repo: &Path, base: &str, head: &str) -> Result<Vec<ReviewCommit>> {
+    let range = format!("{base}..{head}");
+    let out = git(
+        repo,
+        &[
+            "log",
+            "--no-color",
+            "--format=%H%x1f%h%x1f%s%x1f%an%x1f%aI",
+            "--end-of-options",
+            &range,
+            "--",
+        ],
+    )?;
+    Ok(out
+        .lines()
+        .filter_map(|line| {
+            let mut f = line.split('\u{1f}');
+            Some(ReviewCommit {
+                sha: f.next()?.to_string(),
+                short: f.next()?.to_string(),
+                subject: f.next()?.to_string(),
+                author: f.next()?.to_string(),
+                date: f.next()?.to_string(),
+            })
+        })
+        .collect())
+}
+
+pub fn show_patch(repo: &Path, sha: &str) -> Result<String> {
+    git(
+        repo,
+        &[
+            "show",
+            "--no-color",
+            "--no-ext-diff",
+            "--format=",
+            "--end-of-options",
+            sha,
+            "--",
+        ],
+    )
+}
+
 pub type GitEnv = [(String, String)];
 
 const MESSAGE_LIMIT: usize = 2_000;
@@ -392,7 +454,7 @@ pub fn fetch(repo: &Path, remote: &str, extra: &GitEnv) -> Result<()> {
 pub fn fetch_branch(repo: &Path, remote: &str, branch: &str, extra: &GitEnv) -> Result<()> {
     run_with_env(
         Some(repo),
-        &["fetch", "-q", remote, branch],
+        &["fetch", "-q", "--", remote, branch],
         &clone_env(extra),
     )
     .map(|_| ())

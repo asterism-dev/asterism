@@ -37,6 +37,8 @@ use crate::session::{Pty, Snapshot, SpawnSpec, SCROLLBACK_LINES};
 use crate::store::Store;
 use crate::{git, hibernate, lock, node_settings, repo_source, status};
 
+mod review;
+
 const DEFAULT_ROWS: u16 = 40;
 const DEFAULT_COLS: u16 = 120;
 const REMOVE_GRACE: Duration = Duration::from_secs(2);
@@ -160,6 +162,7 @@ pub struct Daemon {
     waking: tokio::sync::Mutex<()>,
     /// Subagents per session, kept after exit until the session is removed.
     subagents: Mutex<HashMap<i64, SessionSubagents>>,
+    review_cache: Mutex<review::ReviewCache>,
 }
 
 #[derive(Default)]
@@ -208,6 +211,7 @@ impl Daemon {
                 pr_status: Mutex::new(PrStatus::default()),
                 waking: tokio::sync::Mutex::new(()),
                 subagents: Mutex::new(HashMap::new()),
+                review_cache: Mutex::new(review::ReviewCache::default()),
             }
         }))
     }

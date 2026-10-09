@@ -9,7 +9,7 @@ import { state } from '../store';
 
 const props = defineProps<{ params: { group: IDockviewGroupPanel; containerApi: DockviewApi } }>();
 const TOOLS: { pane: ToolPane; label: string }[] = [
-  { pane: 'diff', label: 'Diff' },
+  { pane: 'diff', label: 'Review' },
   { pane: 'activity', label: 'Activity Monitor' },
 ];
 
