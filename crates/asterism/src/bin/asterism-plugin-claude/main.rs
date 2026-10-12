@@ -1,3 +1,4 @@
+mod detect;
 mod hook;
 mod launch;
 
@@ -6,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use asterism_plugin::protocol::{
-    method, InitializeParams, InitializeResult, PrepareParams, SettingsChangedParams,
+    method, DetectParams, InitializeParams, InitializeResult, PrepareParams, SettingsChangedParams,
 };
 use asterism_plugin::{params, serve, to_value, ErrorKind, Host, RpcError};
 use serde_json::{Map, Value};
@@ -24,6 +25,14 @@ impl State {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         self.trust_workspaces.store(trust, Ordering::Relaxed);
+    }
+}
+
+/// Where Claude Code records its running processes.
+fn claude_sessions() -> Option<PathBuf> {
+    match std::env::var_os("CLAUDE_CONFIG_DIR") {
+        Some(dir) => Some(PathBuf::from(dir).join("sessions")),
+        None => std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claude/sessions")),
     }
 }
 
@@ -71,6 +80,10 @@ fn handle(state: &State, method_name: &str, raw: Value) -> Result<Value, RpcErro
             let exe = std::env::current_exe()
                 .map_err(|e| RpcError::new(ErrorKind::Internal, e.to_string()))?;
             to_value(launch::prepare(dir, &exe, &p)?)
+        }
+        method::AGENT_DETECT => {
+            let p: DetectParams = params(raw)?;
+            to_value(claude_sessions().and_then(|dir| detect::detect(&dir, &p.pids)))
         }
         other => Err(RpcError::new(
             ErrorKind::MethodNotFound,

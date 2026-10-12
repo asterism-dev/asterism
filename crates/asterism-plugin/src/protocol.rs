@@ -29,6 +29,7 @@ pub mod method {
     pub const FORGE_PULL_REQUESTS: &str = "forge.pull_requests";
     pub const FORGE_SEARCH_PULL_REQUESTS: &str = "forge.search_pull_requests";
     pub const AGENT_PREPARE: &str = "agent.prepare";
+    pub const AGENT_DETECT: &str = "agent.detect";
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -120,6 +121,19 @@ pub struct PrepareResult {
     pub argv: Vec<String>,
     #[serde(default)]
     pub env: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DetectParams {
+    pub agent: String,
+    pub pids: Vec<u32>,
+}
+
+/// `agent.detect` replies with this, or `null` when no process is the agent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Detected {
+    pub agent_ref: String,
+    pub idle: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -159,6 +159,10 @@ def handle(request):
     elif method == "settings.changed" and mode != "no-settings":
         record("settings " + json.dumps(params["settings"], sort_keys=True))
         result = None
+    elif method == "agent.detect":
+        # Any process whose command line names "fake-agent" counts as an idle agent with ref "r9".
+        commands = [os.popen("ps -o command= -p %d" % pid).read() for pid in params["pids"]]
+        result = {"agent_ref": "r9", "idle": True} if any("fake-agent" in c for c in commands) else None
     else:
         error(rid, -32601, "method_not_found", "unknown method " + method)
         return

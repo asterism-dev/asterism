@@ -29,8 +29,8 @@ fn open(home: &std::path::Path) -> Arc<Daemon> {
     Daemon::with_options(paths, options()).unwrap()
 }
 
-/// Starts an echo-agent session that reported agent ref "r1" and has gone idle.
-async fn idle_session() -> Fixture {
+/// A daemon with the echo plugin, hibernating echo-agent after one (shortened) minute.
+fn setup() -> (tempfile::TempDir, tempfile::TempDir, Arc<Daemon>, Project) {
     let home = tempfile::tempdir().unwrap();
     let repo = tempfile::tempdir().unwrap();
     init_repo(repo.path());
@@ -49,6 +49,12 @@ async fn idle_session() -> Fixture {
     let project = daemon
         .add_project(&repo.path().display().to_string())
         .unwrap();
+    (home, repo, daemon, project)
+}
+
+/// Starts an echo-agent session that reported agent ref "r1" and has gone idle.
+async fn idle_session() -> Fixture {
+    let (home, repo, daemon, project) = setup();
     let params = TaskCreateParams {
         project_id: project.id,
         title: "t".into(),
@@ -227,5 +233,74 @@ async fn archived_task_does_not_wake() {
     assert_eq!(
         f.daemon.session(f.session).unwrap().status,
         SessionStatus::Exited
+    );
+}
+
+/// A shell session running a process named `name`, quiet long enough to hibernate.
+async fn quiet_shell(name: &str) -> Fixture {
+    let (home, repo, daemon, project) = setup();
+    let task = daemon
+        .create_task(TaskCreateParams {
+            project_id: project.id,
+            title: "t".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .task;
+    let session = daemon
+        .start_session(SessionStartParams {
+            task_id: task.id,
+            kind: SessionKind::Shell,
+            prompt: None,
+        })
+        .await
+        .unwrap()
+        .id;
+    daemon
+        .send(SessionSendParams {
+            session_id: session,
+            text: format!("sh -c 'echo $0-ok; sleep 30' {name}"),
+            submit: true,
+        })
+        .await
+        .unwrap();
+    let ready = format!("{name}-ok");
+    assert!(eventually(|| screen(&daemon, session).contains(&ready)).await);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    Fixture {
+        home,
+        _repo: repo,
+        daemon,
+        session,
+    }
+}
+
+#[tokio::test]
+async fn idle_agent_in_a_shell_hibernates_as_an_agent_session() {
+    let f = quiet_shell("fake-agent").await;
+    f.daemon.hibernate_shells().await.unwrap();
+    wait_status(&f.daemon, f.session, SessionStatus::Hibernated).await;
+    assert_eq!(
+        f.daemon.session(f.session).unwrap().kind,
+        SessionKind::Agent {
+            name: "echo-agent".into()
+        }
+    );
+    assert_eq!(running(&f.daemon), 0);
+
+    f.daemon.attach(f.session).await.unwrap();
+    assert!(eventually(|| screen(&f.daemon, f.session).contains("resumed r9")).await);
+}
+
+#[tokio::test]
+async fn shell_without_an_agent_keeps_running() {
+    let f = quiet_shell("plain").await;
+    f.daemon.hibernate_shells().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(running(&f.daemon), 1);
+    assert_eq!(
+        f.daemon.session(f.session).unwrap().kind,
+        SessionKind::Shell
     );
 }
