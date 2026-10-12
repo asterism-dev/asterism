@@ -1,3 +1,4 @@
+import type { ConflictChoice } from './worktreeConflict';
 export type SessionStatus = 'working' | 'idle' | 'waiting_input' | 'exited' | 'hibernated';
 export type SessionKind =
   { type: 'agent'; name: string } | { type: 'shell' } | { type: 'command'; argv: string[] };
@@ -233,6 +234,7 @@ export type TaskCreateRequest = {
   branch: string | null;
   checkout: string | null;
   push: boolean;
+  on_conflict: ConflictChoice | null;
 };
 export interface TaskFileResult {
   path: string;

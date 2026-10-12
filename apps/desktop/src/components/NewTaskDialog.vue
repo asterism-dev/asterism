@@ -203,6 +203,7 @@ async function submit() {
         checkout: checkout.value,
         push: push.value,
         issue: kind.value === 'issue' ? issue.value : null,
+        onConflict: null,
       }),
     );
     addTask(state, created.task);
