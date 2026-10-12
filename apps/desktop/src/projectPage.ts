@@ -18,7 +18,7 @@ export function taskState(
 }
 
 export function worktreeActions(w: Worktree): { open: boolean; remove: boolean } {
-  return { open: w.task_id !== null, remove: !w.is_main && w.task_id === null };
+  return { open: w.task_ids.length > 0, remove: !w.is_main && w.task_ids.length === 0 };
 }
 
 export function formatSize(bytes: number | undefined): string {

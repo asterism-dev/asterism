@@ -217,12 +217,14 @@ watch(
             <td class="mono">{{ w.branch ?? `detached @ ${w.head.slice(0, 7)}` }}</td>
             <td class="mono muted">{{ w.base_branch ?? '—' }}</td>
             <td class="num">{{ formatSize(sizes[w.path]) }}</td>
-            <td>{{ w.task_id === null ? '—' : taskTitle(w.task_id) }}</td>
+            <td>{{ w.task_ids.length ? w.task_ids.map(taskTitle).join(', ') : '—' }}</td>
             <td class="actions">
               <button v-if="!w.prunable" @click="revealItemInDir(w.path).catch(report)">
                 Reveal
               </button>
-              <button v-if="worktreeActions(w).open" @click="openTask(w.task_id)">Open task</button>
+              <button v-if="worktreeActions(w).open" @click="openTask(w.task_ids[0])">
+                Open task
+              </button>
               <button v-if="worktreeActions(w).remove" class="danger" @click="removeWorktree(w)">
                 Remove
               </button>

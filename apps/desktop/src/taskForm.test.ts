@@ -25,6 +25,7 @@ const form = (over: Partial<TaskForm> = {}): TaskForm => ({
   checkout: '',
   push: true,
   issue: null,
+  onConflict: null,
   ...over,
 });
 const pr = (over: Partial<PrHit> = {}): PrHit => ({
@@ -88,7 +89,15 @@ describe('taskForm', () => {
       branch: 'asterism/fix-login-x8d4t',
       checkout: null,
       push: true,
+      on_conflict: null,
     });
+  });
+
+  it('passes the conflict choice through', () => {
+    expect(createRequest(form({ onConflict: 'suffix' })).on_conflict).toBe('suffix');
+    expect(
+      createRequest(form({ mode: 'checkout', checkout: 'x', onConflict: 'reuse' })).on_conflict,
+    ).toBe('reuse');
   });
 
   it('checks out an existing branch without base, branch or push', () => {

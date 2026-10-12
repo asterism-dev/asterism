@@ -38,6 +38,7 @@ use crate::store::Store;
 use crate::{git, hibernate, lock, node_settings, repo_source, status};
 
 mod review;
+mod worktree_conflict;
 
 const DEFAULT_ROWS: u16 = 40;
 const DEFAULT_COLS: u16 = 120;
@@ -997,19 +998,59 @@ impl Daemon {
         let fetch_error = git::remote_url(&repo, "origin")
             .and_then(|_| git::fetch(&repo, "origin", &self.options.git_env).err())
             .map(|e| e.message);
+        let worktree_root = self.worktree_root(&repo, &project).ok();
+        let worktrees = match &worktree_root {
+            Some(root) => self.root_worktrees(&repo, project.id, root)?,
+            None => Vec::new(),
+        };
         Ok(ProjectBranches {
             branches: git::branches(&repo)?,
             default: default_base(&repo, &project),
             automatic: automatic_base(&repo),
             configured: project.default_base.clone(),
             fetch_error,
-            worktree_root: self
-                .worktree_root(&repo, &project)
-                .ok()
-                .map(|p| p.display().to_string()),
+            worktree_root: worktree_root.map(|p| p.display().to_string()),
             local: git::local_branches(&repo)?,
             remote: git::remote_branches(&repo, "origin")?,
+            worktrees,
         })
+    }
+
+    fn root_worktrees(
+        &self,
+        repo: &Path,
+        project_id: i64,
+        root: &Path,
+    ) -> Result<Vec<BranchWorktree>> {
+        // git may report /private/var/… where the root says /var/…
+        let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let root = canonical(root);
+        let tasks = self.store().tasks(Some(project_id), true)?;
+        Ok(git::worktrees(repo)?
+            .into_iter()
+            .filter(|w| !w.is_main)
+            .filter_map(|w| {
+                let dir = canonical(Path::new(&w.path))
+                    .strip_prefix(&root)
+                    .ok()?
+                    .to_string_lossy()
+                    .into_owned();
+                let tasks = tasks
+                    .iter()
+                    .filter(|t| same_path(&t.worktree_path, &w.path))
+                    .map(|t| WorktreeTask {
+                        id: t.id,
+                        title: t.title.clone(),
+                        archived: t.archived,
+                    })
+                    .collect();
+                Some(BranchWorktree {
+                    dir,
+                    branch: w.branch,
+                    tasks,
+                })
+            })
+            .collect())
     }
 
     pub fn update_project(&self, params: ProjectUpdateParams) -> Result<Project> {
@@ -1425,12 +1466,12 @@ impl Daemon {
             .project(params.project_id)?
             .ok_or_else(|| not_found("project", params.project_id))?;
         let repo = PathBuf::from(&project.path);
-        let checkout = params
+        let mut checkout = params
             .checkout
             .as_deref()
             .map(str::trim)
             .filter(|b| !b.is_empty());
-        let new_branch = params
+        let mut new_branch = params
             .branch
             .as_deref()
             .map(str::trim)
@@ -1459,26 +1500,10 @@ impl Daemon {
         };
         let base = git::pin_base(&repo, &base)?;
         let worktree_root = self.worktree_root(&repo, &project)?;
-        let explicit = checkout.or(new_branch);
-        if let Some(branch) = explicit {
+        let requested = checkout.or(new_branch);
+        if let Some(branch) = requested {
             git::check_branch_name(&repo, branch)?;
-        }
-        if let Some(branch) = new_branch {
-            if git::branch_exists(&repo, branch) {
-                return Err(Error::new(
-                    ErrorKind::BranchExists,
-                    format!("branch `{branch}` already exists"),
-                ));
-            }
-        }
-        if let Some(branch) = explicit {
             let target = worktree_root.join(branch);
-            if target.exists() {
-                return Err(Error::new(
-                    ErrorKind::BranchExists,
-                    format!("worktree directory `{}` already exists", target.display()),
-                ));
-            }
             // Older tasks used flat directories, so a branch like `42-fix/x` could land inside one.
             if let Some(inside) = target
                 .ancestors()
@@ -1495,6 +1520,44 @@ impl Daemon {
                 ));
             }
         }
+        if params.on_conflict.is_some() {
+            // A hand-deleted worktree stays registered and would block the checkout.
+            git::prune_worktrees(&repo)?;
+        }
+        let suffixed;
+        let mut reuse: Option<String> = None;
+        let conflict = requested.and_then(|b| {
+            worktree_conflict::detect(&repo, &worktree_root, b, new_branch.is_some())
+        });
+        if let (Some(c), Some(branch)) = (&conflict, requested) {
+            match params.on_conflict {
+                None => return Err(c.error(branch)),
+                Some(OnConflict::Suffix) if checkout.is_some() => {
+                    return Err(Error::new(
+                        ErrorKind::InvalidParams,
+                        "a checked-out branch cannot get a suffix; reuse or replace its worktree",
+                    ))
+                }
+                Some(OnConflict::Suffix) => {
+                    suffixed = worktree_conflict::suffixed(&repo, &worktree_root, branch)?;
+                    new_branch = Some(&suffixed);
+                }
+                Some(OnConflict::Reuse) => {
+                    if c.target.exists() {
+                        let entry = worktree_conflict::registered(&repo, &c.target)?
+                            .ok_or_else(|| worktree_conflict::foreign(&c.target))?;
+                        reuse = Some(entry.branch.unwrap_or_else(|| branch.to_string()));
+                    } else {
+                        checkout = Some(branch);
+                        new_branch = None;
+                    }
+                }
+                Some(OnConflict::Replace) => {
+                    self.clear_for_replace(&repo, project.id, c, branch)?;
+                }
+            }
+        }
+        let explicit = checkout.or(new_branch);
         let prepared = checkout
             .map(|b| self.prepare_checkout(&repo, b))
             .transpose()?;
@@ -1542,13 +1605,15 @@ impl Daemon {
                 }
             },
         };
+        let branch = reuse.clone().unwrap_or(branch);
         let worktree = worktree_root.join(&slug);
-        let added = match (checkout, local_checkout) {
-            (Some(b), Some(true)) => git::add_existing_worktree(&repo, &worktree, b)
+        let added = match (&reuse, checkout, local_checkout) {
+            (Some(_), _, _) => Ok(()),
+            (None, Some(b), Some(true)) => git::add_existing_worktree(&repo, &worktree, b)
                 .map_err(|e| checked_out_elsewhere(b, e)),
-            (Some(b), _) => git::add_tracking_worktree(&repo, &worktree, b, "origin")
+            (None, Some(b), _) => git::add_tracking_worktree(&repo, &worktree, b, "origin")
                 .map_err(|e| checked_out_elsewhere(b, e)),
-            (None, _) => git::add_worktree(&repo, &branch, &worktree, &base),
+            (None, None, _) => git::add_worktree(&repo, &branch, &worktree, &base),
         };
         if let Err(e) = added {
             self.store().delete_task(id)?;
@@ -1558,7 +1623,10 @@ impl Daemon {
             .set_task_location(id, &slug, &branch, &worktree.to_string_lossy())?;
         let warning = if diverged.is_some() {
             diverged
-        } else if params.push && new_branch.is_some() && git::remote_url(&repo, "origin").is_some()
+        } else if params.push
+            && new_branch.is_some()
+            && reuse.is_none()
+            && git::remote_url(&repo, "origin").is_some()
         {
             git::push_upstream(&worktree, "origin", &branch, &self.options.git_env)
                 .err()
@@ -1632,6 +1700,57 @@ impl Daemon {
         Ok(node_settings::worktrees_dir(&self.paths)?
             .join(owner)
             .join(repo_name))
+    }
+
+    /// Checks everything before removing anything, so a refused replace leaves the repository untouched.
+    fn clear_for_replace(
+        &self,
+        repo: &Path,
+        project_id: i64,
+        conflict: &worktree_conflict::Conflict,
+        branch: &str,
+    ) -> Result<()> {
+        let target = conflict.target.to_string_lossy();
+        let owners: Vec<String> = self
+            .store()
+            .tasks(Some(project_id), true)?
+            .into_iter()
+            .filter(|t| same_path(&t.worktree_path, &target) || t.branch == branch)
+            .map(|t| format!("{:?}", t.title))
+            .collect();
+        if !owners.is_empty() {
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                format!(
+                    "`{branch}` belongs to task {}; delete it first",
+                    owners.join(", ")
+                ),
+            ));
+        }
+        let registered = if conflict.target.exists() {
+            Some(
+                worktree_conflict::registered(repo, &conflict.target)?
+                    .ok_or_else(|| worktree_conflict::foreign(&conflict.target))?,
+            )
+        } else {
+            None
+        };
+        let elsewhere = git::worktrees(repo)?
+            .into_iter()
+            .any(|w| w.branch.as_deref() == Some(branch) && !same_path(&w.path, &target));
+        if elsewhere {
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                format!("branch `{branch}` is checked out in another worktree"),
+            ));
+        }
+        if registered.is_some() {
+            git::remove_worktree(repo, &conflict.target, true)?;
+        }
+        if conflict.branch_taken {
+            git::delete_branch(repo, branch)?;
+        }
+        Ok(())
     }
 
     /// Fetches `branch`; returns whether it exists locally (true) or only on origin (false), plus a warning when the local branch differs from a freshly fetched origin one.
@@ -1914,7 +2033,9 @@ impl Daemon {
         let repo = self.project_path(task.project_id)?;
         let worktree = Path::new(&task.worktree_path);
         let branch_exists = git::branch_exists(&repo, &task.branch);
+        let shared_with = self.worktree_sharers(&task)?;
         Ok(TaskDeleteCheck {
+            shared_with,
             dirty: worktree.exists() && git::is_dirty(worktree).unwrap_or(false),
             unmerged_commits: if branch_exists {
                 git::unmerged_commits(&repo, &self.effective_base(&repo, &task), &task.branch)
@@ -1939,15 +2060,17 @@ impl Daemon {
         }
         let mut warnings = Vec::new();
         let worktree = Path::new(&task.worktree_path);
-        if worktree.exists() {
-            if let Err(e) = git::remove_worktree(&repo, worktree, true) {
-                warnings.push(e.message);
+        if self.worktree_sharers(&task)?.is_empty() {
+            if worktree.exists() {
+                if let Err(e) = git::remove_worktree(&repo, worktree, true) {
+                    warnings.push(e.message);
+                }
             }
-        }
-        self.tidy_worktree_parents(task.project_id, &repo, worktree);
-        if delete_branch && git::branch_exists(&repo, &task.branch) {
-            if let Err(e) = git::delete_branch(&repo, &task.branch) {
-                warnings.push(e.message);
+            self.tidy_worktree_parents(task.project_id, &repo, worktree);
+            if delete_branch && git::branch_exists(&repo, &task.branch) {
+                if let Err(e) = git::delete_branch(&repo, &task.branch) {
+                    warnings.push(e.message);
+                }
             }
         }
         {
@@ -1968,18 +2091,33 @@ impl Daemon {
         })
     }
 
+    fn worktree_sharers(&self, task: &Task) -> Result<Vec<i64>> {
+        Ok(self
+            .store()
+            .tasks(Some(task.project_id), true)?
+            .into_iter()
+            .filter(|t| {
+                t.id != task.id
+                    && !t.worktree_path.is_empty()
+                    && same_path(&t.worktree_path, &task.worktree_path)
+            })
+            .map(|t| t.id)
+            .collect())
+    }
+
     pub fn project_worktrees(&self, project_id: i64) -> Result<Vec<Worktree>> {
         let repo = self.project_path(project_id)?;
         let tasks = self.store().tasks(Some(project_id), true)?;
         Ok(git::worktrees(&repo)?
             .into_iter()
             .map(|entry| {
-                let task = tasks
+                let owners: Vec<&Task> = tasks
                     .iter()
-                    .find(|t| same_path(&t.worktree_path, &entry.path));
+                    .filter(|t| same_path(&t.worktree_path, &entry.path))
+                    .collect();
                 Worktree {
-                    task_id: task.map(|t| t.id),
-                    base_branch: task.map(|t| t.base_branch.clone()),
+                    task_ids: owners.iter().map(|t| t.id).collect(),
+                    base_branch: owners.first().map(|t| t.base_branch.clone()),
                     path: entry.path,
                     head: entry.head,
                     branch: entry.branch,
@@ -2011,7 +2149,7 @@ impl Daemon {
                 format!("{path} is not a worktree of this project"),
             ));
         };
-        if worktree.is_main || worktree.task_id.is_some() {
+        if worktree.is_main || !worktree.task_ids.is_empty() {
             return Err(Error::new(
                 ErrorKind::InvalidParams,
                 format!("{path} is the main checkout or belongs to a task"),

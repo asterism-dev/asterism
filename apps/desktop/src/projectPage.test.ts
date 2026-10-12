@@ -23,7 +23,7 @@ const wt = (over: Partial<Worktree>): Worktree => ({
   is_main: false,
   locked: false,
   prunable: false,
-  task_id: null,
+  task_ids: [],
   base_branch: null,
   ...over,
 });
@@ -44,7 +44,7 @@ describe('project page', () => {
   });
 
   it('offers open only for linked and remove only for unlinked side worktrees', () => {
-    expect(worktreeActions(wt({ task_id: 4 }))).toEqual({ open: true, remove: false });
+    expect(worktreeActions(wt({ task_ids: [4] }))).toEqual({ open: true, remove: false });
     expect(worktreeActions(wt({ is_main: true }))).toEqual({ open: false, remove: false });
     expect(worktreeActions(wt({}))).toEqual({ open: false, remove: true });
   });

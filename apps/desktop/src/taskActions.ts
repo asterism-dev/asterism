@@ -18,15 +18,16 @@ export function restoreTask(task: Task) {
 export async function deleteTask(task: Task) {
   try {
     const check = await api.deleteCheck(task.id);
-    const dirtyNote = check.dirty
-      ? ' Its worktree has uncommitted changes, which will be lost.'
-      : '';
-    if (
-      !(await ask(`Delete "${task.title}"?${dirtyNote}`, { title: 'Delete task', kind: 'warning' }))
-    )
+    const shared = check.shared_with.length > 0;
+    const note = shared
+      ? ` Its worktree stays: ${check.shared_with.length} other task(s) use it.`
+      : check.dirty
+        ? ' Its worktree has uncommitted changes, which will be lost.'
+        : '';
+    if (!(await ask(`Delete "${task.title}"?${note}`, { title: 'Delete task', kind: 'warning' })))
       return;
     let deleteBranch = false;
-    if (check.branch_exists) {
+    if (check.branch_exists && !shared) {
       const unmerged = check.unmerged_commits
         ? ` It has ${check.unmerged_commits} commit(s) not on ${task.base_branch}.`
         : '';

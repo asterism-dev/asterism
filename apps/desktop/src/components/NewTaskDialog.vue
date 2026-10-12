@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { X } from '@lucide/vue';
-import { api, errorMessage } from '../api';
+import { api, errorMessage, RpcError } from '../api';
 import { baseChoice } from '../baseBranch';
 import { leaveSettings } from '../settingsGuard';
 import { matchAction } from '../shortcuts';
@@ -19,6 +19,14 @@ import type { IssueDetails, PrHit, ProjectBranches, TaskIssue, TaskSourceInfo } 
 import BasedOnPicker from './BasedOnPicker.vue';
 import Kbd from './Kbd.vue';
 import WorkspaceSettings from './WorkspaceSettings.vue';
+import WorktreeConflict from './WorktreeConflict.vue';
+import {
+  detectConflict,
+  keepChoice,
+  reloadsOnError,
+  replaceBlocked,
+  type ConflictChoice,
+} from '../worktreeConflict';
 
 const props = defineProps<{ projectId: number }>();
 const emit = defineEmits<{ close: [] }>();
@@ -51,8 +59,18 @@ const picker = ref<InstanceType<typeof BasedOnPicker>>();
 const branches = ref<ProjectBranches | null>(null);
 const loadingBranches = ref(false);
 const sources = ref<TaskSourceInfo[]>([]);
-const canCreate = computed(() =>
-  mode.value === 'checkout' ? !!checkout.value : baseChoice(branches.value).canCreate,
+const conflict = computed(() =>
+  detectConflict(branches.value, mode.value, branch.value, checkout.value),
+);
+const onConflict = ref<ConflictChoice>('reuse');
+watch(conflict, (c, old) => {
+  if (c) onConflict.value = c.name === old?.name ? keepChoice(c, onConflict.value) : 'reuse';
+});
+const replacing = computed(() => !!conflict.value && onConflict.value === 'replace');
+const canCreate = computed(
+  () =>
+    (mode.value === 'checkout' ? !!checkout.value : baseChoice(branches.value).canCreate) &&
+    !(replacing.value && conflict.value && replaceBlocked(conflict.value)),
 );
 
 async function loadBranches() {
@@ -188,6 +206,7 @@ async function submit() {
     return;
   }
   busy.value = true;
+  const sent = conflict.value ? onConflict.value : null;
   try {
     if (!(await leaveSettings())) return;
     const created = await api.createTask(
@@ -203,6 +222,7 @@ async function submit() {
         checkout: checkout.value,
         push: push.value,
         issue: kind.value === 'issue' ? issue.value : null,
+        onConflict: sent,
       }),
     );
     addTask(state, created.task);
@@ -214,6 +234,11 @@ async function submit() {
     emit('close');
   } catch (e) {
     error.value = errorMessage(e);
+    // The conflict appeared after the branches loaded; reload so the notice replaces the error.
+    if (e instanceof RpcError && reloadsOnError(e.kind, sent)) {
+      await loadBranches();
+      if (conflict.value) error.value = null;
+    }
   } finally {
     busy.value = false;
   }
@@ -321,10 +346,21 @@ async function submit() {
         @refresh="loadBranches"
       />
 
+      <WorktreeConflict
+        v-if="conflict"
+        v-model="onConflict"
+        :conflict="conflict"
+        @deleted="loadBranches"
+      />
       <p v-if="error" class="error">{{ error }}</p>
       <footer class="actions">
-        <button type="submit" class="primary" :disabled="busy || loadingBranches || !canCreate">
-          Create <Kbd action="confirm" />
+        <button
+          type="submit"
+          class="primary"
+          :class="{ replace: replacing }"
+          :disabled="busy || loadingBranches || !canCreate"
+        >
+          {{ replacing ? 'Replace & create' : 'Create' }} <Kbd action="confirm" />
         </button>
       </footer>
     </form>
@@ -403,5 +439,10 @@ header h2 {
 }
 .primary:disabled {
   opacity: 0.6;
+}
+.primary.replace,
+.primary.replace:hover:not(:disabled) {
+  background: var(--danger);
+  border-color: var(--danger);
 }
 </style>

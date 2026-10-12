@@ -1,3 +1,4 @@
+import type { ConflictChoice } from './worktreeConflict';
 export type SessionStatus = 'working' | 'idle' | 'waiting_input' | 'exited' | 'hibernated';
 export type SessionKind =
   { type: 'agent'; name: string } | { type: 'shell' } | { type: 'command'; argv: string[] };
@@ -37,6 +38,17 @@ export interface ProjectBranches {
   worktree_root: string | null;
   local: string[];
   remote: string[];
+  worktrees: BranchWorktree[];
+}
+export interface WorktreeTask {
+  id: number;
+  title: string;
+  archived: boolean;
+}
+export interface BranchWorktree {
+  dir: string;
+  branch: string | null;
+  tasks: WorktreeTask[];
 }
 export interface Task {
   id: number;
@@ -173,6 +185,7 @@ export interface TaskDeleteCheck {
   branch: string;
   branch_exists: boolean;
   unmerged_commits: number;
+  shared_with: number[];
 }
 export interface TaskDeleteResult {
   warning: string | null;
@@ -184,7 +197,7 @@ export interface Worktree {
   is_main: boolean;
   locked: boolean;
   prunable: boolean;
-  task_id: number | null;
+  task_ids: number[];
   base_branch: string | null;
 }
 export interface WorktreeSize {
@@ -221,6 +234,7 @@ export type TaskCreateRequest = {
   branch: string | null;
   checkout: string | null;
   push: boolean;
+  on_conflict: ConflictChoice | null;
 };
 export interface TaskFileResult {
   path: string;

@@ -189,6 +189,24 @@ pub struct ProjectBranches {
     /// Branches of `origin` as `origin/<branch>`, the only remote tasks check out from.
     #[serde(default)]
     pub remote: Vec<String>,
+    /// Lets clients spot an existing worktree before `task.create` fails on it.
+    #[serde(default)]
+    pub worktrees: Vec<BranchWorktree>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorktreeTask {
+    pub id: i64,
+    pub title: String,
+    pub archived: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BranchWorktree {
+    /// Relative to `worktree_root`, i.e. the branch name a new task would use for it.
+    pub dir: String,
+    pub branch: Option<String>,
+    pub tasks: Vec<WorktreeTask>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -200,7 +218,7 @@ pub struct Worktree {
     pub is_main: bool,
     pub locked: bool,
     pub prunable: bool,
-    pub task_id: Option<i64>,
+    pub task_ids: Vec<i64>,
     pub base_branch: Option<String>,
 }
 
@@ -613,6 +631,16 @@ pub struct TaskListParams {
     pub include_archived: bool,
 }
 
+/// What `task.create` does when the branch or its worktree directory already exists.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OnConflict {
+    Reuse,
+    /// Creates `<branch>-n` with the smallest free `n`.
+    Suffix,
+    Replace,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskCreateParams {
     pub project_id: i64,
@@ -634,6 +662,8 @@ pub struct TaskCreateParams {
     pub checkout: Option<String>,
     #[serde(default)]
     pub push: bool,
+    #[serde(default)]
+    pub on_conflict: Option<OnConflict>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -865,6 +895,9 @@ pub struct TaskDeleteCheck {
     pub branch_exists: bool,
     /// Commits on the branch that are not on its base branch.
     pub unmerged_commits: u32,
+    /// While non-empty, deleting keeps the worktree and branch for these tasks.
+    #[serde(default)]
+    pub shared_with: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

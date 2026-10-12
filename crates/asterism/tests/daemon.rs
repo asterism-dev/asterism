@@ -414,7 +414,8 @@ async fn delete_check_reports_dirty_and_unmerged_work() {
             dirty: false,
             branch: task.branch.clone(),
             branch_exists: true,
-            unmerged_commits: 0
+            unmerged_commits: 0,
+            shared_with: vec![],
         }
     );
 
@@ -912,7 +913,7 @@ async fn worktrees_cover_main_linked_and_foreign_checkouts() {
     assert!(list[0].is_main);
     let linked = list
         .iter()
-        .find(|w| w.task_id == Some(task.id))
+        .find(|w| w.task_ids == vec![task.id])
         .expect("task worktree is linked despite symlinked tmp paths");
     assert_eq!(
         linked.base_branch.as_deref(),
@@ -922,7 +923,10 @@ async fn worktrees_cover_main_linked_and_foreign_checkouts() {
         .iter()
         .find(|w| w.branch.as_deref() == Some("hand"))
         .unwrap();
-    assert_eq!((hand.task_id, hand.base_branch.as_ref()), (None, None));
+    assert_eq!(
+        (hand.task_ids.is_empty(), hand.base_branch.as_ref()),
+        (true, None)
+    );
 
     let sizes = env.daemon.project_worktree_sizes(project.id).unwrap();
     assert_eq!(sizes.len(), 3);

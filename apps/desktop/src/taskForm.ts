@@ -1,4 +1,5 @@
 import type { PrHit, TaskCreateRequest, TaskIssue } from './types';
+import type { ConflictChoice } from './worktreeConflict';
 
 const ADJECTIVES = [
   'two',
@@ -112,6 +113,7 @@ export interface TaskForm {
   checkout: string;
   push: boolean;
   issue: TaskIssue | null;
+  onConflict: ConflictChoice | null;
 }
 
 export function createRequest(f: TaskForm): TaskCreateRequest {
@@ -121,6 +123,7 @@ export function createRequest(f: TaskForm): TaskCreateRequest {
     prompt: (f.agent && f.prompt.trim()) || null,
     agent: f.agent || null,
     issue: f.issue,
+    on_conflict: f.onConflict,
   };
   return f.mode === 'checkout'
     ? { ...common, base: null, branch: null, checkout: f.checkout, push: false }
