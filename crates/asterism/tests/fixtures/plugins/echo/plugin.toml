@@ -12,6 +12,7 @@ id = "echo-forge"
 display_name = "Echo"
 hosts = ["echo.test"]
 pull_requests = true
+reviews = true
 
 [[provides.command]]
 name = "echo-cmd"

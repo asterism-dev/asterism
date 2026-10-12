@@ -1,4 +1,4 @@
-use asterism_proto::types::{PrListState, PullRequest, Visibility};
+use asterism_proto::types::{DiffSide, PrListState, PullRequest, ReviewEvent, Visibility};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -10,6 +10,15 @@ pub mod method {
     pub const INITIALIZE: &str = "initialize";
     pub const SETTINGS_CHANGED: &str = "settings.changed";
     pub const FORGE_STATUS: &str = "forge.status";
+    pub const FORGE_REVIEW_GET: &str = "forge.review.get";
+    pub const FORGE_REVIEW_COMMENT: &str = "forge.review.comment";
+    pub const FORGE_REVIEW_REPLY: &str = "forge.review.reply";
+    pub const FORGE_REVIEW_RESOLVE: &str = "forge.review.resolve";
+    pub const FORGE_REVIEW_SET_VIEWED: &str = "forge.review.set_viewed";
+    pub const FORGE_REVIEW_SUBMIT: &str = "forge.review.submit";
+    pub const FORGE_REVIEW_ADD_COMMENT: &str = "forge.review.add_comment";
+    pub const FORGE_CHECKS_LOG: &str = "forge.checks.log";
+    pub const FORGE_CHECKS_RERUN: &str = "forge.checks.rerun";
     pub const TASK_SOURCE_CHECK: &str = "task_source.check";
     pub const TASK_SOURCE_SEARCH: &str = "task_source.search";
     pub const TASK_SOURCE_GET: &str = "task_source.get";
@@ -164,4 +173,81 @@ pub struct SearchPullRequestsParams {
     pub query: String,
     #[serde(default)]
     pub state: PrListState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrRef {
+    pub forge: String,
+    pub project_path: String,
+    pub number: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ForgeCommentMode {
+    Single,
+    Review,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewGetForgeParams {
+    #[serde(flatten)]
+    pub pr: PrRef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewCommentForgeParams {
+    #[serde(flatten)]
+    pub pr: PrRef,
+    pub path: String,
+    pub line: u32,
+    pub side: DiffSide,
+    pub body: String,
+    pub mode: ForgeCommentMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewReplyForgeParams {
+    #[serde(flatten)]
+    pub pr: PrRef,
+    pub thread_id: String,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewResolveForgeParams {
+    #[serde(flatten)]
+    pub pr: PrRef,
+    pub thread_id: String,
+    pub resolved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewViewedForgeParams {
+    #[serde(flatten)]
+    pub pr: PrRef,
+    pub path: String,
+    pub viewed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewSubmitForgeParams {
+    #[serde(flatten)]
+    pub pr: PrRef,
+    pub event: ReviewEvent,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewAddCommentForgeParams {
+    #[serde(flatten)]
+    pub pr: PrRef,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CheckForgeParams {
+    #[serde(flatten)]
+    pub pr: PrRef,
+    pub check_id: String,
 }

@@ -15,6 +15,19 @@ pub mod method {
     pub const TASK_CREATE: &str = "task.create";
     pub const TASK_ARCHIVE: &str = "task.archive";
     pub const TASK_DIFF: &str = "task.diff";
+    pub const REVIEW_GET: &str = "review.get";
+    pub const REVIEW_COMMENT: &str = "review.comment";
+    pub const REVIEW_REPLY: &str = "review.reply";
+    pub const REVIEW_RESOLVE: &str = "review.resolve";
+    pub const REVIEW_SET_VIEWED: &str = "review.set_viewed";
+    pub const REVIEW_SUBMIT: &str = "review.submit";
+    pub const REVIEW_PUBLISH: &str = "review.publish";
+    pub const REVIEW_PROMPT: &str = "review.prompt";
+    pub const REVIEW_COMMITS: &str = "review.commits";
+    pub const REVIEW_COMMIT_DIFF: &str = "review.commit_diff";
+    pub const REVIEW_ADD_COMMENT: &str = "review.add_comment";
+    pub const REVIEW_CHECK_LOG: &str = "review.check_log";
+    pub const REVIEW_CHECK_RERUN: &str = "review.check_rerun";
     pub const TASK_FILE: &str = "task.file";
     pub const TASK_RESTORE: &str = "task.restore";
     pub const TASK_DELETE_CHECK: &str = "task.delete_check";
@@ -864,6 +877,287 @@ pub struct TaskDiffResult {
     pub patch: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffSide {
+    Old,
+    New,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewSource {
+    Pr,
+    Local,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CommentTarget {
+    Local,
+    Single,
+    Review,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewEvent {
+    Comment,
+    Approve,
+    RequestChanges,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewComment {
+    pub id: String,
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewThread {
+    pub id: String,
+    pub path: String,
+    pub line: u32,
+    pub side: DiffSide,
+    pub outdated: bool,
+    pub resolved: bool,
+    #[serde(default)]
+    pub local: bool,
+    #[serde(default)]
+    pub pending: bool,
+    pub comments: Vec<ReviewComment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PendingReview {
+    pub id: String,
+    pub comments: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForgeReview {
+    pub head_sha: String,
+    pub base_sha: String,
+    /// A ref `git fetch origin <head_ref>` can fetch, also for forks.
+    pub head_ref: String,
+    pub threads: Vec<ReviewThread>,
+    pub conversation: Vec<ConversationItem>,
+    pub viewed_files: Vec<String>,
+    pub pending_review: Option<PendingReview>,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub body: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub checks: Vec<CheckRun>,
+    /// Commit sha → the forge's combined check state for it (lowercase).
+    #[serde(default)]
+    pub commit_checks: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewGetParams {
+    pub task_id: i64,
+    pub source: ReviewSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewResult {
+    pub source: ReviewSource,
+    pub pr: Option<u64>,
+    pub reviews_supported: bool,
+    pub patch: String,
+    pub threads: Vec<ReviewThread>,
+    pub conversation: Vec<ConversationItem>,
+    pub viewed_files: Vec<String>,
+    pub pending_review: Option<PendingReview>,
+    /// The worktree differs from the pull request head (PR source only).
+    pub local_ahead: bool,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub body: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub checks: Vec<CheckRun>,
+    /// Commit sha → the forge's combined check state for it (lowercase).
+    #[serde(default)]
+    pub commit_checks: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewCommentParams {
+    pub task_id: i64,
+    pub source: ReviewSource,
+    pub path: String,
+    pub line: u32,
+    pub side: DiffSide,
+    pub body: String,
+    pub target: CommentTarget,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewReplyParams {
+    pub task_id: i64,
+    pub thread_id: String,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewResolveParams {
+    pub task_id: i64,
+    pub thread_id: String,
+    pub resolved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewViewedParams {
+    pub task_id: i64,
+    pub source: ReviewSource,
+    pub path: String,
+    pub viewed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewSubmitParams {
+    pub task_id: i64,
+    pub event: ReviewEvent,
+    #[serde(default)]
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewPublishParams {
+    pub task_id: i64,
+    pub thread_id: String,
+    pub target: CommentTarget,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewPromptParams {
+    pub task_id: i64,
+    pub source: ReviewSource,
+    /// `None` means every thread (open ones unless `include_resolved`).
+    #[serde(default)]
+    pub thread_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub include_resolved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewPromptResult {
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckStatus {
+    Queued,
+    Running,
+    Done,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CheckRun {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub workflow: String,
+    pub status: CheckStatus,
+    /// Lowercase forge value once done, e.g. `success` or `failure`.
+    #[serde(default)]
+    pub conclusion: Option<String>,
+    #[serde(default)]
+    pub started_at: Option<String>,
+    #[serde(default)]
+    pub completed_at: Option<String>,
+    pub url: String,
+    #[serde(default)]
+    pub has_log: bool,
+    #[serde(default)]
+    pub rerunnable: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationKind {
+    Comment,
+    Review,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConversationItem {
+    pub id: String,
+    pub kind: ConversationKind,
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+    /// Reviews only: `approved`, `changes_requested`, `commented` or `dismissed`.
+    #[serde(default)]
+    pub state: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CheckLog {
+    pub text: String,
+    pub truncated: bool,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewCommit {
+    pub sha: String,
+    pub short: String,
+    pub subject: String,
+    pub author: String,
+    /// Author date, ISO 8601 with offset.
+    pub date: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewCommitsParams {
+    pub task_id: i64,
+    pub source: ReviewSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewCommitsResult {
+    /// Newest first.
+    pub commits: Vec<ReviewCommit>,
+    /// The worktree has changes that are not committed (Local source only).
+    pub uncommitted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewCommitDiffParams {
+    pub task_id: i64,
+    pub source: ReviewSource,
+    /// `None` means the uncommitted changes of the worktree.
+    #[serde(default)]
+    pub sha: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewAddCommentParams {
+    pub task_id: i64,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewCheckParams {
+    pub task_id: i64,
+    pub check_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskFileParams {
     pub task_id: i64,
@@ -1120,6 +1414,8 @@ pub enum Event {
         task_id: i64,
         pr: Option<PullRequest>,
     },
+    #[serde(rename = "review.changed")]
+    ReviewChanged { task_id: i64 },
     #[serde(rename = "subagent.started")]
     SubagentStarted { session_id: i64, subagent: Subagent },
     #[serde(rename = "subagent.updated")]

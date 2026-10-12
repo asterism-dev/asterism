@@ -3,6 +3,9 @@ import type {
   AgentConfig,
   AgentConfigRaw,
   AgentInfo,
+  CheckLog,
+  CommentTarget,
+  DiffSide,
   CapabilityKind,
   PluginDetails,
   PluginInfo,
@@ -26,6 +29,10 @@ import type {
   ProjectBranches,
   ProjectCreateResult,
   RemoteTarget,
+  ReviewCommitsResult,
+  ReviewEvent,
+  ReviewResult,
+  ReviewSource,
   Session,
   SessionAttachResult,
   SessionKind,
@@ -38,7 +45,6 @@ import type {
   TaskSourceInfo,
   TaskDeleteCheck,
   TaskDeleteResult,
-  TaskDiffResult,
   TaskFileResult,
   Worktree,
   WorktreeSize,
@@ -154,12 +160,46 @@ export const api = {
     call<void>('project.worktree_remove', { project_id: projectId, path }),
   pruneWorktrees: (projectId: number) =>
     call<void>('project.worktree_prune', { project_id: projectId }),
-  diff: (taskId: number) => call<TaskDiffResult>('task.diff', { task_id: taskId }),
   file: (taskId: number, path: string, knownMtime: number | null = null) =>
     call<TaskFileResult>('task.file', { task_id: taskId, path, known_mtime: knownMtime }),
   sessions: () => call<Session[]>('session.list'),
-  startSession: (taskId: number, kind: SessionKind) =>
-    call<Session>('session.start', { task_id: taskId, kind }),
+  startSession: (taskId: number, kind: SessionKind, prompt?: string) =>
+    call<Session>('session.start', { task_id: taskId, kind, prompt: prompt ?? null }),
+  sendPrompt: (sessionId: number, text: string) =>
+    call<null>('session.send', { session_id: sessionId, text, submit: true }),
+  review: (taskId: number, source: ReviewSource) =>
+    call<ReviewResult>('review.get', { task_id: taskId, source }),
+  reviewComment: (p: {
+    task_id: number;
+    source: ReviewSource;
+    path: string;
+    line: number;
+    side: DiffSide;
+    body: string;
+    target: CommentTarget;
+  }) => call<null>('review.comment', p),
+  reviewReply: (taskId: number, threadId: string, body: string) =>
+    call<null>('review.reply', { task_id: taskId, thread_id: threadId, body }),
+  reviewResolve: (taskId: number, threadId: string, resolved: boolean) =>
+    call<null>('review.resolve', { task_id: taskId, thread_id: threadId, resolved }),
+  reviewSetViewed: (taskId: number, source: ReviewSource, path: string, viewed: boolean) =>
+    call<null>('review.set_viewed', { task_id: taskId, source, path, viewed }),
+  reviewSubmit: (taskId: number, event: ReviewEvent, body: string) =>
+    call<null>('review.submit', { task_id: taskId, event, body }),
+  reviewPublish: (taskId: number, threadId: string, target: CommentTarget) =>
+    call<null>('review.publish', { task_id: taskId, thread_id: threadId, target }),
+  reviewPrompt: (taskId: number, source: ReviewSource, threadIds: string[]) =>
+    call<{ prompt: string }>('review.prompt', { task_id: taskId, source, thread_ids: threadIds }),
+  reviewCommits: (taskId: number, source: ReviewSource) =>
+    call<ReviewCommitsResult>('review.commits', { task_id: taskId, source }),
+  reviewCommitDiff: (taskId: number, source: ReviewSource, sha: string | null) =>
+    call<{ patch: string }>('review.commit_diff', { task_id: taskId, source, sha }),
+  reviewAddComment: (taskId: number, body: string) =>
+    call<null>('review.add_comment', { task_id: taskId, body }),
+  reviewCheckLog: (taskId: number, checkId: string) =>
+    call<CheckLog>('review.check_log', { task_id: taskId, check_id: checkId }),
+  reviewCheckRerun: (taskId: number, checkId: string) =>
+    call<null>('review.check_rerun', { task_id: taskId, check_id: checkId }),
   killSession: (sessionId: number) => call<null>('session.kill', { session_id: sessionId }),
   send,
   resize: (sessionId: number, rows: number, cols: number) =>

@@ -24,7 +24,7 @@ import { keys, read, remove, write } from './storage';
 
 export type { Placement };
 
-const TITLES: Record<ToolPane, string> = { diff: 'Diff', activity: 'Activity Monitor' };
+const TITLES: Record<ToolPane, string> = { diff: 'Review', activity: 'Activity Monitor' };
 
 // A session's placement is chosen before the daemon returns its id, so it waits here until its panel is added.
 const placements = new Map<number, Placement>();

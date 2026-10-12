@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use asterism_proto::types::{IssueRef, Project, Session, SessionKind, SessionStatus, Task};
+use asterism_proto::types::{
+    DiffSide, IssueRef, Project, Session, SessionKind, SessionStatus, Task,
+};
 use rusqlite::types::Type;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::de::DeserializeOwned;
@@ -45,6 +47,26 @@ const MIGRATIONS: &[&str] = &[
      ALTER TABLE tasks ADD COLUMN issue_key TEXT;
      ALTER TABLE tasks ADD COLUMN issue_url TEXT;",
     "ALTER TABLE projects ADD COLUMN default_base TEXT;",
+    "CREATE TABLE review_comments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        thread_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        line INTEGER NOT NULL,
+        side TEXT NOT NULL,
+        line_text TEXT NOT NULL,
+        body TEXT NOT NULL,
+        resolved INTEGER NOT NULL DEFAULT 0,
+        published INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+     );
+     CREATE INDEX review_comments_task ON review_comments(task_id);
+     CREATE TABLE review_viewed (
+        task_id INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        PRIMARY KEY (task_id, path)
+     );",
 ];
 
 const PROJECT_COLUMNS: &str = "id, name, path, created_at, default_base";
@@ -56,6 +78,27 @@ const SESSION_COLUMNS: &str = "id, task_id, kind, status, agent_ref";
 pub struct StoredSession {
     pub session: Session,
     pub agent_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredReviewComment {
+    pub id: i64,
+    pub thread_id: String,
+    pub path: String,
+    pub line: u32,
+    pub side: DiffSide,
+    pub line_text: String,
+    pub body: String,
+    pub resolved: bool,
+    pub published: bool,
+    pub created_at: i64,
+}
+
+fn side_str(side: DiffSide) -> &'static str {
+    match side {
+        DiffSide::Old => "old",
+        DiffSide::New => "new",
+    }
 }
 
 pub struct Store {
@@ -184,8 +227,119 @@ impl Store {
     }
 
     pub fn delete_task(&self, id: i64) -> rusqlite::Result<()> {
+        self.conn
+            .execute("DELETE FROM review_comments WHERE task_id = ?1", [id])?;
+        self.conn
+            .execute("DELETE FROM review_viewed WHERE task_id = ?1", [id])?;
         self.conn.execute("DELETE FROM tasks WHERE id = ?1", [id])?;
         Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_review_comment(
+        &self,
+        task_id: i64,
+        thread_id: Option<&str>,
+        path: &str,
+        line: u32,
+        side: DiffSide,
+        line_text: &str,
+        body: &str,
+    ) -> rusqlite::Result<String> {
+        self.conn.execute(
+            "INSERT INTO review_comments (task_id, thread_id, path, line, side, line_text, body, created_at)
+             VALUES (?1, COALESCE(?2, ''), ?3, ?4, ?5, ?6, ?7, unixepoch())",
+            params![task_id, thread_id, path, line, side_str(side), line_text, body],
+        )?;
+        let id = self.conn.last_insert_rowid();
+        match thread_id {
+            Some(thread) => Ok(thread.to_string()),
+            None => {
+                let thread = format!("local-{id}");
+                self.conn.execute(
+                    "UPDATE review_comments SET thread_id = ?1 WHERE id = ?2",
+                    params![thread, id],
+                )?;
+                Ok(thread)
+            }
+        }
+    }
+
+    pub fn review_comments(&self, task_id: i64) -> rusqlite::Result<Vec<StoredReviewComment>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, thread_id, path, line, side, line_text, body, resolved, published, created_at
+             FROM review_comments WHERE task_id = ?1 ORDER BY id",
+        )?;
+        let rows = stmt.query_map([task_id], |row| {
+            Ok(StoredReviewComment {
+                id: row.get(0)?,
+                thread_id: row.get(1)?,
+                path: row.get(2)?,
+                line: row.get(3)?,
+                side: if row.get::<_, String>(4)? == "old" {
+                    DiffSide::Old
+                } else {
+                    DiffSide::New
+                },
+                line_text: row.get(5)?,
+                body: row.get(6)?,
+                resolved: row.get(7)?,
+                published: row.get(8)?,
+                created_at: row.get(9)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn set_review_thread_resolved(
+        &self,
+        task_id: i64,
+        thread_id: &str,
+        resolved: bool,
+    ) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "UPDATE review_comments SET resolved = ?3 WHERE task_id = ?1 AND thread_id = ?2",
+            params![task_id, thread_id, resolved],
+        )
+    }
+
+    pub fn set_review_thread_published(
+        &self,
+        task_id: i64,
+        thread_id: &str,
+    ) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "UPDATE review_comments SET published = 1 WHERE task_id = ?1 AND thread_id = ?2",
+            params![task_id, thread_id],
+        )
+    }
+
+    pub fn set_review_viewed(
+        &self,
+        task_id: i64,
+        path: &str,
+        hash: Option<&str>,
+    ) -> rusqlite::Result<()> {
+        match hash {
+            Some(hash) => self.conn.execute(
+                "INSERT INTO review_viewed (task_id, path, content_hash) VALUES (?1, ?2, ?3)
+                 ON CONFLICT (task_id, path) DO UPDATE SET content_hash = excluded.content_hash",
+                params![task_id, path, hash],
+            ),
+            None => self.conn.execute(
+                "DELETE FROM review_viewed WHERE task_id = ?1 AND path = ?2",
+                params![task_id, path],
+            ),
+        }
+        .map(|_| ())
+    }
+
+    pub fn review_viewed(&self, task_id: i64) -> rusqlite::Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT path, content_hash FROM review_viewed WHERE task_id = ?1 ORDER BY path",
+        )?;
+        let rows = stmt.query_map([task_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
     }
 
     pub fn touch_task(&self, id: i64) -> rusqlite::Result<()> {
@@ -362,7 +516,7 @@ fn session_row(row: &Row) -> rusqlite::Result<StoredSession> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use asterism_proto::types::{SessionKind, SessionStatus};
+    use asterism_proto::types::{DiffSide, SessionKind, SessionStatus};
 
     #[test]
     fn upgrading_keeps_tasks_and_adds_issue_columns() {
@@ -421,6 +575,54 @@ mod tests {
         store.set_task_archived(id).unwrap();
         assert!(store.tasks(Some(p.id), false).unwrap().is_empty());
         assert_eq!(store.tasks(None, true).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn review_comments_group_into_threads_and_go_with_their_task() {
+        let store = Store::open_in_memory().unwrap();
+        let project = store.add_project("p", "/p").unwrap();
+        let task = store.insert_task(project.id, "t", None, "main").unwrap();
+        let thread = store
+            .add_review_comment(task, None, "a.rs", 3, DiffSide::New, "let x = 1;", "first")
+            .unwrap();
+        assert!(thread.starts_with("local-"));
+        store
+            .add_review_comment(
+                task,
+                Some(&thread),
+                "a.rs",
+                3,
+                DiffSide::New,
+                "let x = 1;",
+                "reply",
+            )
+            .unwrap();
+        let all = store.review_comments(task).unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(all
+            .iter()
+            .all(|c| c.thread_id == thread && !c.resolved && !c.published));
+        assert_eq!(
+            store
+                .set_review_thread_resolved(task, &thread, true)
+                .unwrap(),
+            2
+        );
+        assert_eq!(store.set_review_thread_published(task, &thread).unwrap(), 2);
+        let all = store.review_comments(task).unwrap();
+        assert!(all.iter().all(|c| c.resolved && c.published));
+        store.set_review_viewed(task, "a.rs", Some("abc")).unwrap();
+        store.set_review_viewed(task, "a.rs", Some("def")).unwrap();
+        assert_eq!(
+            store.review_viewed(task).unwrap(),
+            vec![("a.rs".into(), "def".into())]
+        );
+        store.set_review_viewed(task, "a.rs", None).unwrap();
+        assert!(store.review_viewed(task).unwrap().is_empty());
+        store.set_review_viewed(task, "b.rs", Some("x")).unwrap();
+        store.delete_task(task).unwrap();
+        assert!(store.review_comments(task).unwrap().is_empty());
+        assert!(store.review_viewed(task).unwrap().is_empty());
     }
 
     #[test]

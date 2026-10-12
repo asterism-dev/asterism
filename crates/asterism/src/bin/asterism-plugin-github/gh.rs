@@ -20,7 +20,7 @@ const STATUS_BUDGET: Duration = Duration::from_secs(15);
 const MESSAGE_LIMIT: usize = 2_000;
 const ISSUE_LIMIT: &str = "50";
 // Stays under the daemon's 20 s call cap.
-const ISSUE_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) const ISSUE_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn truncate(message: &str) -> String {
     let trimmed = message.trim();
@@ -86,7 +86,7 @@ fn wait_with_timeout(
     }
 }
 
-fn run_with_timeout(
+pub(crate) fn run_with_timeout(
     gh: &Path,
     args: &[&str],
     timeout: Duration,
@@ -318,7 +318,7 @@ pub fn origin_repo(project: &Path) -> Result<String, RpcError> {
         .ok_or_else(|| RpcError::new(ErrorKind::NotFound, "project has no GitHub repository"))
 }
 
-fn parse<T: serde::de::DeserializeOwned>(out: &str) -> Result<T, RpcError> {
+pub(crate) fn parse<T: serde::de::DeserializeOwned>(out: &str) -> Result<T, RpcError> {
     serde_json::from_str(out)
         .map_err(|e| RpcError::new(ErrorKind::Internal, format!("unexpected gh output: {e}")))
 }

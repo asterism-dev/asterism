@@ -21,7 +21,7 @@
 
 - Projects and tasks with their own branch and worktree
 - Persistent agent sessions (Claude Code) and shells, run by a background daemon that survives quitting the app
-- Live session status, a diff of each task's changes and pull request status in the sidebar
+- Live session status, a review pane for each task's changes and pull request status in the sidebar
 - Tasks created from GitHub pull requests and issues or Linear issues
 - Plugins for forges, agents and task sources, installable from stores
 

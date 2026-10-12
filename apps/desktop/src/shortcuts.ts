@@ -63,7 +63,7 @@ export const ACTIONS: Record<ActionId, { title: string; mac: Binding; other: Bin
     other: key('KeyB', 'B', CTRL_SHIFT),
   },
   toggleDiff: {
-    title: 'Toggle diff',
+    title: 'Toggle review',
     mac: key('KeyB', 'B', { meta: true, alt: true }),
     other: key('KeyB', 'B', { ...CTRL_SHIFT, alt: true }),
   },

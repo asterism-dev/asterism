@@ -8,7 +8,7 @@ tasks, and keep running after you close the window or quit the app if you choose
 
 - When you [create a task](projects-and-tasks.md#create-a-task), its first session starts automatically.
 - Click **+** (**New tab**) in a tab bar of the task's workspace and choose an agent, **Terminal**,
-  **Terminal below** or **Terminal right**. The same menu reopens **Diff** or **Activity Monitor** if they are
+  **Terminal below** or **Terminal right**. The same menu reopens **Review** or **Activity Monitor** if they are
   closed.
 - In an empty workspace, click **New session**.
 - Right-click a task in the sidebar and choose **New *agent* session** or **New shell**.
@@ -82,16 +82,106 @@ last.
 The top bar also shows the project and branch of the selected task; click the branch to copy its name.
 **Reveal worktree** opens the worktree in Finder.
 
-## Diff
+## Review
 
-![The diff pane](../assets/screenshots/diff-light.png#only-light)
-![The diff pane](../assets/screenshots/diff-dark.png#only-dark)
+![The review pane](../assets/screenshots/diff-light.png#only-light)
+![The review pane](../assets/screenshots/diff-dark.png#only-dark)
 
-**Diff** (top bar, or ++cmd+alt+b++) shows the task's changes against its base branch: everything since the
+**Review** (top bar, or ++cmd+alt+b++) shows the task's changes against its base branch: everything since the
 branch point, including uncommitted and untracked files. It reloads when the task's sessions stop working; click
-**Refresh** to reload it yourself. **Side by side** switches between unified and split view.
+**Refresh** to reload it yourself.
 
 CLI: `asterism task diff [ID]`.
+
+### Header
+
+The header shows the pull request's title and number, with **↗** to open it in the browser (for a task without a
+pull request it shows the task title). When the task has a pull request on a forge that supports reviews, a
+`PR #N` | **Local** toggle appears. **PR** shows the pull request's diff, conversation and checks; **Local**
+shows the worktree. A hint appears when the worktree differs from the PR head, for example because of unpushed
+commits.
+
+In **PR** mode a bar above the tabs shows how many comments are pending in your review and offers **Review
+changes** (**Finish review** once a review is pending). It opens a body field with **Comment**, **Approve** and
+**Request changes**.
+
+The tabs below are **Conversation**, **Commits**, **Checks** (PR mode only) and **Files changed**, each with a
+count. Asterism remembers the last tab per task until the app quits. The `+` / `−` totals on the right summarize the diff. In PR mode
+the pane polls the forge every 15 seconds while any check is queued or running, otherwise every minute.
+
+### Conversation
+
+Shows the pull request description followed by a timeline of comments, review events (approved, requested changes,
+reviewed) and code threads. A code thread shows the file and line, an excerpt of the diff around it, and the
+thread itself (outdated threads have no excerpt). Filter threads with **open**, **resolved**, **local** or
+**all**; the comments and review events appear under **all** only. In PR mode, a field at the bottom posts a
+general comment on the pull request.
+
+### Commits
+
+Lists the commits of the branch grouped by day, each with its author, time, short SHA and, in PR mode, its check
+state (✓ passed, ✗ failed, ● pending). In **Local** mode an **Uncommitted changes** entry comes first. Click a
+commit to open its diff, read-only, in **Files changed** (no comments, viewed flags or **Send to agent**). Click
+**Show all changes** in the banner to return to the full diff.
+
+### Checks
+
+Lists the pull request's checks with their status, duration and **↗** to open the check in the browser. The
+heading summarizes them (for example "2 failing" or "All checks passed"). Click a check to read its log:
+
+- Steps are collapsible. Failed steps start open; if nothing failed, only the last step does.
+- Logs are cut to the last 1 MB, which the viewer says.
+- A check that is still running has no log yet; wait for it to finish or use **Open in browser ↗**.
+
+A failed GitHub Actions job has **Re-run**, which turns into **Re-run requested** until the check changes state.
+**→ Agent** on a failed check, or in the log viewer, sends the failing part of the log through the send dialog
+(see below), where you can edit the prompt.
+
+### Files changed
+
+A file tree on the left lists the changed files with status icons (added, modified, deleted, renamed), the number of
+comments per file and **✓** for viewed files; type in **Filter files…** to narrow it, and click a file to jump to
+its diff. **Side by side** switches between unified and split view. Files with more than 1000 changed lines, and
+every file after the first 30, start collapsed; click one to expand it.
+
+#### Viewed files
+
+The tree shows how many files you have viewed (**N / M viewed**). Check **Viewed** on a file to mark it and collapse
+it. In **PR** mode this syncs with GitHub's viewed flag. In **Local** mode it is stored on your machine and resets
+when that file's diff changes.
+
+#### Comments
+
+Click **+** on a diff line to comment.
+
+- In **PR** mode you can choose **Local comment** (kept in Asterism only), **Comment** (posted to the pull
+  request immediately) or **Start a review** (a pending comment). Once a review is pending, the last option
+  reads **Add review comment**.
+- In **Local** mode there is a single **Comment** button.
+
+Threads carry badges (local, pending, outdated, resolved) and offer **Reply**, **Resolve** / **Unresolve**,
+**Publish** (turns a local thread into a pull request comment, or adds it to your pending review; PR mode only), **→ Agent** and a checkbox to
+select the thread.
+
+### Send to agent
+
+Use **→ Agent** on a thread, file or failed check, or **Send to agent (N)** in the Files changed toolbar for the
+selected threads. With nothing selected, N is the number of open threads and all of them are sent. In the dialog,
+pick an existing agent session of the task or start a new session (and choose its agent), and edit the prompt
+before sending. Asterism warns when any agent session in the task is working, because parallel edits in one
+worktree can conflict.
+
+CLI:
+
+```sh
+asterism review comments [--task ID] [--all] [--local] [--json]
+asterism review checks [--task ID] [--log CHECK_ID] [--json]
+```
+
+`review comments` prints the task's open review threads as a prompt for an agent; `--all` includes resolved
+threads, `--local` reads comments against the worktree instead of the pull request, and `--json` prints the
+threads instead. `review checks` lists the pull request's checks, each with its id in brackets (`--json` prints them as JSON), and
+fails when the task has no pull request; `--log CHECK_ID` prints one check's log instead. `--task` defaults to `ASTERISM_TASK`.
 
 ## File tabs
 

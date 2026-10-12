@@ -211,3 +211,27 @@ pub fn daemon_with_stores(home: &Path) -> (Paths, std::sync::Arc<asterism_core::
     let daemon = asterism_core::daemon::Daemon::with_options(paths.clone(), options).unwrap();
     (paths, daemon)
 }
+
+pub fn call(node: &Node, method: &str, params: serde_json::Value) -> serde_json::Value {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let client =
+                asterism_proto::client::Client::connect_unix(&node.home().join("asterismd.sock"))
+                    .await
+                    .unwrap();
+            let _: asterism_proto::types::HelloResult = client
+                .call(
+                    asterism_proto::types::method::HELLO,
+                    asterism_proto::types::HelloParams {
+                        proto_version: asterism_proto::PROTO_VERSION,
+                        client_kind: asterism_proto::types::ClientKind::Cli,
+                    },
+                )
+                .await
+                .unwrap();
+            client.call(method, params).await.unwrap()
+        })
+}

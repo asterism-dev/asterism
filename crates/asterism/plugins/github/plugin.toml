@@ -12,6 +12,7 @@ id = "github"
 display_name = "GitHub"
 hosts = ["github.com"]
 pull_requests = true
+reviews = true
 
 [[provides.task_source]]
 id = "github-issues"

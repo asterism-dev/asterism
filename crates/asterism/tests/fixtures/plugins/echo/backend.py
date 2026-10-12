@@ -55,7 +55,7 @@ def handle(request):
         if mode == "hang-init":
             time.sleep(60)
         record("init " + json.dumps(params.get("settings", {}), sort_keys=True))
-        caps = [c for c in os.environ.get("FIXTURE_CAPS", "command,forge,task_source,pull_requests").split(",") if c]
+        caps = [c for c in os.environ.get("FIXTURE_CAPS", "command,forge,task_source,pull_requests,reviews").split(",") if c]
         result = {"capabilities": caps}
     elif method == "forge.status":
         result = {"available": True, "authenticated": True, "account": "me", "owners": ["acme"], "error": None}
@@ -92,6 +92,54 @@ def handle(request):
         record("search " + params.get("state", "open") + " " + params.get("query", ""))
         result = [{"number": 7, "title": "Add search", "url": "https://echo.test/pr/7", "author": "octo",
                    "head_branch": "feature/search", "draft": False, "from_fork": False}]
+    elif method.startswith("forge.review."):
+        record("review " + method[len("forge.review."):] + " " + json.dumps(params, sort_keys=True))
+        path = os.environ.get("FIXTURE_REVIEW")
+        data = json.load(open(path)) if path and os.path.exists(path) else None
+        if data is None or "error" in data:
+            error(rid, -32008, "plugin_error", (data or {}).get("error", "no review fixture"))
+            return
+        kind = method[len("forge.review."):]
+        if kind == "comment":
+            data["threads"].append({"id": "F%d" % (len(data["threads"]) + 1), "path": params["path"],
+                                    "line": params["line"], "side": params["side"], "outdated": False,
+                                    "resolved": False, "pending": params["mode"] == "review",
+                                    "comments": [{"id": "c", "author": "me", "body": params["body"], "created_at": ""}]})
+            if params["mode"] == "review":
+                data["pending_review"] = {"id": "R1", "comments": sum(t["pending"] for t in data["threads"])}
+        elif kind == "resolve":
+            for t in data["threads"]:
+                if t["id"] == params["thread_id"]:
+                    t["resolved"] = params["resolved"]
+        elif kind == "set_viewed":
+            files = set(data["viewed_files"])
+            (files.add if params["viewed"] else files.discard)(params["path"])
+            data["viewed_files"] = sorted(files)
+        elif kind == "add_comment":
+            data["conversation"].append({"id": "I%d" % (len(data["conversation"]) + 1), "kind": "comment",
+                                         "author": "me", "body": params["body"], "created_at": "", "state": None})
+        elif kind == "submit":
+            data["pending_review"] = None
+            for t in data["threads"]:
+                t["pending"] = False
+        if kind != "get":
+            json.dump(data, open(path, "w"))
+        result = data if kind == "get" else None
+    elif method.startswith("forge.checks."):
+        kind = method[len("forge.checks."):]
+        record("checks " + kind + " " + json.dumps(params, sort_keys=True))
+        path = os.environ.get("FIXTURE_REVIEW")
+        data = json.load(open(path)) if path and os.path.exists(path) else {}
+        check = next((c for c in data.get("checks", []) if c["id"] == params["check_id"]), None)
+        if check is None or (kind == "log" and params["check_id"] not in data.get("logs", {})):
+            error(rid, -32008, "plugin_error", "no log for " + params["check_id"])
+            return
+        if kind == "log":
+            result = {"text": data["logs"][params["check_id"]], "truncated": False, "url": check["url"]}
+        else:
+            check["status"], check["conclusion"] = "queued", None
+            json.dump(data, open(path, "w"))
+            result = None
     elif method == "echo.sleep":
         time.sleep(params.get("ms", 0) / 1000)
         result = params
