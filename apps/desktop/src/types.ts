@@ -37,6 +37,17 @@ export interface ProjectBranches {
   worktree_root: string | null;
   local: string[];
   remote: string[];
+  worktrees: BranchWorktree[];
+}
+export interface WorktreeTask {
+  id: number;
+  title: string;
+  archived: boolean;
+}
+export interface BranchWorktree {
+  dir: string;
+  branch: string | null;
+  tasks: WorktreeTask[];
 }
 export interface Task {
   id: number;

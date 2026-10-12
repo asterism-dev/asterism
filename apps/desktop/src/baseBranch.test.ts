@@ -11,6 +11,7 @@ const branches = (over: Partial<ProjectBranches> = {}): ProjectBranches => ({
   worktree_root: null,
   local: [],
   remote: [],
+  worktrees: [],
   ...over,
 });
 

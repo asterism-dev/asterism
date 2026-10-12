@@ -743,3 +743,53 @@ async fn shared_worktrees_survive_until_their_last_task_is_deleted() {
         "feature/x"
     ));
 }
+
+#[tokio::test]
+async fn branches_list_worktrees_under_the_root_with_their_tasks() {
+    let env = setup();
+    let first = env
+        .daemon
+        .create_task(explicit(&env, "a", "feature/x", None))
+        .await
+        .unwrap();
+    let second = env
+        .daemon
+        .create_task(explicit(&env, "b", "feature/x", Some(OnConflict::Reuse)))
+        .await
+        .unwrap();
+    env.daemon.archive_task(second.task.id).unwrap();
+    orphan_worktree(&env, &["-b", "loose"], "loose");
+
+    let mut listed = env
+        .daemon
+        .project_branches(env.project_id)
+        .unwrap()
+        .worktrees;
+    listed.sort_by(|a, b| a.dir.cmp(&b.dir));
+    assert_eq!(
+        listed,
+        vec![
+            BranchWorktree {
+                dir: "feature/x".into(),
+                branch: Some("feature/x".into()),
+                tasks: vec![
+                    WorktreeTask {
+                        id: first.task.id,
+                        title: "a".into(),
+                        archived: false
+                    },
+                    WorktreeTask {
+                        id: second.task.id,
+                        title: "b".into(),
+                        archived: true
+                    },
+                ],
+            },
+            BranchWorktree {
+                dir: "loose".into(),
+                branch: Some("loose".into()),
+                tasks: vec![],
+            },
+        ]
+    );
+}

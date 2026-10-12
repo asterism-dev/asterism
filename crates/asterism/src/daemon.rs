@@ -998,19 +998,59 @@ impl Daemon {
         let fetch_error = git::remote_url(&repo, "origin")
             .and_then(|_| git::fetch(&repo, "origin", &self.options.git_env).err())
             .map(|e| e.message);
+        let worktree_root = self.worktree_root(&repo, &project).ok();
+        let worktrees = match &worktree_root {
+            Some(root) => self.root_worktrees(&repo, project.id, root)?,
+            None => Vec::new(),
+        };
         Ok(ProjectBranches {
             branches: git::branches(&repo)?,
             default: default_base(&repo, &project),
             automatic: automatic_base(&repo),
             configured: project.default_base.clone(),
             fetch_error,
-            worktree_root: self
-                .worktree_root(&repo, &project)
-                .ok()
-                .map(|p| p.display().to_string()),
+            worktree_root: worktree_root.map(|p| p.display().to_string()),
             local: git::local_branches(&repo)?,
             remote: git::remote_branches(&repo, "origin")?,
+            worktrees,
         })
+    }
+
+    fn root_worktrees(
+        &self,
+        repo: &Path,
+        project_id: i64,
+        root: &Path,
+    ) -> Result<Vec<BranchWorktree>> {
+        // git may report /private/var/… where the root says /var/…
+        let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let root = canonical(root);
+        let tasks = self.store().tasks(Some(project_id), true)?;
+        Ok(git::worktrees(repo)?
+            .into_iter()
+            .filter(|w| !w.is_main)
+            .filter_map(|w| {
+                let dir = canonical(Path::new(&w.path))
+                    .strip_prefix(&root)
+                    .ok()?
+                    .to_string_lossy()
+                    .into_owned();
+                let tasks = tasks
+                    .iter()
+                    .filter(|t| same_path(&t.worktree_path, &w.path))
+                    .map(|t| WorktreeTask {
+                        id: t.id,
+                        title: t.title.clone(),
+                        archived: t.archived,
+                    })
+                    .collect();
+                Some(BranchWorktree {
+                    dir,
+                    branch: w.branch,
+                    tasks,
+                })
+            })
+            .collect())
     }
 
     pub fn update_project(&self, params: ProjectUpdateParams) -> Result<Project> {

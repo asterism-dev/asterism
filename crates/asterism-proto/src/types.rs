@@ -189,6 +189,24 @@ pub struct ProjectBranches {
     /// Branches of `origin` as `origin/<branch>`, the only remote tasks check out from.
     #[serde(default)]
     pub remote: Vec<String>,
+    /// Lets clients spot an existing worktree before `task.create` fails on it.
+    #[serde(default)]
+    pub worktrees: Vec<BranchWorktree>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorktreeTask {
+    pub id: i64,
+    pub title: String,
+    pub archived: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BranchWorktree {
+    /// Relative to `worktree_root`, i.e. the branch name a new task would use for it.
+    pub dir: String,
+    pub branch: Option<String>,
+    pub tasks: Vec<WorktreeTask>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
