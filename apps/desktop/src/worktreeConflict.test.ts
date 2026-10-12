@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectConflict, replaceBlocked } from './worktreeConflict';
+import { detectConflict, keepChoice, reloadsOnError, replaceBlocked } from './worktreeConflict';
 import type { ProjectBranches } from './types';
 
 const branches = (over: Partial<ProjectBranches> = {}): ProjectBranches => ({
@@ -46,5 +46,21 @@ describe('detectConflict', () => {
     expect(c.choices).toEqual(['reuse', 'replace']);
     expect(c.suffixed).toBeNull();
     expect(replaceBlocked(c)).toBe(false);
+  });
+});
+
+describe('keepChoice', () => {
+  it('falls back to reuse when the choice is not offered any more', () => {
+    const checkout = detectConflict(branches(), 'checkout', '', 'loose')!;
+    expect(keepChoice(checkout, 'suffix')).toBe('reuse');
+    expect(keepChoice(checkout, 'replace')).toBe('replace');
+  });
+});
+
+describe('reloadsOnError', () => {
+  it('only treats branch_exists as a stale conflict when no choice was sent', () => {
+    expect(reloadsOnError('branch_exists', null)).toBe(true);
+    expect(reloadsOnError('branch_exists', 'suffix')).toBe(false);
+    expect(reloadsOnError('git', null)).toBe(false);
   });
 });

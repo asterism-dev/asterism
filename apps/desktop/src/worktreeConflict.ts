@@ -40,3 +40,10 @@ function nextFree(name: string, b: ProjectBranches): string | null {
 }
 
 export const replaceBlocked = (c: WorktreeConflict) => (c.worktree?.tasks.length ?? 0) > 0;
+
+export const keepChoice = (c: WorktreeConflict, choice: ConflictChoice): ConflictChoice =>
+  c.choices.includes(choice) ? choice : 'reuse';
+
+// With a choice sent, branch_exists is a real failure, not a conflict the dialog missed.
+export const reloadsOnError = (kind: string, sent: ConflictChoice | null) =>
+  kind === 'branch_exists' && sent === null;

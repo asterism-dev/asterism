@@ -20,7 +20,13 @@ import BasedOnPicker from './BasedOnPicker.vue';
 import Kbd from './Kbd.vue';
 import WorkspaceSettings from './WorkspaceSettings.vue';
 import WorktreeConflict from './WorktreeConflict.vue';
-import { detectConflict, replaceBlocked, type ConflictChoice } from '../worktreeConflict';
+import {
+  detectConflict,
+  keepChoice,
+  reloadsOnError,
+  replaceBlocked,
+  type ConflictChoice,
+} from '../worktreeConflict';
 
 const props = defineProps<{ projectId: number }>();
 const emit = defineEmits<{ close: [] }>();
@@ -57,10 +63,9 @@ const conflict = computed(() =>
   detectConflict(branches.value, mode.value, branch.value, checkout.value),
 );
 const onConflict = ref<ConflictChoice>('reuse');
-watch(
-  () => conflict.value?.name,
-  () => (onConflict.value = 'reuse'),
-);
+watch(conflict, (c, old) => {
+  if (c) onConflict.value = c.name === old?.name ? keepChoice(c, onConflict.value) : 'reuse';
+});
 const replacing = computed(() => !!conflict.value && onConflict.value === 'replace');
 const canCreate = computed(
   () =>
@@ -201,6 +206,7 @@ async function submit() {
     return;
   }
   busy.value = true;
+  const sent = conflict.value ? onConflict.value : null;
   try {
     if (!(await leaveSettings())) return;
     const created = await api.createTask(
@@ -216,7 +222,7 @@ async function submit() {
         checkout: checkout.value,
         push: push.value,
         issue: kind.value === 'issue' ? issue.value : null,
-        onConflict: conflict.value ? onConflict.value : null,
+        onConflict: sent,
       }),
     );
     addTask(state, created.task);
@@ -229,7 +235,7 @@ async function submit() {
   } catch (e) {
     error.value = errorMessage(e);
     // The conflict appeared after the branches loaded; reload so the notice replaces the error.
-    if (e instanceof RpcError && e.kind === 'branch_exists') {
+    if (e instanceof RpcError && reloadsOnError(e.kind, sent)) {
       await loadBranches();
       if (conflict.value) error.value = null;
     }

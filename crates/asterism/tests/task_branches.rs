@@ -802,3 +802,99 @@ async fn branches_list_worktrees_under_the_root_with_their_tasks() {
         ]
     );
 }
+
+fn checkout_params(env: &Env, on: OnConflict) -> TaskCreateParams {
+    TaskCreateParams {
+        checkout: Some("other/pr".into()),
+        on_conflict: Some(on),
+        ..params(env, "t")
+    }
+}
+
+#[tokio::test]
+async fn checkout_replace_is_refused_when_the_branch_is_checked_out_elsewhere() {
+    let env = setup();
+    run_git(env.repo.path(), &["branch", "other/pr"]);
+    let elsewhere = tempfile::tempdir().unwrap();
+    let elsewhere = elsewhere.path().join("pr");
+    run_git(
+        env.repo.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            &elsewhere.display().to_string(),
+            "other/pr",
+        ],
+    );
+    let wt = orphan_worktree(&env, &["--detach"], "other/pr");
+    let err = env
+        .daemon
+        .create_task(checkout_params(&env, OnConflict::Replace))
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidParams, "{}", err.message);
+    assert!(wt.join("stale.txt").exists());
+    assert_eq!(task_count(&env), 0);
+}
+
+#[tokio::test]
+async fn checkout_of_a_hand_deleted_worktree_prunes_it_first() {
+    for on in [OnConflict::Reuse, OnConflict::Replace] {
+        let env = setup();
+        run_git(env.repo.path(), &["branch", "other/pr"]);
+        let wt = orphan_worktree(&env, &[], "other/pr");
+        std::fs::remove_dir_all(&wt).unwrap();
+        let created = env
+            .daemon
+            .create_task(checkout_params(&env, on))
+            .await
+            .unwrap();
+        assert_eq!(head(&created.task.worktree_path), "other/pr", "{on:?}");
+    }
+}
+
+#[tokio::test]
+async fn replace_removes_nothing_when_the_branch_would_nest_in_an_old_flat_worktree() {
+    let env = setup();
+    let flat = env.daemon.create_task(params(&env, "old")).await.unwrap();
+    let dir = Path::new(&flat.task.worktree_path)
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let nested = format!("{dir}/x");
+    run_git(env.repo.path(), &["branch", &nested]);
+    let err = env
+        .daemon
+        .create_task(explicit(&env, "t", &nested, Some(OnConflict::Replace)))
+        .await
+        .unwrap_err();
+    assert!(
+        err.message.contains("inside the worktree"),
+        "{}",
+        err.message
+    );
+    assert!(asterism_core::git::branch_exists(env.repo.path(), &nested));
+}
+
+#[tokio::test]
+async fn reuse_never_pushes_the_existing_branch() {
+    let env = setup();
+    env.daemon
+        .create_task(explicit(&env, "a", "feature/p", None))
+        .await
+        .unwrap();
+    env.daemon
+        .create_task(TaskCreateParams {
+            push: true,
+            ..explicit(&env, "b", "feature/p", Some(OnConflict::Reuse))
+        })
+        .await
+        .unwrap();
+    assert!(!asterism_core::git::branch_exists(
+        env.origin.path(),
+        "feature/p"
+    ));
+}

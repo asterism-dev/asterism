@@ -1503,6 +1503,26 @@ impl Daemon {
         let requested = checkout.or(new_branch);
         if let Some(branch) = requested {
             git::check_branch_name(&repo, branch)?;
+            let target = worktree_root.join(branch);
+            // Older tasks used flat directories, so a branch like `42-fix/x` could land inside one.
+            if let Some(inside) = target
+                .ancestors()
+                .skip(1)
+                .take_while(|a| *a != worktree_root)
+                .find(|a| a.join(".git").exists())
+            {
+                return Err(Error::new(
+                    ErrorKind::BranchExists,
+                    format!(
+                        "branch `{branch}` would be placed inside the worktree {}",
+                        inside.display()
+                    ),
+                ));
+            }
+        }
+        if params.on_conflict.is_some() {
+            // A hand-deleted worktree stays registered and would block the checkout.
+            git::prune_worktrees(&repo)?;
         }
         let suffixed;
         let mut reuse: Option<String> = None;
@@ -1523,7 +1543,6 @@ impl Daemon {
                     new_branch = Some(&suffixed);
                 }
                 Some(OnConflict::Reuse) => {
-                    git::prune_worktrees(&repo)?;
                     if c.target.exists() {
                         let entry = worktree_conflict::registered(&repo, &c.target)?
                             .ok_or_else(|| worktree_conflict::foreign(&c.target))?;
@@ -1534,29 +1553,11 @@ impl Daemon {
                     }
                 }
                 Some(OnConflict::Replace) => {
-                    self.clear_for_replace(&repo, project.id, c, branch, new_branch.is_some())?;
+                    self.clear_for_replace(&repo, project.id, c, branch)?;
                 }
             }
         }
         let explicit = checkout.or(new_branch);
-        if let Some(branch) = explicit {
-            let target = worktree_root.join(branch);
-            // Older tasks used flat directories, so a branch like `42-fix/x` could land inside one.
-            if let Some(inside) = target
-                .ancestors()
-                .skip(1)
-                .take_while(|a| *a != worktree_root)
-                .find(|a| a.join(".git").exists())
-            {
-                return Err(Error::new(
-                    ErrorKind::BranchExists,
-                    format!(
-                        "branch `{branch}` would be placed inside the worktree {}",
-                        inside.display()
-                    ),
-                ));
-            }
-        }
         let prepared = checkout
             .map(|b| self.prepare_checkout(&repo, b))
             .transpose()?;
@@ -1622,7 +1623,10 @@ impl Daemon {
             .set_task_location(id, &slug, &branch, &worktree.to_string_lossy())?;
         let warning = if diverged.is_some() {
             diverged
-        } else if params.push && new_branch.is_some() && git::remote_url(&repo, "origin").is_some()
+        } else if params.push
+            && new_branch.is_some()
+            && reuse.is_none()
+            && git::remote_url(&repo, "origin").is_some()
         {
             git::push_upstream(&worktree, "origin", &branch, &self.options.git_env)
                 .err()
@@ -1698,7 +1702,6 @@ impl Daemon {
             .join(repo_name))
     }
 
-    /// Fetches `branch`; returns whether it exists locally (true) or only on origin (false), plus a warning when the local branch differs from a freshly fetched origin one.
     /// Checks everything before removing anything, so a refused replace leaves the repository untouched.
     fn clear_for_replace(
         &self,
@@ -1706,15 +1709,13 @@ impl Daemon {
         project_id: i64,
         conflict: &worktree_conflict::Conflict,
         branch: &str,
-        creating: bool,
     ) -> Result<()> {
-        git::prune_worktrees(repo)?;
         let target = conflict.target.to_string_lossy();
         let owners: Vec<String> = self
             .store()
             .tasks(Some(project_id), true)?
             .into_iter()
-            .filter(|t| same_path(&t.worktree_path, &target) || (creating && t.branch == branch))
+            .filter(|t| same_path(&t.worktree_path, &target) || t.branch == branch)
             .map(|t| format!("{:?}", t.title))
             .collect();
         if !owners.is_empty() {
@@ -1737,7 +1738,7 @@ impl Daemon {
         let elsewhere = git::worktrees(repo)?
             .into_iter()
             .any(|w| w.branch.as_deref() == Some(branch) && !same_path(&w.path, &target));
-        if creating && elsewhere {
+        if elsewhere {
             return Err(Error::new(
                 ErrorKind::InvalidParams,
                 format!("branch `{branch}` is checked out in another worktree"),
@@ -1746,12 +1747,13 @@ impl Daemon {
         if registered.is_some() {
             git::remove_worktree(repo, &conflict.target, true)?;
         }
-        if creating && conflict.branch_taken {
+        if conflict.branch_taken {
             git::delete_branch(repo, branch)?;
         }
         Ok(())
     }
 
+    /// Fetches `branch`; returns whether it exists locally (true) or only on origin (false), plus a warning when the local branch differs from a freshly fetched origin one.
     fn prepare_checkout(&self, repo: &Path, branch: &str) -> Result<(bool, Option<String>)> {
         let has_origin = git::remote_url(repo, "origin").is_some();
         let fetched = if has_origin {
