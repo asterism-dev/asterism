@@ -613,6 +613,16 @@ pub struct TaskListParams {
     pub include_archived: bool,
 }
 
+/// What `task.create` does when the branch or its worktree directory already exists.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OnConflict {
+    Reuse,
+    /// Creates `<branch>-n` with the smallest free `n`.
+    Suffix,
+    Replace,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskCreateParams {
     pub project_id: i64,
@@ -634,6 +644,8 @@ pub struct TaskCreateParams {
     pub checkout: Option<String>,
     #[serde(default)]
     pub push: bool,
+    #[serde(default)]
+    pub on_conflict: Option<OnConflict>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

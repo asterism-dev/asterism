@@ -38,6 +38,7 @@ use crate::store::Store;
 use crate::{git, hibernate, lock, node_settings, repo_source, status};
 
 mod review;
+mod worktree_conflict;
 
 const DEFAULT_ROWS: u16 = 40;
 const DEFAULT_COLS: u16 = 120;
@@ -1425,12 +1426,12 @@ impl Daemon {
             .project(params.project_id)?
             .ok_or_else(|| not_found("project", params.project_id))?;
         let repo = PathBuf::from(&project.path);
-        let checkout = params
+        let mut checkout = params
             .checkout
             .as_deref()
             .map(str::trim)
             .filter(|b| !b.is_empty());
-        let new_branch = params
+        let mut new_branch = params
             .branch
             .as_deref()
             .map(str::trim)
@@ -1459,26 +1460,47 @@ impl Daemon {
         };
         let base = git::pin_base(&repo, &base)?;
         let worktree_root = self.worktree_root(&repo, &project)?;
-        let explicit = checkout.or(new_branch);
-        if let Some(branch) = explicit {
+        let requested = checkout.or(new_branch);
+        if let Some(branch) = requested {
             git::check_branch_name(&repo, branch)?;
         }
-        if let Some(branch) = new_branch {
-            if git::branch_exists(&repo, branch) {
-                return Err(Error::new(
-                    ErrorKind::BranchExists,
-                    format!("branch `{branch}` already exists"),
-                ));
+        let suffixed;
+        let mut reuse: Option<String> = None;
+        let conflict = requested.and_then(|b| {
+            worktree_conflict::detect(&repo, &worktree_root, b, new_branch.is_some())
+        });
+        if let (Some(c), Some(branch)) = (&conflict, requested) {
+            match params.on_conflict {
+                None => return Err(c.error(branch)),
+                Some(OnConflict::Suffix) if checkout.is_some() => {
+                    return Err(Error::new(
+                        ErrorKind::InvalidParams,
+                        "a checked-out branch cannot get a suffix; reuse or replace its worktree",
+                    ))
+                }
+                Some(OnConflict::Suffix) => {
+                    suffixed = worktree_conflict::suffixed(&repo, &worktree_root, branch)?;
+                    new_branch = Some(&suffixed);
+                }
+                Some(OnConflict::Reuse) => {
+                    git::prune_worktrees(&repo)?;
+                    if c.target.exists() {
+                        let entry = worktree_conflict::registered(&repo, &c.target)?
+                            .ok_or_else(|| worktree_conflict::foreign(&c.target))?;
+                        reuse = Some(entry.branch.unwrap_or_else(|| branch.to_string()));
+                    } else {
+                        checkout = Some(branch);
+                        new_branch = None;
+                    }
+                }
+                Some(OnConflict::Replace) => {
+                    self.clear_for_replace(&repo, project.id, c, branch, new_branch.is_some())?;
+                }
             }
         }
+        let explicit = checkout.or(new_branch);
         if let Some(branch) = explicit {
             let target = worktree_root.join(branch);
-            if target.exists() {
-                return Err(Error::new(
-                    ErrorKind::BranchExists,
-                    format!("worktree directory `{}` already exists", target.display()),
-                ));
-            }
             // Older tasks used flat directories, so a branch like `42-fix/x` could land inside one.
             if let Some(inside) = target
                 .ancestors()
@@ -1542,13 +1564,15 @@ impl Daemon {
                 }
             },
         };
+        let branch = reuse.clone().unwrap_or(branch);
         let worktree = worktree_root.join(&slug);
-        let added = match (checkout, local_checkout) {
-            (Some(b), Some(true)) => git::add_existing_worktree(&repo, &worktree, b)
+        let added = match (&reuse, checkout, local_checkout) {
+            (Some(_), _, _) => Ok(()),
+            (None, Some(b), Some(true)) => git::add_existing_worktree(&repo, &worktree, b)
                 .map_err(|e| checked_out_elsewhere(b, e)),
-            (Some(b), _) => git::add_tracking_worktree(&repo, &worktree, b, "origin")
+            (None, Some(b), _) => git::add_tracking_worktree(&repo, &worktree, b, "origin")
                 .map_err(|e| checked_out_elsewhere(b, e)),
-            (None, _) => git::add_worktree(&repo, &branch, &worktree, &base),
+            (None, None, _) => git::add_worktree(&repo, &branch, &worktree, &base),
         };
         if let Err(e) = added {
             self.store().delete_task(id)?;
@@ -1635,6 +1659,56 @@ impl Daemon {
     }
 
     /// Fetches `branch`; returns whether it exists locally (true) or only on origin (false), plus a warning when the local branch differs from a freshly fetched origin one.
+    /// Checks everything before removing anything, so a refused replace leaves the repository untouched.
+    fn clear_for_replace(
+        &self,
+        repo: &Path,
+        project_id: i64,
+        conflict: &worktree_conflict::Conflict,
+        branch: &str,
+        creating: bool,
+    ) -> Result<()> {
+        git::prune_worktrees(repo)?;
+        let target = conflict.target.to_string_lossy();
+        let owners: Vec<String> = self
+            .store()
+            .tasks(Some(project_id), true)?
+            .into_iter()
+            .filter(|t| same_path(&t.worktree_path, &target) || (creating && t.branch == branch))
+            .map(|t| format!("{:?}", t.title))
+            .collect();
+        if !owners.is_empty() {
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                format!("`{branch}` belongs to task {}; delete it first", owners.join(", ")),
+            ));
+        }
+        let registered = if conflict.target.exists() {
+            Some(
+                worktree_conflict::registered(repo, &conflict.target)?
+                    .ok_or_else(|| worktree_conflict::foreign(&conflict.target))?,
+            )
+        } else {
+            None
+        };
+        let elsewhere = git::worktrees(repo)?
+            .into_iter()
+            .any(|w| w.branch.as_deref() == Some(branch) && !same_path(&w.path, &target));
+        if creating && elsewhere {
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                format!("branch `{branch}` is checked out in another worktree"),
+            ));
+        }
+        if registered.is_some() {
+            git::remove_worktree(repo, &conflict.target, true)?;
+        }
+        if creating && conflict.branch_taken {
+            git::delete_branch(repo, branch)?;
+        }
+        Ok(())
+    }
+
     fn prepare_checkout(&self, repo: &Path, branch: &str) -> Result<(bool, Option<String>)> {
         let has_origin = git::remote_url(repo, "origin").is_some();
         let fetched = if has_origin {
