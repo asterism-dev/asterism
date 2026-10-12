@@ -1,3 +1,9 @@
+## v0.14.0 (2026-10-12)
+
+### Feat
+
+- add a review pane with tabs, checks and commits for tasks and pull requests (#18)
+
 ## v0.13.0 (2026-10-08)
 
 ### Feat
