@@ -222,7 +222,9 @@ watch(
               <button v-if="!w.prunable" @click="revealItemInDir(w.path).catch(report)">
                 Reveal
               </button>
-              <button v-if="worktreeActions(w).open" @click="openTask(w.task_ids[0])">Open task</button>
+              <button v-if="worktreeActions(w).open" @click="openTask(w.task_ids[0])">
+                Open task
+              </button>
               <button v-if="worktreeActions(w).remove" class="danger" @click="removeWorktree(w)">
                 Remove
               </button>

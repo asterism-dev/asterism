@@ -23,7 +23,12 @@ export function detectConflict(
   const branchTaken = mode === 'new' && branches.local.includes(name);
   if (!worktree && !branchTaken) return null;
   return mode === 'new'
-    ? { name, worktree, choices: ['reuse', 'suffix', 'replace'], suffixed: nextFree(name, branches) }
+    ? {
+        name,
+        worktree,
+        choices: ['reuse', 'suffix', 'replace'],
+        suffixed: nextFree(name, branches),
+      }
     : { name, worktree, choices: ['reuse', 'replace'], suffixed: null };
 }
 
