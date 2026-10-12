@@ -484,10 +484,12 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
                         .branch
                         .clone()
                         .unwrap_or_else(|| format!("detached@{}", &w.head[..w.head.len().min(7)]));
-                    let task = w
-                        .task_id
-                        .map(|id| format!("\ttask {id}"))
-                        .unwrap_or_default();
+                    let task = if w.task_ids.is_empty() {
+                        String::new()
+                    } else {
+                        let ids: Vec<String> = w.task_ids.iter().map(i64::to_string).collect();
+                        format!("\ttask {}", ids.join(","))
+                    };
                     format!("{}\t{branch}{task}", w.path)
                 })
             });

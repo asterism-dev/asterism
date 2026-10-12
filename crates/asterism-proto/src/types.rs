@@ -200,7 +200,7 @@ pub struct Worktree {
     pub is_main: bool,
     pub locked: bool,
     pub prunable: bool,
-    pub task_id: Option<i64>,
+    pub task_ids: Vec<i64>,
     pub base_branch: Option<String>,
 }
 
@@ -877,6 +877,9 @@ pub struct TaskDeleteCheck {
     pub branch_exists: bool,
     /// Commits on the branch that are not on its base branch.
     pub unmerged_commits: u32,
+    /// While non-empty, deleting keeps the worktree and branch for these tasks.
+    #[serde(default)]
+    pub shared_with: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

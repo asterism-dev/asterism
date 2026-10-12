@@ -698,3 +698,48 @@ async fn checkout_replace_recreates_the_worktree_and_keeps_the_branch() {
     assert!(!wt.join("stale.txt").exists());
     assert_eq!(head(&created.task.worktree_path), "other/pr");
 }
+
+#[tokio::test]
+async fn shared_worktrees_survive_until_their_last_task_is_deleted() {
+    let env = setup();
+    let first = env
+        .daemon
+        .create_task(explicit(&env, "a", "feature/x", None))
+        .await
+        .unwrap();
+    let second = env
+        .daemon
+        .create_task(explicit(&env, "b", "feature/x", Some(OnConflict::Reuse)))
+        .await
+        .unwrap();
+    assert_eq!(
+        env.daemon.delete_check(first.task.id).unwrap().shared_with,
+        vec![second.task.id]
+    );
+    let listed = env.daemon.project_worktrees(env.project_id).unwrap();
+    let shared = listed
+        .iter()
+        .find(|w| w.branch.as_deref() == Some("feature/x"))
+        .unwrap();
+    assert_eq!(shared.task_ids, vec![first.task.id, second.task.id]);
+
+    env.daemon.delete_task(first.task.id, true).unwrap();
+    assert!(Path::new(&second.task.worktree_path).exists());
+    assert!(asterism_core::git::branch_exists(
+        env.repo.path(),
+        "feature/x"
+    ));
+    assert!(env
+        .daemon
+        .delete_check(second.task.id)
+        .unwrap()
+        .shared_with
+        .is_empty());
+
+    env.daemon.delete_task(second.task.id, true).unwrap();
+    assert!(!Path::new(&second.task.worktree_path).exists());
+    assert!(!asterism_core::git::branch_exists(
+        env.repo.path(),
+        "feature/x"
+    ));
+}

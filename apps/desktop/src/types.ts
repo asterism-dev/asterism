@@ -173,6 +173,7 @@ export interface TaskDeleteCheck {
   branch: string;
   branch_exists: boolean;
   unmerged_commits: number;
+  shared_with: number[];
 }
 export interface TaskDeleteResult {
   warning: string | null;
@@ -184,7 +185,7 @@ export interface Worktree {
   is_main: boolean;
   locked: boolean;
   prunable: boolean;
-  task_id: number | null;
+  task_ids: number[];
   base_branch: string | null;
 }
 export interface WorktreeSize {

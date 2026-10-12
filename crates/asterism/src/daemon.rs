@@ -1988,7 +1988,9 @@ impl Daemon {
         let repo = self.project_path(task.project_id)?;
         let worktree = Path::new(&task.worktree_path);
         let branch_exists = git::branch_exists(&repo, &task.branch);
+        let shared_with = self.worktree_sharers(&task)?;
         Ok(TaskDeleteCheck {
+            shared_with,
             dirty: worktree.exists() && git::is_dirty(worktree).unwrap_or(false),
             unmerged_commits: if branch_exists {
                 git::unmerged_commits(&repo, &self.effective_base(&repo, &task), &task.branch)
@@ -2013,15 +2015,17 @@ impl Daemon {
         }
         let mut warnings = Vec::new();
         let worktree = Path::new(&task.worktree_path);
-        if worktree.exists() {
-            if let Err(e) = git::remove_worktree(&repo, worktree, true) {
-                warnings.push(e.message);
+        if self.worktree_sharers(&task)?.is_empty() {
+            if worktree.exists() {
+                if let Err(e) = git::remove_worktree(&repo, worktree, true) {
+                    warnings.push(e.message);
+                }
             }
-        }
-        self.tidy_worktree_parents(task.project_id, &repo, worktree);
-        if delete_branch && git::branch_exists(&repo, &task.branch) {
-            if let Err(e) = git::delete_branch(&repo, &task.branch) {
-                warnings.push(e.message);
+            self.tidy_worktree_parents(task.project_id, &repo, worktree);
+            if delete_branch && git::branch_exists(&repo, &task.branch) {
+                if let Err(e) = git::delete_branch(&repo, &task.branch) {
+                    warnings.push(e.message);
+                }
             }
         }
         {
@@ -2042,18 +2046,33 @@ impl Daemon {
         })
     }
 
+    fn worktree_sharers(&self, task: &Task) -> Result<Vec<i64>> {
+        Ok(self
+            .store()
+            .tasks(Some(task.project_id), true)?
+            .into_iter()
+            .filter(|t| {
+                t.id != task.id
+                    && !t.worktree_path.is_empty()
+                    && same_path(&t.worktree_path, &task.worktree_path)
+            })
+            .map(|t| t.id)
+            .collect())
+    }
+
     pub fn project_worktrees(&self, project_id: i64) -> Result<Vec<Worktree>> {
         let repo = self.project_path(project_id)?;
         let tasks = self.store().tasks(Some(project_id), true)?;
         Ok(git::worktrees(&repo)?
             .into_iter()
             .map(|entry| {
-                let task = tasks
+                let owners: Vec<&Task> = tasks
                     .iter()
-                    .find(|t| same_path(&t.worktree_path, &entry.path));
+                    .filter(|t| same_path(&t.worktree_path, &entry.path))
+                    .collect();
                 Worktree {
-                    task_id: task.map(|t| t.id),
-                    base_branch: task.map(|t| t.base_branch.clone()),
+                    task_ids: owners.iter().map(|t| t.id).collect(),
+                    base_branch: owners.first().map(|t| t.base_branch.clone()),
                     path: entry.path,
                     head: entry.head,
                     branch: entry.branch,
@@ -2085,7 +2104,7 @@ impl Daemon {
                 format!("{path} is not a worktree of this project"),
             ));
         };
-        if worktree.is_main || worktree.task_id.is_some() {
+        if worktree.is_main || !worktree.task_ids.is_empty() {
             return Err(Error::new(
                 ErrorKind::InvalidParams,
                 format!("{path} is the main checkout or belongs to a task"),
