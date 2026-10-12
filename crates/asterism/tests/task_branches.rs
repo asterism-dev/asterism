@@ -556,7 +556,12 @@ async fn on_conflict_without_a_conflict_creates_normally() {
     let env = setup();
     let created = env
         .daemon
-        .create_task(explicit(&env, "t", "feature/fresh", Some(OnConflict::Replace)))
+        .create_task(explicit(
+            &env,
+            "t",
+            "feature/fresh",
+            Some(OnConflict::Replace),
+        ))
         .await
         .unwrap();
     assert_eq!(created.task.branch, "feature/fresh");
@@ -661,7 +666,11 @@ async fn checkout_conflicts_allow_reuse_and_replace_but_not_suffix() {
     };
     let first = env.daemon.create_task(co("a", None)).await.unwrap();
     assert_eq!(
-        env.daemon.create_task(co("b", None)).await.unwrap_err().kind,
+        env.daemon
+            .create_task(co("b", None))
+            .await
+            .unwrap_err()
+            .kind,
         ErrorKind::BranchExists
     );
     assert_eq!(

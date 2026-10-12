@@ -1720,7 +1720,10 @@ impl Daemon {
         if !owners.is_empty() {
             return Err(Error::new(
                 ErrorKind::InvalidParams,
-                format!("`{branch}` belongs to task {}; delete it first", owners.join(", ")),
+                format!(
+                    "`{branch}` belongs to task {}; delete it first",
+                    owners.join(", ")
+                ),
             ));
         }
         let registered = if conflict.target.exists() {

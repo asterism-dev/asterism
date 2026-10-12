@@ -923,7 +923,10 @@ async fn worktrees_cover_main_linked_and_foreign_checkouts() {
         .iter()
         .find(|w| w.branch.as_deref() == Some("hand"))
         .unwrap();
-    assert_eq!((hand.task_ids.is_empty(), hand.base_branch.as_ref()), (true, None));
+    assert_eq!(
+        (hand.task_ids.is_empty(), hand.base_branch.as_ref()),
+        (true, None)
+    );
 
     let sizes = env.daemon.project_worktree_sizes(project.id).unwrap();
     assert_eq!(sizes.len(), 3);
