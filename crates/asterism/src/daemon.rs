@@ -5,9 +5,10 @@ use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
 use asterism_plugin::protocol::{
-    self, BranchPr, CloneParams, CreateRemoteParams, GetIssueParams, LaunchMode, ListReposParams,
-    PrepareParams, PrepareResult, PullRequestsParams, ResolveOwnerParams, ResolveOwnerResult,
-    SearchIssuesParams, SearchPullRequestsParams, TaskSourceCheck, TaskSourceCheckParams,
+    self, BranchPr, CloneParams, CreateRemoteParams, DetectParams, Detected, GetIssueParams,
+    LaunchMode, ListReposParams, PrepareParams, PrepareResult, PullRequestsParams,
+    ResolveOwnerParams, ResolveOwnerResult, SearchIssuesParams, SearchPullRequestsParams,
+    TaskSourceCheck, TaskSourceCheckParams,
 };
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
@@ -2726,11 +2727,94 @@ impl Daemon {
         Ok(())
     }
 
+    /// Hibernates quiet, unattached shells running an idle agent; they become that agent's session and resume as it.
+    pub async fn hibernate_shells(&self) -> Result<()> {
+        let live: Vec<(i64, Arc<LiveSession>)> = lock(&self.live)
+            .iter()
+            .map(|(id, live)| (*id, live.clone()))
+            .collect();
+        if live.is_empty() {
+            return Ok(());
+        }
+        let config = Config::load(&self.paths.config())?;
+        let shells: Vec<i64> = self
+            .store()
+            .sessions(None)?
+            .into_iter()
+            .filter(|s| s.session.kind == SessionKind::Shell)
+            .map(|s| s.session.id)
+            .collect();
+        let agents: Vec<(String, String)> = {
+            let set = self.plugin_set();
+            set.registry
+                .agents()
+                .filter(|(_, decl)| decl.settings.contains(&AgentSettingKind::Hibernate))
+                .map(|(plugin, decl)| (plugin.name.clone(), decl.id.clone()))
+                .collect()
+        };
+        for (id, session) in live {
+            if !shells.contains(&id) || session.pty.receivers() > 1 {
+                continue;
+            }
+            let Some(pid) = session.pty.pid() else {
+                continue;
+            };
+            let quiet_for = lock(&session.last_output).elapsed();
+            let pids = proc_stats::tree(pid);
+            for (plugin, agent) in &agents {
+                let kind = SessionKind::Agent {
+                    name: agent.clone(),
+                };
+                let quiet = self
+                    .hibernate_after(&config, &kind)
+                    .is_some_and(|after| quiet_for >= after);
+                if !quiet {
+                    continue;
+                }
+                let params = serde_json::to_value(DetectParams {
+                    agent: agent.clone(),
+                    pids: pids.clone(),
+                })
+                .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+                // Plugins without `agent.detect` answer with an error and simply never match.
+                let Ok(reply) = self
+                    .plugin_call(
+                        plugin,
+                        protocol::method::AGENT_DETECT,
+                        params,
+                        Some(self.call_timeout()),
+                    )
+                    .await
+                else {
+                    continue;
+                };
+                let Ok(Some(detected)) = serde_json::from_value::<Option<Detected>>(reply) else {
+                    continue;
+                };
+                if detected.idle {
+                    {
+                        let store = self.store();
+                        store.set_session_kind(id, &kind)?;
+                        store.set_session_agent_ref(id, &detected.agent_ref)?;
+                    }
+                    session.hibernating.store(true, Ordering::Relaxed);
+                    let _ = session.pty.kill();
+                    self.emit(Event::SessionChanged(self.session(id)?));
+                }
+                break;
+            }
+        }
+        Ok(())
+    }
+
     pub async fn hibernate_loop(self: Arc<Self>) {
         loop {
             tokio::time::sleep(self.options.hibernate_minute).await;
             if let Err(e) = self.hibernate_idle() {
                 eprintln!("asterismd: hibernation sweep failed: {e}");
+            }
+            if let Err(e) = self.hibernate_shells().await {
+                eprintln!("asterismd: shell hibernation sweep failed: {e}");
             }
         }
     }

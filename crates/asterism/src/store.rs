@@ -412,6 +412,14 @@ impl Store {
         Ok(())
     }
 
+    pub fn set_session_kind(&self, id: i64, kind: &SessionKind) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET kind = ?2 WHERE id = ?1",
+            params![id, to_text(kind)],
+        )?;
+        Ok(())
+    }
+
     pub fn set_session_agent_ref(&self, id: i64, agent_ref: &str) -> rusqlite::Result<()> {
         self.conn.execute(
             "UPDATE sessions SET agent_ref = ?2 WHERE id = ?1",
