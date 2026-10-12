@@ -1,3 +1,9 @@
+## v0.16.0 (2026-10-12)
+
+### Feat
+
+- **hibernate**: hibernate idle agents running inside shell sessions (#20)
+
 ## v0.15.0 (2026-10-12)
 
 ### Feat
