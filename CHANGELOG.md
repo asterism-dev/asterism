@@ -1,3 +1,9 @@
+## v0.15.0 (2026-10-12)
+
+### Feat
+
+- reuse, add or replace existing task worktrees (#19)
+
 ## v0.14.0 (2026-10-12)
 
 ### Feat
