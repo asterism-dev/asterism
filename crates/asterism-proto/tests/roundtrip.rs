@@ -512,3 +512,35 @@ fn check_and_conversation_types_use_snake_case() {
         serde_json::Value::Null
     );
 }
+
+#[test]
+fn remote_types_roundtrip() {
+    use asterism_proto::rpc::{ErrorKind, RpcError};
+    use asterism_proto::types::*;
+
+    assert_eq!(
+        RemoteConfig::default(),
+        RemoteConfig {
+            enabled: false,
+            bind: "127.0.0.1".into(),
+            port: 7420
+        }
+    );
+    let status = RemoteStatus {
+        config: RemoteConfig::default(),
+        state: RemoteState::Listening,
+        address: Some("127.0.0.1:7420".into()),
+        error: None,
+    };
+    let json = serde_json::to_value(&status).unwrap();
+    assert_eq!(json["state"], "listening");
+    assert_eq!(
+        serde_json::from_value::<RemoteStatus>(json).unwrap(),
+        status
+    );
+
+    let error = RpcError::new(ErrorKind::Forbidden, "no");
+    let json = serde_json::to_value(&error).unwrap();
+    assert_eq!(json["data"]["kind"], "forbidden");
+    assert_eq!(json["code"], -32012);
+}

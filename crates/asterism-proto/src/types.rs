@@ -78,6 +78,13 @@ pub mod method {
     pub const PLUGIN_UNINSTALL: &str = "plugin.uninstall";
     pub const PLUGIN_SET_ENABLED: &str = "plugin.set_enabled";
     pub const TASK_SOURCE_LIST: &str = "task_source.list";
+    pub const REMOTE_STATUS: &str = "remote.status";
+    pub const REMOTE_CONFIG_SET: &str = "remote.config_set";
+    pub const REMOTE_INTERFACES: &str = "remote.interfaces";
+    pub const REMOTE_DEVICE_ADD: &str = "remote.device_add";
+    pub const REMOTE_DEVICE_LIST: &str = "remote.device_list";
+    pub const REMOTE_DEVICE_ROTATE: &str = "remote.device_rotate";
+    pub const REMOTE_DEVICE_REMOVE: &str = "remote.device_remove";
     pub const TASK_SOURCE_SEARCH: &str = "task_source.search";
     pub const TASK_SOURCE_GET: &str = "task_source.get";
     pub const PR_LIST: &str = "pr.list";
@@ -248,6 +255,81 @@ pub struct NodeConfigInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NodeConfigSetParams {
     pub config: NodeConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteConfig {
+    pub enabled: bool,
+    pub bind: String,
+    pub port: u16,
+}
+
+impl Default for RemoteConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bind: "127.0.0.1".into(),
+            port: 7420,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteState {
+    Disabled,
+    Listening,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteStatus {
+    pub config: RemoteConfig,
+    pub state: RemoteState,
+    /// The bound `ip:port` while listening.
+    #[serde(default)]
+    pub address: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteConfigSetParams {
+    pub config: RemoteConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteInterface {
+    pub name: String,
+    pub address: String,
+    pub tailscale: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteDevice {
+    pub id: i64,
+    pub name: String,
+    pub created_at: i64,
+    #[serde(default)]
+    pub last_seen_at: Option<i64>,
+    pub connections: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteDeviceAddParams {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteDeviceIdParams {
+    pub device_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemotePairing {
+    pub device: RemoteDevice,
+    /// Carries the device token; shown once.
+    pub pairing_url: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
