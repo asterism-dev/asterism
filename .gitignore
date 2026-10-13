@@ -1,6 +1,7 @@
 /target
 /apps/desktop/node_modules
 /apps/desktop/dist
+/apps/desktop/dist-mobile
 /apps/desktop/src-tauri/binaries
 /apps/desktop/src-tauri/gen
 /site
