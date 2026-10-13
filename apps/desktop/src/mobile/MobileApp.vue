@@ -48,17 +48,15 @@ const reload = () => window.location.reload();
   display: grid;
   grid-template-columns: 1fr;
 }
-.body.has-task .list-pane,
-.body:not(.has-task) .detail-pane {
-  display: none;
+@media (max-width: 767.98px) {
+  .body.has-task .list-pane,
+  .body:not(.has-task) .detail-pane {
+    display: none;
+  }
 }
 @media (min-width: 768px) {
   .body {
     grid-template-columns: 320px minmax(0, 1fr);
-  }
-  .body .list-pane,
-  .body .detail-pane {
-    display: block;
   }
 }
 </style>

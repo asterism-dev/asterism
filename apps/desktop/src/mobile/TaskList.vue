@@ -60,6 +60,13 @@ header {
   align-items: center;
   justify-content: space-between;
 }
+button.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+}
 h2 {
   font-size: 13px;
   text-transform: uppercase;
