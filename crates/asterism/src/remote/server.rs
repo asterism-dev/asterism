@@ -22,6 +22,7 @@ use crate::rpc::{self, Peer, OUT_QUEUE};
 
 pub const UNAUTHORIZED: u16 = 4401;
 const GOING_AWAY: u16 = 1001;
+const POLICY_VIOLATION: u16 = 1008;
 const AUTH_TIMEOUT: Duration = Duration::from_secs(5);
 // Slows down guessing; tokens are 256 bits, so this is not the main defence.
 const AUTH_FAILURE_DELAY: Duration = Duration::from_secs(1);
@@ -98,7 +99,15 @@ fn router(daemon: Arc<Daemon>) -> Router {
     let router = Router::new().route("/ws", get(upgrade));
     let router = match assets {
         Some(dir) => router
-            .route_service("/", ServeFile::new(dir.join("mobile.html")))
+            // Hashed assets are cacheable, but a stale page would reference missing ones.
+            .merge(
+                Router::new()
+                    .route_service("/", ServeFile::new(dir.join("mobile.html")))
+                    .layer(SetResponseHeaderLayer::overriding(
+                        header::CACHE_CONTROL,
+                        HeaderValue::from_static("no-cache"),
+                    )),
+            )
             .fallback_service(ServeDir::new(dir)),
         None => {
             router.fallback(|| async { (StatusCode::SERVICE_UNAVAILABLE, Html(MISSING_ASSETS)) })
@@ -146,13 +155,21 @@ struct Auth {
     auth: String,
 }
 
-async fn authenticate(daemon: &Daemon, socket: &mut WebSocket) -> Option<i64> {
+/// `Err` carries the close code: only a token that was looked up and not found means "unauthorized".
+async fn authenticate(daemon: &Daemon, socket: &mut WebSocket) -> Result<i64, u16> {
     let Ok(Some(Ok(Message::Text(text)))) = tokio::time::timeout(AUTH_TIMEOUT, socket.recv()).await
     else {
-        return None;
+        return Err(POLICY_VIOLATION);
     };
-    let auth: Auth = serde_json::from_str(text.as_str()).ok()?;
-    super::authenticate(daemon, &auth.auth).ok().flatten()
+    let auth: Auth = serde_json::from_str(text.as_str()).map_err(|_| POLICY_VIOLATION)?;
+    match super::authenticate(daemon, &auth.auth) {
+        Ok(Some(id)) => Ok(id),
+        Ok(None) => Err(UNAUTHORIZED),
+        Err(e) => {
+            eprintln!("asterismd: remote auth failed: {e}");
+            Err(POLICY_VIOLATION)
+        }
+    }
 }
 
 async fn close(socket: &mut WebSocket, code: u16, reason: &'static str) {
@@ -168,10 +185,13 @@ async fn serve_socket(
     mut socket: WebSocket,
     mut closing: broadcast::Receiver<Option<i64>>,
 ) {
-    let Some(device_id) = authenticate(&daemon, &mut socket).await else {
-        tokio::time::sleep(AUTH_FAILURE_DELAY).await;
-        close(&mut socket, UNAUTHORIZED, "unauthorized").await;
-        return;
+    let device_id = match authenticate(&daemon, &mut socket).await {
+        Ok(id) => id,
+        Err(code) => {
+            tokio::time::sleep(AUTH_FAILURE_DELAY).await;
+            close(&mut socket, code, "authentication failed").await;
+            return;
+        }
     };
     if !super::load_config(daemon.paths()).is_ok_and(|c| c.enabled) {
         close(&mut socket, GOING_AWAY, "remote access changed").await;

@@ -478,7 +478,7 @@ async fn bind_failure_is_retried() {
     assert!(listening, "{:?}", status(&d).await);
 }
 
-fn http_get(url: String) -> (u16, String, Option<String>) {
+fn http_get(url: String) -> (u16, String, Option<String>, Option<String>) {
     let response = match ureq::get(&url).call() {
         Ok(r) => r,
         Err(ureq::Error::Status(_, r)) => r,
@@ -487,8 +487,9 @@ fn http_get(url: String) -> (u16, String, Option<String>) {
     let csp = response
         .header("content-security-policy")
         .map(str::to_string);
+    let cache = response.header("cache-control").map(str::to_string);
     let status = response.status();
-    (status, response.into_string().unwrap(), csp)
+    (status, response.into_string().unwrap(), csp, cache)
 }
 
 #[tokio::test]
@@ -500,14 +501,15 @@ async fn serves_mobile_app_with_csp() {
     let d = start_with(Some(assets.path().to_path_buf())).await;
     let addr = enable(&d).await;
 
-    let (status, body, csp) =
+    let (status, body, csp, cache) =
         tokio::task::spawn_blocking(move || http_get(format!("http://{addr}/")))
             .await
             .unwrap();
     assert_eq!(status, 200);
     assert!(body.contains("mobile"));
     assert!(csp.unwrap().contains("default-src 'self'"));
-    let (status, body, _) =
+    assert!(cache.unwrap().contains("no-cache"));
+    let (status, body, _, _) =
         tokio::task::spawn_blocking(move || http_get(format!("http://{addr}/assets/app.js")))
             .await
             .unwrap();
@@ -519,7 +521,7 @@ async fn serves_mobile_app_with_csp() {
 async fn missing_assets_show_an_error_page() {
     let d = start_with(Some(PathBuf::from("/nonexistent"))).await;
     let addr = enable(&d).await;
-    let (status, body, _) =
+    let (status, body, _, _) =
         tokio::task::spawn_blocking(move || http_get(format!("http://{addr}/")))
             .await
             .unwrap();
@@ -576,4 +578,41 @@ async fn disabling_during_auth_closes_connection() {
         .unwrap();
     let code = close_code(&mut ws).await;
     assert!(matches!(code, Some(1001) | Some(4401) | None), "{code:?}");
+}
+
+async fn close_code_within(ws: &mut Ws, limit: Duration) -> Option<u16> {
+    tokio::time::timeout(limit, async {
+        loop {
+            match ws.next().await {
+                Some(Ok(Message::Close(frame))) => return frame.map(|f| u16::from(f.code)),
+                Some(Ok(_)) => continue,
+                _ => return None,
+            }
+        }
+    })
+    .await
+    .expect("socket was not closed")
+}
+
+#[tokio::test]
+async fn auth_timeout_is_not_unauthorized() {
+    let d = start().await;
+    let addr = enable(&d).await;
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
+        .await
+        .unwrap();
+    let code = close_code_within(&mut ws, Duration::from_secs(10)).await;
+    assert_eq!(code, Some(1008));
+}
+
+#[tokio::test]
+async fn malformed_auth_is_not_unauthorized() {
+    let d = start().await;
+    let addr = enable(&d).await;
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
+        .await
+        .unwrap();
+    ws.send(Message::Text("not json".into())).await.unwrap();
+    let code = close_code_within(&mut ws, Duration::from_secs(5)).await;
+    assert_eq!(code, Some(1008));
 }
