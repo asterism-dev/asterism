@@ -32,6 +32,7 @@ path = "src/bin/asterism-plugin-linear/main.rs"
 asterism-plugin = { path = "../asterism-plugin" }
 asterism-proto = { path = "../asterism-proto" }
 base64 = "0.22"
+if-addrs = "0.13"
 clap = { version = "4", features = ["derive"] }
 gethostname = "0.5"
 humantime = "2"

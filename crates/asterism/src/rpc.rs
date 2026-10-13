@@ -19,6 +19,7 @@ use crate::daemon::Daemon;
 use crate::error::{Error, Result};
 use crate::lock;
 use crate::plugins::process::HostFn;
+use crate::remote;
 
 const MAX_OUTPUT_FRAME: usize = 64 * 1024;
 // Bounded so a client that stops reading backs up into the broadcast channels, which drop on lag.
@@ -216,6 +217,25 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
                 "attach:{}",
                 params::<SessionIdParams>(raw)?.session_id
             ));
+            Ok(Value::Null)
+        }
+        method::REMOTE_STATUS => to_value(remote::status(daemon)?),
+        method::REMOTE_CONFIG_SET => {
+            remote::set_config(daemon, &params::<RemoteConfigSetParams>(raw)?.config)?;
+            Ok(Value::Null)
+        }
+        method::REMOTE_INTERFACES => to_value(remote::interfaces()?),
+        method::REMOTE_DEVICE_ADD => to_value(remote::add_device(
+            daemon,
+            &params::<RemoteDeviceAddParams>(raw)?.name,
+        )?),
+        method::REMOTE_DEVICE_LIST => to_value(remote::list_devices(daemon)?),
+        method::REMOTE_DEVICE_ROTATE => to_value(remote::rotate_device(
+            daemon,
+            params::<RemoteDeviceIdParams>(raw)?.device_id,
+        )?),
+        method::REMOTE_DEVICE_REMOVE => {
+            remote::remove_device(daemon, params::<RemoteDeviceIdParams>(raw)?.device_id)?;
             Ok(Value::Null)
         }
         other => dispatch_method(daemon, other, raw).await,

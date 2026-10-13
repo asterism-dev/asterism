@@ -73,6 +73,10 @@ pub struct DaemonOptions {
     pub hibernate_minute: Duration,
     /// Shown to clients instead of the hostname, e.g. to keep it out of screenshots.
     pub node_name: Option<String>,
+    /// Built mobile web app served on the remote listener.
+    pub mobile_dir: Option<PathBuf>,
+    /// How long a failed remote listener waits before binding again.
+    pub remote_retry: Duration,
 }
 
 impl Default for DaemonOptions {
@@ -87,8 +91,19 @@ impl Default for DaemonOptions {
             node_name: std::env::var("ASTERISM_NODE_NAME")
                 .ok()
                 .filter(|name| !name.trim().is_empty()),
+            mobile_dir: default_mobile_dir(),
+            remote_retry: Duration::from_secs(30),
         }
     }
+}
+
+/// Inside `asterism.app` the daemon sits in `Contents/MacOS`, the mobile app in `Contents/Resources/mobile`.
+fn default_mobile_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("ASTERISM_MOBILE_DIR") {
+        return Some(dir.into());
+    }
+    let exe = std::env::current_exe().ok()?;
+    Some(exe.parent()?.parent()?.join("Resources").join("mobile"))
 }
 
 /// The daemon's directory (bundled sidecars) followed by the inherited PATH.
@@ -165,6 +180,7 @@ pub struct Daemon {
     /// Subagents per session, kept after exit until the session is removed.
     subagents: Mutex<HashMap<i64, SessionSubagents>>,
     review_cache: Mutex<review::ReviewCache>,
+    pub(crate) remote: crate::remote::Hub,
 }
 
 #[derive(Default)]
@@ -214,6 +230,7 @@ impl Daemon {
                 waking: tokio::sync::Mutex::new(()),
                 subagents: Mutex::new(HashMap::new()),
                 review_cache: Mutex::new(review::ReviewCache::default()),
+                remote: crate::remote::Hub::new(),
             }
         }))
     }
@@ -269,6 +286,14 @@ impl Daemon {
         backend.call(method, params, timeout).await
     }
 
+    pub fn mobile_dir(&self) -> Option<&Path> {
+        self.options.mobile_dir.as_deref()
+    }
+
+    pub fn remote_retry(&self) -> Duration {
+        self.options.remote_retry
+    }
+
     pub fn paths(&self) -> &Paths {
         &self.paths
     }
@@ -285,7 +310,7 @@ impl Daemon {
         self.shutdown.notified().await;
     }
 
-    fn store(&self) -> MutexGuard<'_, Store> {
+    pub(crate) fn store(&self) -> MutexGuard<'_, Store> {
         lock(&self.store)
     }
 

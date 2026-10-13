@@ -24,7 +24,7 @@ pub mod session;
 pub mod status;
 pub mod store;
 
-use daemon::Daemon;
+use daemon::{Daemon, DaemonOptions};
 use paths::Paths;
 
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -32,6 +32,10 @@ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 pub async fn run(paths: Paths) -> io::Result<()> {
+    run_with_options(paths, DaemonOptions::default()).await
+}
+
+pub async fn run_with_options(paths: Paths, options: DaemonOptions) -> io::Result<()> {
     let socket = paths.socket();
     paths.ensure_dirs()?;
     // Held for the whole run: two daemons racing after a crash must not both bind and recover.
@@ -55,7 +59,7 @@ pub async fn run(paths: Paths) -> io::Result<()> {
         }
         std::fs::remove_file(&socket)?;
     }
-    let daemon = Daemon::new(paths).map_err(io::Error::other)?;
+    let daemon = Daemon::with_options(paths, options).map_err(io::Error::other)?;
     let listener = UnixListener::bind(&socket)?;
     let recovering = daemon.clone();
     tokio::spawn(async move {
