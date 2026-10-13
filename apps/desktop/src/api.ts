@@ -46,6 +46,11 @@ import type {
   TaskDeleteCheck,
   TaskDeleteResult,
   TaskFileResult,
+  RemoteConfig,
+  RemoteDevice,
+  RemoteInterface,
+  RemotePairing,
+  RemoteStatus,
   Worktree,
   WorktreeSize,
 } from './types';
@@ -76,8 +81,31 @@ async function command<T>(name: string, args: Record<string, unknown> = {}): Pro
   }
 }
 
+export interface Transport {
+  call<T>(method: string, params: Record<string, unknown>): Promise<T>;
+  attach(sessionId: number, onOutput: (data: string) => void): Promise<SessionAttachResult>;
+  detach(sessionId: number): Promise<void>;
+}
+
+const tauriTransport: Transport = {
+  call: <T>(method: string, params: Record<string, unknown>) =>
+    command<T>('node_call', { method, params }),
+  attach: (sessionId, onOutput) => {
+    const channel = new Channel<string>();
+    channel.onmessage = onOutput;
+    return command<SessionAttachResult>('session_attach', { sessionId, onOutput: channel });
+  },
+  detach: (sessionId) => command<void>('session_detach', { sessionId }),
+};
+
+let transport: Transport = tauriTransport;
+
+export function setTransport(next: Transport) {
+  transport = next;
+}
+
 function call<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-  return command<T>('node_call', { method, params });
+  return transport.call<T>(method, params);
 }
 
 const queues = new Map<number, Promise<unknown>>();
@@ -206,12 +234,9 @@ export const api = {
     call<null>('session.resize', { session_id: sessionId, rows, cols }),
   read: (sessionId: number, lines: number) =>
     call<SessionReadResult>('session.read', { session_id: sessionId, lines }),
-  attach: (sessionId: number, onOutput: Channel<string>) =>
-    serialized(sessionId, () =>
-      command<SessionAttachResult>('session_attach', { sessionId, onOutput }),
-    ),
-  detach: (sessionId: number) =>
-    serialized(sessionId, () => command<void>('session_detach', { sessionId })),
+  attach: (sessionId: number, onOutput: (data: string) => void) =>
+    serialized(sessionId, () => transport.attach(sessionId, onOutput)),
+  detach: (sessionId: number) => serialized(sessionId, () => transport.detach(sessionId)),
   agents: () => call<AgentInfo[]>('agent.list'),
   plugins: () => call<PluginInfo[]>('plugin.list'),
   pluginSettings: (name: string) => call<PluginSettings>('plugin.settings', { name }),
@@ -247,6 +272,15 @@ export const api = {
   nodeStats: (pids: number[]) => call<NodeStats>('node.stats', { pids }),
   setNodeConfig: (config: NodeConfig) => call<null>('node_config.set', { config }),
   forges: () => call<ForgeInfo[]>('forge.list'),
+  remoteStatus: () => call<RemoteStatus>('remote.status'),
+  setRemoteConfig: (config: RemoteConfig) => call<null>('remote.config_set', { config }),
+  remoteInterfaces: () => call<RemoteInterface[]>('remote.interfaces'),
+  remoteDevices: () => call<RemoteDevice[]>('remote.device_list'),
+  addRemoteDevice: (name: string) => call<RemotePairing>('remote.device_add', { name }),
+  rotateRemoteDevice: (deviceId: number) =>
+    call<RemotePairing>('remote.device_rotate', { device_id: deviceId }),
+  removeRemoteDevice: (deviceId: number) =>
+    call<null>('remote.device_remove', { device_id: deviceId }),
   forgeStatus: (forge: string) => call<ForgeStatus>('forge.status', { forge }),
   forgeRepos: (forge: string, owner: string) => call<ForgeRepo[]>('forge.repos', { forge, owner }),
   cloneProject: (source: string, forge?: string) =>

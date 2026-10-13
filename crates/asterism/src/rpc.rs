@@ -19,18 +19,33 @@ use crate::daemon::Daemon;
 use crate::error::{Error, Result};
 use crate::lock;
 use crate::plugins::process::HostFn;
+use crate::remote;
 
 const MAX_OUTPUT_FRAME: usize = 64 * 1024;
 // Bounded so a client that stops reading backs up into the broadcast channels, which drop on lag.
-const OUT_QUEUE: usize = 256;
+pub(crate) const OUT_QUEUE: usize = 256;
 // Lets the shutdown response reach the client before the server stops.
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(50);
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Peer {
+    Local,
+    Remote { device_id: i64 },
+}
+
+const REMOTE_DENIED: &[&str] = &[method::SHUTDOWN, method::SESSION_HOOK];
+
+/// A leaked device token must not be able to stop the daemon or rotate itself.
+fn remote_denied(method_name: &str) -> bool {
+    REMOTE_DENIED.contains(&method_name) || method_name.starts_with("remote.")
+}
 
 /// One client connection; background forwarders are keyed so re-attaching replaces them.
 struct Conn {
     out: mpsc::Sender<String>,
     forwarders: Mutex<HashMap<String, JoinHandle<()>>>,
+    peer: Peer,
 }
 
 impl Conn {
@@ -86,14 +101,32 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: UnixStream) {
             }
         }
     });
+    let (lines_tx, lines_rx) = mpsc::channel::<String>(OUT_QUEUE);
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(reader).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if lines_tx.send(line).await.is_err() {
+                break;
+            }
+        }
+    });
+    run_conn(daemon, Peer::Local, lines_rx, out).await;
+}
+
+pub(crate) async fn run_conn(
+    daemon: Arc<Daemon>,
+    peer: Peer,
+    mut incoming: mpsc::Receiver<String>,
+    out: mpsc::Sender<String>,
+) {
     let conn = Arc::new(Conn {
         out,
         forwarders: Mutex::new(HashMap::new()),
+        peer,
     });
     // Dropping the set on disconnect aborts in-flight requests such as an unbounded `wait`.
     let mut requests = JoinSet::new();
-    let mut lines = BufReader::new(reader).lines();
-    while let Ok(Some(line)) = lines.next_line().await {
+    while let Some(line) = incoming.recv().await {
         while requests.try_join_next().is_some() {}
         requests.spawn(handle_line(daemon.clone(), conn.clone(), line));
     }
@@ -114,6 +147,15 @@ async fn handle_line(daemon: Arc<Daemon>, conn: Arc<Conn>, line: String) {
         }
     };
     let id = request.id;
+    if matches!(conn.peer, Peer::Remote { .. }) && remote_denied(&request.method) {
+        let message = format!("{} is not available remotely", request.method);
+        conn.send(&Response::err(
+            id,
+            RpcError::new(ErrorKind::Forbidden, message),
+        ))
+        .await;
+        return;
+    }
     if request.method == method::SESSION_ATTACH {
         attach(&daemon, &conn, id, request.params).await;
         return;
@@ -175,6 +217,25 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
                 "attach:{}",
                 params::<SessionIdParams>(raw)?.session_id
             ));
+            Ok(Value::Null)
+        }
+        method::REMOTE_STATUS => to_value(remote::status(daemon)?),
+        method::REMOTE_CONFIG_SET => {
+            remote::set_config(daemon, &params::<RemoteConfigSetParams>(raw)?.config)?;
+            Ok(Value::Null)
+        }
+        method::REMOTE_INTERFACES => to_value(remote::interfaces()?),
+        method::REMOTE_DEVICE_ADD => to_value(remote::add_device(
+            daemon,
+            &params::<RemoteDeviceAddParams>(raw)?.name,
+        )?),
+        method::REMOTE_DEVICE_LIST => to_value(remote::list_devices(daemon)?),
+        method::REMOTE_DEVICE_ROTATE => to_value(remote::rotate_device(
+            daemon,
+            params::<RemoteDeviceIdParams>(raw)?.device_id,
+        )?),
+        method::REMOTE_DEVICE_REMOVE => {
+            remote::remove_device(daemon, params::<RemoteDeviceIdParams>(raw)?.device_id)?;
             Ok(Value::Null)
         }
         other => dispatch_method(daemon, other, raw).await,
@@ -579,4 +640,30 @@ fn params<T: DeserializeOwned>(value: Value) -> Result<T> {
 
 fn to_value<T: Serialize>(value: T) -> Result<Value> {
     serde_json::to_value(value).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_peers_cannot_stop_the_daemon_or_manage_remote_access() {
+        for name in [
+            method::SHUTDOWN,
+            method::SESSION_HOOK,
+            method::REMOTE_STATUS,
+            method::REMOTE_DEVICE_ADD,
+            method::REMOTE_CONFIG_SET,
+        ] {
+            assert!(remote_denied(name), "{name}");
+        }
+        for name in [
+            method::HELLO,
+            method::SUBSCRIBE,
+            method::SESSION_SEND,
+            method::TASK_CREATE,
+        ] {
+            assert!(!remote_denied(name), "{name}");
+        }
+    }
 }

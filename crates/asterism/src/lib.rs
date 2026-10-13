@@ -16,6 +16,7 @@ pub mod paths;
 pub mod plugins;
 pub mod pr_status;
 pub mod proc_stats;
+pub mod remote;
 pub mod repo_source;
 pub mod review;
 pub mod rpc;
@@ -23,7 +24,7 @@ pub mod session;
 pub mod status;
 pub mod store;
 
-use daemon::Daemon;
+use daemon::{Daemon, DaemonOptions};
 use paths::Paths;
 
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -31,6 +32,10 @@ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 pub async fn run(paths: Paths) -> io::Result<()> {
+    run_with_options(paths, DaemonOptions::default()).await
+}
+
+pub async fn run_with_options(paths: Paths, options: DaemonOptions) -> io::Result<()> {
     let socket = paths.socket();
     paths.ensure_dirs()?;
     // Held for the whole run: two daemons racing after a crash must not both bind and recover.
@@ -54,7 +59,7 @@ pub async fn run(paths: Paths) -> io::Result<()> {
         }
         std::fs::remove_file(&socket)?;
     }
-    let daemon = Daemon::new(paths).map_err(io::Error::other)?;
+    let daemon = Daemon::with_options(paths, options).map_err(io::Error::other)?;
     let listener = UnixListener::bind(&socket)?;
     let recovering = daemon.clone();
     tokio::spawn(async move {
@@ -65,6 +70,7 @@ pub async fn run(paths: Paths) -> io::Result<()> {
     tokio::spawn(daemon.clone().store_refresh_loop());
     tokio::spawn(daemon.clone().pr_poll_loop());
     tokio::spawn(daemon.clone().hibernate_loop());
+    tokio::spawn(remote::server::run(daemon.clone()));
     tokio::select! {
         _ = rpc::serve(daemon.clone(), listener) => {}
         _ = daemon.shutdown_requested() => {}

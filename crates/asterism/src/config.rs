@@ -24,6 +24,8 @@ pub struct Config {
     /// Forge for `owner/repo` shorthand; the first installed forge when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_forge: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<asterism_proto::types::RemoteConfig>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]

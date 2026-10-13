@@ -100,6 +100,8 @@ pub enum ErrorKind {
     PermissionsChanged,
     /// The plugin is missing required settings.
     NeedsSetup,
+    /// The method is not available to this kind of client, e.g. a remote device.
+    Forbidden,
     /// A kind from a newer peer; keeps older clients decoding its errors.
     #[serde(other)]
     Unknown,
@@ -123,6 +125,7 @@ impl ErrorKind {
             Self::PluginError => -32009,
             Self::PermissionsChanged => -32010,
             Self::NeedsSetup => -32011,
+            Self::Forbidden => -32012,
             Self::Unknown => -32099,
         }
     }

@@ -67,6 +67,13 @@ const MIGRATIONS: &[&str] = &[
         content_hash TEXT NOT NULL,
         PRIMARY KEY (task_id, path)
      );",
+    "CREATE TABLE remote_devices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_at INTEGER NOT NULL,
+        last_seen_at INTEGER
+     );",
 ];
 
 const PROJECT_COLUMNS: &str = "id, name, path, created_at, default_base";
@@ -93,6 +100,16 @@ pub struct StoredReviewComment {
     pub published: bool,
     pub created_at: i64,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredRemoteDevice {
+    pub id: i64,
+    pub name: String,
+    pub created_at: i64,
+    pub last_seen_at: Option<i64>,
+}
+
+const REMOTE_DEVICE_COLUMNS: &str = "id, name, created_at, last_seen_at";
 
 fn side_str(side: DiffSide) -> &'static str {
     match side {
@@ -464,6 +481,73 @@ impl Store {
         let rows = stmt.query_map([task_id], session_row)?;
         rows.collect()
     }
+
+    pub fn add_remote_device(
+        &self,
+        name: &str,
+        token_hash: &str,
+    ) -> rusqlite::Result<StoredRemoteDevice> {
+        self.conn.execute(
+            "INSERT INTO remote_devices (name, token_hash, created_at) VALUES (?1, ?2, unixepoch())",
+            params![name, token_hash],
+        )?;
+        self.conn.query_row(
+            &format!("SELECT {REMOTE_DEVICE_COLUMNS} FROM remote_devices WHERE id = ?1"),
+            [self.conn.last_insert_rowid()],
+            remote_device_row,
+        )
+    }
+
+    pub fn remote_device(&self, id: i64) -> rusqlite::Result<Option<StoredRemoteDevice>> {
+        self.conn
+            .query_row(
+                &format!("SELECT {REMOTE_DEVICE_COLUMNS} FROM remote_devices WHERE id = ?1"),
+                [id],
+                remote_device_row,
+            )
+            .optional()
+    }
+
+    pub fn remote_devices(&self) -> rusqlite::Result<Vec<StoredRemoteDevice>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {REMOTE_DEVICE_COLUMNS} FROM remote_devices ORDER BY id"
+        ))?;
+        let rows = stmt.query_map([], remote_device_row)?;
+        rows.collect()
+    }
+
+    pub fn remote_device_by_token(&self, token_hash: &str) -> rusqlite::Result<Option<i64>> {
+        self.conn
+            .query_row(
+                "SELECT id FROM remote_devices WHERE token_hash = ?1",
+                [token_hash],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    pub fn set_remote_device_token(&self, id: i64, token_hash: &str) -> rusqlite::Result<bool> {
+        let changed = self.conn.execute(
+            "UPDATE remote_devices SET token_hash = ?2 WHERE id = ?1",
+            params![id, token_hash],
+        )?;
+        Ok(changed > 0)
+    }
+
+    pub fn remove_remote_device(&self, id: i64) -> rusqlite::Result<bool> {
+        Ok(self
+            .conn
+            .execute("DELETE FROM remote_devices WHERE id = ?1", [id])?
+            > 0)
+    }
+
+    pub fn touch_remote_device(&self, id: i64) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE remote_devices SET last_seen_at = unixepoch() WHERE id = ?1",
+            [id],
+        )?;
+        Ok(())
+    }
 }
 
 fn to_text<T: Serialize>(value: &T) -> String {
@@ -518,6 +602,15 @@ fn session_row(row: &Row) -> rusqlite::Result<StoredSession> {
             status: from_text(3, row.get(3)?)?,
         },
         agent_ref: row.get(4)?,
+    })
+}
+
+fn remote_device_row(row: &Row) -> rusqlite::Result<StoredRemoteDevice> {
+    Ok(StoredRemoteDevice {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        created_at: row.get(2)?,
+        last_seen_at: row.get(3)?,
     })
 }
 
@@ -726,6 +819,40 @@ mod tests {
         );
         store.set_project_default_base(p.id, None).unwrap();
         assert_eq!(store.project(p.id).unwrap().unwrap().default_base, None);
+    }
+
+    #[test]
+    fn remote_devices_are_found_by_token_hash_only() {
+        let store = Store::open_in_memory().unwrap();
+        let phone = store.add_remote_device("phone", "h1").unwrap();
+        let tablet = store.add_remote_device("tablet", "h2").unwrap();
+        assert_eq!(phone.name, "phone");
+        assert_eq!(phone.last_seen_at, None);
+        assert_eq!(store.remote_device_by_token("h2").unwrap(), Some(tablet.id));
+        assert_eq!(store.remote_device_by_token("nope").unwrap(), None);
+
+        assert!(store.set_remote_device_token(phone.id, "h3").unwrap());
+        assert_eq!(store.remote_device_by_token("h1").unwrap(), None);
+        assert_eq!(store.remote_device_by_token("h3").unwrap(), Some(phone.id));
+        assert!(!store.set_remote_device_token(999, "h4").unwrap());
+
+        store.touch_remote_device(phone.id).unwrap();
+        assert!(store
+            .remote_device(phone.id)
+            .unwrap()
+            .unwrap()
+            .last_seen_at
+            .is_some());
+
+        assert!(store.remove_remote_device(tablet.id).unwrap());
+        assert!(!store.remove_remote_device(tablet.id).unwrap());
+        let names: Vec<_> = store
+            .remote_devices()
+            .unwrap()
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(names, ["phone"]);
     }
 
     #[test]

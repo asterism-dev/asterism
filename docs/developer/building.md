@@ -21,7 +21,7 @@ All targets run from the repository root.
 
 | Target | What it does |
 |---|---|
-| `make dev` | Builds the sidecars, then runs `tauri dev` with hot reload. |
+| `make dev` | Builds the sidecars and the mobile app, then runs `tauri dev` with hot reload. |
 | `make dev-stop` | Stops the development daemon. |
 | `make build` | Builds the release app bundle (`npx tauri build`). |
 | `make open` | Opens the built bundle, `target/release/bundle/macos/asterism.app`. |
@@ -34,6 +34,12 @@ All targets run from the repository root.
 The app bundles the daemon, the CLI and the built-in plugin backends as Tauri sidecars. `npm run sidecars` (`apps/desktop/scripts/prepare-sidecars.mjs`) runs `cargo build -p asterism --bins` and copies the binaries to `apps/desktop/src-tauri/binaries/`, suffixed with the target triple. `make dev` and `make lint` run it first, because `tauri dev` and clippy on the Tauri crate need the binaries to exist. `tauri build` runs it with `--release` on its own.
 
 Because of this, the Tauri crate (`apps/desktop/src-tauri`) is a workspace member but not a default member: plain `cargo build` and `cargo test` cover only the four library and binary crates.
+
+### Mobile app
+
+`npm run build:mobile` (in `apps/desktop`) builds the mobile app into `dist-mobile/`, which Tauri bundles as `Contents/Resources/mobile/` and the daemon serves when remote access is enabled. `make dev` builds it first and passes its location to the dev daemon as `ASTERISM_MOBILE_DIR`.
+
+To iterate on the mobile UI, run `npm run dev:mobile`. It serves the mobile entry with hot reload on port 1421 and proxies `/ws` to the daemon's remote listener on `127.0.0.1:$ASTERISM_REMOTE_PORT` (default 7420). Enable remote access for the daemon you proxy to, and pair a device in the browser from Settings → Remote access.
 
 ### Development instance
 

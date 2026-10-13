@@ -124,6 +124,7 @@ watch(() => [state.pluginsVersion, state.storesVersion], load);
             <label class="toggle">
               <input
                 type="checkbox"
+                role="switch"
                 :checked="p.state.state !== 'disabled'"
                 @change="act(p.name, () => setEnabled(p))"
               />

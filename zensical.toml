@@ -13,6 +13,7 @@ nav = [
     "guide/projects-and-tasks.md",
     "guide/sessions.md",
     "guide/settings.md",
+    "guide/remote-access.md",
     "guide/plugins.md",
   ] },
   { "Developer" = [

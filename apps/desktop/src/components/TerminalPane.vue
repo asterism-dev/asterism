@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { Channel } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -47,16 +46,15 @@ async function attach() {
   const mine = ++generation;
   term.reset();
   attached = false;
-  // Channel messages may overtake the invoke result, so frames wait until the snapshot is painted.
+  // Output may overtake the attach result, so frames wait until the snapshot is painted.
   const pending: string[] = [];
   let painted = false;
-  const channel = new Channel<string>();
-  channel.onmessage = (data) => {
+  const onOutput = (data: string) => {
     if (painted) term?.write(decodeBase64(data));
     else pending.push(data);
   };
   try {
-    const result = await api.attach(props.sessionId, channel);
+    const result = await api.attach(props.sessionId, onOutput);
     if (disposed || mine !== generation) return;
     term.resize(result.cols, result.rows);
     // Replayed output repeats old terminal queries; xterm's answers to them must not reach the process.

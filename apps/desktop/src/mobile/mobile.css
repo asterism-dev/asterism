@@ -1,0 +1,27 @@
+/* Desktop dialogs have fixed widths; on a phone they become full-screen sheets. */
+.modal-backdrop {
+  grid-template-columns: minmax(0, 1fr);
+}
+.modal {
+  max-width: 100%;
+}
+@media (max-width: 767.98px) {
+  .modal-backdrop {
+    place-items: stretch;
+  }
+  .modal {
+    max-height: none;
+    border-radius: 0;
+    padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  /* shortcut hints are meaningless without a keyboard */
+  kbd.shortcut {
+    display: none;
+  }
+  /* below 16px iOS zooms into a focused field */
+  .modal input,
+  .modal select,
+  .modal textarea {
+    font-size: 16px;
+  }
+}

@@ -3,7 +3,7 @@
   "productName": "asterism",
   "identifier": "dev.asterism.desktop",
   "build": {
-    "beforeDevCommand": "npm run sidecars && npm run dev",
+    "beforeDevCommand": "npm run sidecars && npm run build:mobile && npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run sidecars -- --release && npm run build",
     "frontendDist": "../dist"
@@ -21,6 +21,7 @@
     "targets": ["app", "dmg"],
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
     "externalBin": ["binaries/asterismd", "binaries/asterism", "binaries/asterism-plugin-claude", "binaries/asterism-plugin-github", "binaries/asterism-plugin-linear"],
+    "resources": { "../dist-mobile/": "mobile/" },
     "macOS": { "signingIdentity": "-" }
   },
   "plugins": {

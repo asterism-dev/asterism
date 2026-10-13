@@ -468,3 +468,37 @@ export interface ReviewResult {
   pending_review: PendingReview | null;
   local_ahead: boolean;
 }
+
+export type RemoteServe = 'off' | 'managed' | 'manual';
+export interface RemoteConfig {
+  enabled: boolean;
+  bind: string;
+  port: number;
+  serve: RemoteServe;
+  serve_port: number;
+}
+export type RemoteState = 'disabled' | 'listening' | 'error';
+export interface RemoteStatus {
+  config: RemoteConfig;
+  state: RemoteState;
+  address?: string | null;
+  error?: string | null;
+  public_url?: string | null;
+  serve_command?: string | null;
+}
+export interface RemoteInterface {
+  name: string;
+  address: string;
+  tailscale: boolean;
+}
+export interface RemoteDevice {
+  id: number;
+  name: string;
+  created_at: number;
+  last_seen_at: number | null;
+  connections: number;
+}
+export interface RemotePairing {
+  device: RemoteDevice;
+  pairing_url: string;
+}

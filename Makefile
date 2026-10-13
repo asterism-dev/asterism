@@ -11,7 +11,8 @@ APP := target/release/bundle/macos/asterism.app
 
 dev:
 	@# tauri dev compiles the app while beforeDevCommand still builds the sidecars, so build them first.
-	cd $(DESKTOP) && npm run sidecars && ASTERISM_HOME=$(DEV_HOME) ASTERISM_DEV_PORT=$(DEV_PORT) ASTERISM_NODE_NAME=$(DEV_NAME) npm run tauri dev -- \
+	@# The bundle.resources path is checked when tauri compiles, so dist-mobile must exist before beforeDevCommand runs.
+	cd $(DESKTOP) && npm run sidecars && npm run build:mobile && ASTERISM_HOME=$(DEV_HOME) ASTERISM_DEV_PORT=$(DEV_PORT) ASTERISM_NODE_NAME=$(DEV_NAME) ASTERISM_MOBILE_DIR=$(CURDIR)/$(DESKTOP)/dist-mobile npm run tauri dev -- \
 		--config '{"build":{"devUrl":"http://localhost:$(DEV_PORT)"}}'
 
 dev-stop:
@@ -30,7 +31,7 @@ test:
 	cd $(DESKTOP) && npm test
 
 lint:
-	cd $(DESKTOP) && npm run sidecars && npm run typecheck && npm run lint && npm run format:check
+	cd $(DESKTOP) && npm run sidecars && npm run build:mobile && npm run typecheck && npm run lint && npm run format:check
 	cargo fmt --all --check
 	cargo clippy --workspace --all-targets -- -D warnings
 
