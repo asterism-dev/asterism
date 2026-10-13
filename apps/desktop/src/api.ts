@@ -46,6 +46,11 @@ import type {
   TaskDeleteCheck,
   TaskDeleteResult,
   TaskFileResult,
+  RemoteConfig,
+  RemoteDevice,
+  RemoteInterface,
+  RemotePairing,
+  RemoteStatus,
   Worktree,
   WorktreeSize,
 } from './types';
@@ -267,6 +272,15 @@ export const api = {
   nodeStats: (pids: number[]) => call<NodeStats>('node.stats', { pids }),
   setNodeConfig: (config: NodeConfig) => call<null>('node_config.set', { config }),
   forges: () => call<ForgeInfo[]>('forge.list'),
+  remoteStatus: () => call<RemoteStatus>('remote.status'),
+  setRemoteConfig: (config: RemoteConfig) => call<null>('remote.config_set', { config }),
+  remoteInterfaces: () => call<RemoteInterface[]>('remote.interfaces'),
+  remoteDevices: () => call<RemoteDevice[]>('remote.device_list'),
+  addRemoteDevice: (name: string) => call<RemotePairing>('remote.device_add', { name }),
+  rotateRemoteDevice: (deviceId: number) =>
+    call<RemotePairing>('remote.device_rotate', { device_id: deviceId }),
+  removeRemoteDevice: (deviceId: number) =>
+    call<null>('remote.device_remove', { device_id: deviceId }),
   forgeStatus: (forge: string) => call<ForgeStatus>('forge.status', { forge }),
   forgeRepos: (forge: string, owner: string) => call<ForgeRepo[]>('forge.repos', { forge, owner }),
   cloneProject: (source: string, forge?: string) =>

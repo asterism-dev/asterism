@@ -14,9 +14,17 @@ import PathsSettings from './PathsSettings.vue';
 import ShortcutsSettings from './ShortcutsSettings.vue';
 import PluginSettingsForm from './plugins/PluginSettingsForm.vue';
 import PluginsSettings from './PluginsSettings.vue';
+import RemoteSettings from './RemoteSettings.vue';
 
 type Section =
-  'interface' | 'shortcuts' | 'paths' | 'sessions' | 'plugins' | 'about' | `plugin:${string}`;
+  | 'interface'
+  | 'shortcuts'
+  | 'paths'
+  | 'remote'
+  | 'sessions'
+  | 'plugins'
+  | 'about'
+  | `plugin:${string}`;
 const section = ref<Section>('interface');
 const sessionKind = ref(BASE_AGENTS[0]);
 const tabs = ref<PluginTab[]>([]);
@@ -118,6 +126,9 @@ async function open(next: Section) {
           Shortcuts
         </button>
         <button :class="{ active: section === 'paths' }" @click="open('paths')">Paths</button>
+        <button :class="{ active: section === 'remote' }" @click="open('remote')">
+          Remote access
+        </button>
         <button :class="{ active: section === 'sessions' }" @click="open('sessions')">
           Sessions
         </button>
@@ -157,6 +168,9 @@ async function open(next: Section) {
       </div>
       <div v-else-if="section === 'paths'" class="settings-content">
         <PathsSettings />
+      </div>
+      <div v-else-if="section === 'remote'" class="settings-content">
+        <RemoteSettings />
       </div>
       <div v-else-if="section === 'plugins'" class="settings-content">
         <PluginsSettings />
