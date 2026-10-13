@@ -1,3 +1,9 @@
+## v0.17.0 (2026-10-13)
+
+### Feat
+
+- remote access from phones and tablets over Tailscale (#21)
+
 ## v0.16.0 (2026-10-12)
 
 ### Feat
