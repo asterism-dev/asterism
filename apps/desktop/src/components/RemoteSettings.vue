@@ -24,6 +24,17 @@ const pairing = ref<{ name: string; url: string; qr: string } | null>(null);
 const warning = computed(() => bindWarning(form.value.bind));
 const report = (e: unknown) => toast(errorMessage(e));
 let timer: number | undefined;
+let unmounted = false;
+const CUSTOM = '__custom__';
+const custom = ref(false);
+const adding = ref(false);
+const selected = computed({
+  get: () => (custom.value ? CUSTOM : form.value.bind),
+  set: (v: string) => {
+    custom.value = v === CUSTOM;
+    if (!custom.value) form.value.bind = v;
+  },
+});
 
 async function poll() {
   [status.value, devices.value] = await Promise.all([api.remoteStatus(), api.remoteDevices()]);
@@ -38,12 +49,17 @@ onMounted(async () => {
       const tailscale = interfaces.value.find((i) => i.tailscale);
       if (tailscale) form.value.bind = tailscale.address;
     }
+    custom.value = !interfaces.value.some((i) => i.address === form.value.bind);
   } catch (e) {
     report(e);
   }
+  if (unmounted) return;
   timer = window.setInterval(() => poll().catch(() => {}), POLL_MS);
 });
-onUnmounted(() => clearInterval(timer));
+onUnmounted(() => {
+  unmounted = true;
+  clearInterval(timer);
+});
 
 async function save() {
   try {
@@ -55,24 +71,23 @@ async function save() {
 }
 
 async function showPairing(p: RemotePairing) {
-  pairing.value = {
-    name: p.device.name,
-    url: p.pairing_url,
-    qr: await QRCode.toDataURL(p.pairing_url),
-  };
+  const qr = await QRCode.toDataURL(p.pairing_url).catch(() => '');
+  pairing.value = { name: p.device.name, url: p.pairing_url, qr };
   await poll();
 }
 
 function addDevice() {
   const name = newName.value.trim();
-  if (!name) return;
+  if (!name || adding.value) return;
+  adding.value = true;
   api
     .addRemoteDevice(name)
     .then((p) => {
       newName.value = '';
       return showPairing(p);
     })
-    .catch(report);
+    .catch(report)
+    .finally(() => (adding.value = false));
 }
 
 async function rotate(d: RemoteDevice) {
@@ -103,14 +118,13 @@ function lastSeen(d: RemoteDevice): string {
       <p class="hint">Use asterism from your phone or tablet over Tailscale.</p>
       <label><input v-model="form.enabled" type="checkbox" /> Enable remote access</label>
       <div class="settings-row">
-        <select v-model="form.bind" aria-label="Interface">
+        <select v-model="selected" aria-label="Interface">
           <option v-for="i in interfaces" :key="i.address" :value="i.address">
             {{ interfaceLabel(i) }}
           </option>
-          <option v-if="!interfaces.some((i) => i.address === form.bind)" :value="form.bind">
-            {{ form.bind }}
-          </option>
+          <option :value="CUSTOM">Custom address…</option>
         </select>
+        <input v-if="custom" v-model="form.bind" spellcheck="false" aria-label="Custom address" />
         <input v-model.number="form.port" type="number" min="1" max="65535" aria-label="Port" />
         <button @click="save">Save</button>
       </div>
@@ -127,13 +141,13 @@ function lastSeen(d: RemoteDevice): string {
       </div>
       <form class="settings-row" @submit.prevent="addDevice">
         <input v-model="newName" placeholder="Device name, e.g. iPhone" />
-        <button type="submit" :disabled="!newName.trim()">Add device</button>
+        <button type="submit" :disabled="!newName.trim() || adding">Add device</button>
       </form>
     </section>
     <div v-if="pairing" class="modal-backdrop" @click.self="pairing = null">
       <div class="modal">
         <h3>Pair {{ pairing.name }}</h3>
-        <img :src="pairing.qr" alt="Pairing QR code" width="240" height="240" />
+        <img v-if="pairing.qr" :src="pairing.qr" alt="Pairing QR code" width="240" height="240" />
         <p class="hint">Scan with the device's camera. The code is shown only once.</p>
         <input
           :value="pairing.url"
