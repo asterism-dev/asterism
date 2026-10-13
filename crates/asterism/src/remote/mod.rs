@@ -166,6 +166,14 @@ pub fn interfaces() -> Result<Vec<RemoteInterface>> {
     Ok(list)
 }
 
+fn is_routable(ip: IpAddr) -> bool {
+    let link_local = match ip {
+        IpAddr::V4(v4) => v4.is_link_local(),
+        IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) == 0xfe80,
+    };
+    !ip.is_loopback() && !ip.is_unspecified() && !link_local
+}
+
 /// An unspecified bind (`0.0.0.0`) is not an address a phone can open, so the first usable interface stands in.
 pub fn pairing_url(
     config: &RemoteConfig,
@@ -182,7 +190,7 @@ pub fn pairing_url(
         interfaces
             .iter()
             .filter_map(|i| i.address.parse::<IpAddr>().ok())
-            .find(|ip| !ip.is_loopback() && !ip.is_unspecified())
+            .find(|ip| ip.is_ipv4() == configured.is_ipv4() && is_routable(*ip))
             .unwrap_or(configured)
     } else {
         configured
@@ -311,6 +319,25 @@ mod tests {
         assert_eq!(
             pairing_url(&config, None, &sorted, "t"),
             "http://100.100.1.1:7420/#token=t"
+        );
+    }
+
+    #[test]
+    fn pairing_url_skips_link_local() {
+        let config = RemoteConfig {
+            enabled: true,
+            bind: "0.0.0.0".into(),
+            port: 7420,
+        };
+        let list = [
+            iface("lo0", "127.0.0.1"),
+            iface("en0", "fe80::1"),
+            iface("en0", "169.254.3.4"),
+            iface("en0", "192.168.1.2"),
+        ];
+        assert_eq!(
+            pairing_url(&config, None, &list, "t"),
+            "http://192.168.1.2:7420/#token=t"
         );
     }
 
