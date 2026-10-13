@@ -129,15 +129,15 @@ function lastSeen(d: RemoteDevice): string {
 </script>
 
 <template>
-  <div class="agent-settings">
+  <div class="agent-settings remote-settings">
     <section>
       <h3>Remote access</h3>
       <p class="hint">Use asterism from your phone or tablet over Tailscale.</p>
-      <label
+      <label class="switch"
         ><input v-model="form.enabled" type="checkbox" role="switch" /> Enable remote access</label
       >
       <div class="settings-row">
-        <label for="remote-serve">HTTPS via Tailscale serve</label>
+        <label for="remote-serve" class="serve-label">HTTPS via Tailscale serve</label>
         <select id="remote-serve" v-model="form.serve">
           <option v-for="o in SERVE_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
         </select>
@@ -224,6 +224,26 @@ function lastSeen(d: RemoteDevice): string {
 </template>
 
 <style scoped>
+/* Settings stack with breathing room; the global .settings-row margin would double up. */
+.remote-settings section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.remote-settings section > * {
+  margin: 0;
+}
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  cursor: pointer;
+}
+.serve-label {
+  align-self: center;
+  white-space: nowrap;
+}
 .device-row {
   align-items: center;
 }
