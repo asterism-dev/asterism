@@ -3,7 +3,7 @@
   "productName": "asterism",
   "identifier": "dev.asterism.desktop",
   "build": {
-    "beforeDevCommand": "npm run sidecars && npm run dev",
+    "beforeDevCommand": "npm run sidecars && npm run build:mobile && npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run sidecars -- --release && npm run build",
     "frontendDist": "../dist"
