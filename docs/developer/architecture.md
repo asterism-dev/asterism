@@ -50,7 +50,7 @@ The daemon, the CLI and the built-in plugin backends:
 | `src/bin/asterism-plugin-{claude,github,linear}/` | Backends of the built-in plugins. |
 | `src/lib.rs` | `run`: takes `asterismd.lock`, binds the socket, recovers sessions, starts the store refresh and pull request polling loops. |
 | `src/rpc.rs` | Connection handling shared by the socket and the remote listener (`run_conn`), session output forwarding, and the host API exposed to plugins. |
-| `src/remote/` | Remote access: `mod.rs` (the `Hub`: config, interfaces, devices, pairing URL) and `server.rs` (the HTTP and WebSocket listener). |
+| `src/remote/` | Remote access: `mod.rs` (the `Hub`: config, interfaces, devices, pairing URL), `server.rs` (the HTTP and WebSocket listener) and `tailscale.rs` (the Tailscale CLI calls for `tailscale serve`). |
 | `src/daemon.rs` | `Daemon`: projects, tasks, sessions, plugins, stores and pull request status. |
 | `src/session.rs` | `Pty`: a pseudo-terminal (`portable-pty`) with a `vt100` screen model for reads and attach snapshots. |
 | `src/status.rs` | Session status tracking (see [Session lifecycle](#session-lifecycle)). |
@@ -92,6 +92,7 @@ When `[remote]` is enabled, the daemon also listens on a TCP address and serves 
 - `GET /ws` upgrades to a WebSocket. The `Origin` header must match the request's host and port, otherwise the upgrade fails with `403`. The first message must be `{"auth": "<token>"}` within 5 s; on failure the server waits 1 s and closes with code `4401`. Afterwards every text message is one JSON-RPC line, limited to 1 MB. Removing or rotating a device closes its connections with `4401`; changing the remote config closes all of them with `1001`.
 - `run_conn` in `rpc.rs` takes a stream of lines and a sink of lines, so the socket and the WebSocket share requests, `subscribe` events, `session.attach` output and the bounded output queue. Each connection carries a `Peer`, `Local` or `Remote { device_id }`. Remote peers get a `forbidden` error for `shutdown`, `session.hook` and all `remote.*` methods, so a leaked token cannot stop the daemon or manage devices.
 - `remote/mod.rs` (`Hub`) holds the config, lists interfaces (Tailscale addresses in `100.64.0.0/10` are flagged) and manages devices. A token is 32 random bytes, base64url encoded; only its SHA-256 hash is stored in `remote_devices`. The pairing URL is `http://<address>:<port>/#token=<token>`; for a wildcard bind it uses an address of the same family that is not link-local.
+- `serve` in `[remote]` puts Tailscale serve in front of the listener for HTTPS: `off` (default), `managed` (the daemon runs `tailscale serve --bg --https=<serve_port> http://127.0.0.1:<port>` after binding and `tailscale serve --https=<serve_port> off` when the listener is torn down for a config change) or `manual` (the user runs that command; `remote.status` returns it as `serve_command`). With serve on, the listener binds `127.0.0.1` whatever `bind` says, and `serve_port` defaults to 8443 so the user's own serve setup on 443 is left alone. When the listener starts, `remote/tailscale.rs` reads `tailscale status --json` once: `Self.DNSName` gives `public_url` (`https://<dns>:<serve_port>`), which the pairing URL then uses, and empty `CertDomains` is an error. In managed mode any failure tears the listener down and retries like a bind failure; in manual mode the listener stays up and the error is shown. On daemon shutdown serve stays configured and is re-applied on the next start. The CLI is `DaemonOptions::tailscale_bin`: `ASTERISM_TAILSCALE`, else `tailscale` on `PATH`, else `/Applications/Tailscale.app/Contents/MacOS/Tailscale`.
 
 The client is a second entry point of the desktop frontend: `mobile.html` and `src/mobile/`, with its own layout, `WsTransport`, pairing and hash routing. `apps/desktop/vite.mobile.config.ts` builds it into `dist-mobile/` and aliases the Tauri modules and `dock/main` to browser shims in `src/mobile/shims/`, so reused components keep their imports and the bundle contains no Tauri code. `bundle.resources` maps `dist-mobile/` to `Contents/Resources/mobile/`.
 
@@ -105,7 +106,7 @@ Everything lives under `ASTERISM_HOME`, which defaults to `~/.asterism`. The dir
 | `asterismd.lock` | Held by the running daemon so that two daemons never run against the same home. |
 | `asterismd.log` | The daemon's stderr, including plugin backend stderr prefixed with `plugin <name>:`. |
 | `state.db` | SQLite database with projects, tasks, sessions and the `remote_devices` table (paired devices: name and SHA-256 token hash). |
-| `config.toml` | Settings: paths, agent settings, non-secret plugin settings, default forge, and the `[remote]` section (`enabled`, `bind`, `port`). |
+| `config.toml` | Settings: paths, agent settings, non-secret plugin settings, default forge, and the `[remote]` section (`enabled`, `bind`, `port`, `serve`, `serve_port`). |
 | `secrets.toml` | Secret plugin settings, written with mode `0600`. |
 | `worktrees/` | Default worktrees directory; configurable in the node settings. |
 | `repos/` | Default directory for cloned and created repositories; configurable in the node settings. |

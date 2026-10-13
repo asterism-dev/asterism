@@ -17,6 +17,21 @@ Remote access is off by default.
 
 The status line shows the address Asterism listens on, or the reason it cannot. If the interface is missing or the port is taken, the daemon retries every 30 s, so starting Tailscale after Asterism recovers on its own.
 
+## HTTPS with Tailscale serve
+
+By default the mobile app is served over plain HTTP. With **HTTPS via Tailscale serve**, Tailscale terminates HTTPS with a real certificate for your Mac's name in the tailnet (`<mac>.<tailnet>.ts.net`) and forwards to Asterism. HTTPS makes the page a secure context in the browser.
+
+Requirement: HTTPS certificates are enabled for your tailnet (Tailscale admin console → **DNS** → **HTTPS Certificates**). Otherwise the status line says so.
+
+1. In **Settings → Remote access**, choose a mode:
+   - **Run it for me**: Asterism runs `tailscale serve` itself when it starts listening and turns it off when you change or disable remote access.
+   - **I'll run it myself**: Settings shows the exact `tailscale serve` command with a **Copy** button, and the command that turns it off again.
+2. Set the **HTTPS port** (default 8443, so a serve setup of your own on 443 is left alone) and click **Save**.
+
+In both modes Asterism listens on `127.0.0.1` only; the interface picker is hidden because the tailnet reaches Asterism through Tailscale serve. Settings shows the address phones open, e.g. `https://mac.example.ts.net:8443`, and new pairing QR codes use it. Devices paired over HTTP need a new token to switch.
+
+The first connection after serve starts can take up to a minute while Tailscale issues the certificate.
+
 ## Pair a device
 
 1. Under **Devices**, enter a name and click **Add device**.
@@ -49,11 +64,11 @@ Not in this version:
 - Plugin panes.
 - Reviewing changes; use the desktop app for that.
 - The desktop dock layout on tablets; tablets get a two-column list and detail view.
-- HTTPS and push notifications.
+- Push notifications.
 
 ## Security
 
 - Every device has its own token. Only its SHA-256 hash is stored; the token itself exists only in the QR code and on the device.
 - A remote device cannot stop the daemon, change the remote access settings or manage devices. Those stay with the desktop app.
 - Choosing `0.0.0.0` listens on every network interface of the Mac, not only Tailscale, and Settings warns about it. Prefer the Tailscale interface.
-- The connection is plain HTTP. Inside the tailnet WireGuard encrypts the traffic. Without HTTPS the browser gives the page no service worker, so there are no push notifications and no offline mode.
+- Without Tailscale serve the connection is plain HTTP. Inside the tailnet WireGuard encrypts the traffic, but the browser does not treat the page as a secure context. Turn on [HTTPS with Tailscale serve](#https-with-tailscale-serve) for that.
