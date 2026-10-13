@@ -1,4 +1,5 @@
 pub mod server;
+pub mod tailscale;
 pub mod token;
 
 use std::collections::HashMap;
@@ -19,10 +20,23 @@ use crate::error::{Error, Result};
 use crate::lock;
 use crate::store::StoredRemoteDevice;
 
-struct Listener {
-    state: RemoteState,
-    address: Option<SocketAddr>,
-    error: Option<String>,
+#[derive(Default)]
+pub struct Listener {
+    pub state: RemoteState,
+    pub address: Option<SocketAddr>,
+    pub error: Option<String>,
+    pub public_url: Option<String>,
+    pub serve_command: Option<String>,
+}
+
+impl Listener {
+    pub fn failed(error: String) -> Self {
+        Self {
+            state: RemoteState::Error,
+            error: Some(error),
+            ..Self::default()
+        }
+    }
 }
 
 pub struct Hub {
@@ -36,27 +50,23 @@ pub struct Hub {
 impl Hub {
     pub fn new() -> Self {
         Self {
-            listener: Mutex::new(Listener {
-                state: RemoteState::Disabled,
-                address: None,
-                error: None,
-            }),
+            listener: Mutex::new(Listener::default()),
             changed: Notify::new(),
             closing: broadcast::channel(16).0,
             connections: Mutex::new(HashMap::new()),
         }
     }
 
-    pub fn set(&self, state: RemoteState, address: Option<SocketAddr>, error: Option<String>) {
-        *lock(&self.listener) = Listener {
-            state,
-            address,
-            error,
-        };
+    pub fn set(&self, listener: Listener) {
+        *lock(&self.listener) = listener;
     }
 
     pub fn bound(&self) -> Option<SocketAddr> {
         lock(&self.listener).address
+    }
+
+    pub fn public_url(&self) -> Option<String> {
+        lock(&self.listener).public_url.clone()
     }
 
     /// Closes the connections of one device, or of every device for `None`.
@@ -122,6 +132,8 @@ pub fn status(daemon: &Daemon) -> Result<RemoteStatus> {
         state: listener.state,
         address: listener.address.map(|a| a.to_string()),
         error: listener.error.clone(),
+        public_url: listener.public_url.clone(),
+        serve_command: listener.serve_command.clone(),
     })
 }
 
@@ -211,9 +223,17 @@ fn device_info(daemon: &Daemon, stored: StoredRemoteDevice) -> RemoteDevice {
 
 fn pairing(daemon: &Daemon, stored: StoredRemoteDevice, token: &str) -> Result<RemotePairing> {
     let config = load_config(daemon.paths())?;
-    let interfaces = interfaces().unwrap_or_default();
+    let url = match daemon.remote.public_url() {
+        Some(base) => format!("{base}/#token={token}"),
+        None => pairing_url(
+            &config,
+            daemon.remote.bound(),
+            &interfaces().unwrap_or_default(),
+            token,
+        ),
+    };
     Ok(RemotePairing {
-        pairing_url: pairing_url(&config, daemon.remote.bound(), &interfaces, token),
+        pairing_url: url,
         device: device_info(daemon, stored),
     })
 }
@@ -298,6 +318,7 @@ mod tests {
             enabled: true,
             bind: "127.0.0.1".into(),
             port: 0,
+            ..RemoteConfig::default()
         };
         let url = pairing_url(&config, Some("127.0.0.1:5555".parse().unwrap()), &[], "tok");
         assert_eq!(url, "http://127.0.0.1:5555/#token=tok");
@@ -309,6 +330,7 @@ mod tests {
             enabled: true,
             bind: "0.0.0.0".into(),
             port: 7420,
+            ..RemoteConfig::default()
         };
         let list = [
             iface("lo0", "127.0.0.1"),
@@ -329,6 +351,7 @@ mod tests {
             enabled: true,
             bind: "0.0.0.0".into(),
             port: 7420,
+            ..RemoteConfig::default()
         };
         let list = [
             iface("lo0", "127.0.0.1"),
@@ -348,6 +371,7 @@ mod tests {
             enabled: true,
             bind: "fd7a:115c:a1e0::1".into(),
             port: 7420,
+            ..RemoteConfig::default()
         };
         assert_eq!(
             pairing_url(&config, None, &[], "t"),

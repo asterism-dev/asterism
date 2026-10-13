@@ -18,6 +18,13 @@ struct Daemon {
 }
 
 async fn start_with(mobile_dir: Option<PathBuf>) -> Daemon {
+    start_with_tailscale(mobile_dir, None).await
+}
+
+async fn start_with_tailscale(
+    mobile_dir: Option<PathBuf>,
+    tailscale_bin: Option<PathBuf>,
+) -> Daemon {
     let home = tempfile::tempdir().unwrap();
     let paths = Paths {
         home: home.path().to_path_buf(),
@@ -26,6 +33,7 @@ async fn start_with(mobile_dir: Option<PathBuf>) -> Daemon {
     let options = asterism_core::daemon::DaemonOptions {
         mobile_dir,
         remote_retry: Duration::from_millis(100),
+        tailscale_bin,
         ..common::daemon_options()
     };
     tokio::spawn(asterism_core::run_with_options(paths, options));
@@ -102,6 +110,7 @@ async fn config_rejects_invalid_bind_address() {
             enabled: true,
             bind: "my-mac".into(),
             port: 7420,
+            ..RemoteConfig::default()
         },
     )
     .await
@@ -116,11 +125,14 @@ async fn config_is_saved_to_config_toml() {
         enabled: false,
         bind: "100.100.1.1".into(),
         port: 7999,
+        serve: RemoteServe::Manual,
+        serve_port: 443,
     };
     set_config(&d, config.clone()).await.unwrap();
     assert_eq!(status(&d).await.config, config);
     let text = std::fs::read_to_string(d.home.path().join("config.toml")).unwrap();
     assert!(text.contains("[remote]"), "{text}");
+    assert!(text.contains("serve = \"manual\""), "{text}");
 }
 
 #[tokio::test]
@@ -216,6 +228,7 @@ async fn enable(d: &Daemon) -> SocketAddr {
             enabled: true,
             bind: "127.0.0.1".into(),
             port: 0,
+            ..RemoteConfig::default()
         },
     )
     .await
@@ -432,6 +445,7 @@ async fn disabling_closes_remote_connections() {
             enabled: false,
             bind: "127.0.0.1".into(),
             port: 0,
+            ..RemoteConfig::default()
         },
     )
     .await
@@ -452,6 +466,7 @@ async fn bind_failure_is_retried() {
             enabled: true,
             bind: "127.0.0.1".into(),
             port,
+            ..RemoteConfig::default()
         },
     )
     .await
@@ -569,6 +584,7 @@ async fn disabling_during_auth_closes_connection() {
             enabled: false,
             bind: "127.0.0.1".into(),
             port: 0,
+            ..RemoteConfig::default()
         },
     )
     .await
@@ -615,4 +631,166 @@ async fn malformed_auth_is_not_unauthorized() {
     ws.send(Message::Text("not json".into())).await.unwrap();
     let code = close_code_within(&mut ws, Duration::from_secs(5)).await;
     assert_eq!(code, Some(1008));
+}
+
+struct FakeTailscale {
+    dir: TempDir,
+}
+
+impl FakeTailscale {
+    fn new(cert_domains: &str) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("log");
+        let status = format!(
+            r#"{{"Self":{{"DNSName":"mac.example.ts.net."}},"CertDomains":{cert_domains}}}"#
+        );
+        let script = format!(
+            "#!/bin/sh\necho \"$*\" >> '{}'\nif [ \"$1\" = status ]; then echo '{status}'; fi\n",
+            log.display()
+        );
+        let bin = dir.path().join("tailscale");
+        std::fs::write(&bin, script).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Self { dir }
+    }
+
+    fn bin(&self) -> PathBuf {
+        self.dir.path().join("tailscale")
+    }
+
+    fn calls(&self) -> Vec<String> {
+        std::fs::read_to_string(self.dir.path().join("log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+}
+
+fn serve_config(serve: RemoteServe, bind: &str) -> RemoteConfig {
+    RemoteConfig {
+        enabled: true,
+        bind: bind.into(),
+        port: 0,
+        serve,
+        ..RemoteConfig::default()
+    }
+}
+
+async fn wait_for_state(d: &Daemon, state: RemoteState) -> RemoteStatus {
+    for _ in 0..100 {
+        let s = status(d).await;
+        if s.state == state {
+            return s;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!(
+        "remote listener never reached {state:?}: {:?}",
+        status(d).await
+    );
+}
+
+#[tokio::test]
+async fn managed_serve_is_started_and_stopped() {
+    let fake = FakeTailscale::new(r#"["mac.example.ts.net"]"#);
+    let d = start_with_tailscale(None, Some(fake.bin())).await;
+    set_config(&d, serve_config(RemoteServe::Managed, "127.0.0.1"))
+        .await
+        .unwrap();
+    let s = wait_for_state(&d, RemoteState::Listening).await;
+    let bound: SocketAddr = s.address.unwrap().parse().unwrap();
+    assert_eq!(
+        s.public_url.as_deref(),
+        Some("https://mac.example.ts.net:8443")
+    );
+    let on = format!("serve --bg --https=8443 http://127.0.0.1:{}", bound.port());
+    assert!(fake.calls().contains(&on), "{:?}", fake.calls());
+    assert!(s.serve_command.unwrap().ends_with(&on));
+    assert!(pair(&d, "phone")
+        .await
+        .pairing_url
+        .starts_with("https://mac.example.ts.net:8443/#token="));
+
+    set_config(
+        &d,
+        RemoteConfig {
+            enabled: false,
+            ..serve_config(RemoteServe::Managed, "127.0.0.1")
+        },
+    )
+    .await
+    .unwrap();
+    for _ in 0..100 {
+        if fake.calls().iter().any(|c| c == "serve --https=8443 off") {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("serve was not stopped: {:?}", fake.calls());
+}
+
+#[tokio::test]
+async fn manual_serve_only_shows_the_command() {
+    let fake = FakeTailscale::new(r#"["mac.example.ts.net"]"#);
+    let d = start_with_tailscale(None, Some(fake.bin())).await;
+    set_config(&d, serve_config(RemoteServe::Manual, "127.0.0.1"))
+        .await
+        .unwrap();
+    let s = wait_for_state(&d, RemoteState::Listening).await;
+    assert!(s
+        .serve_command
+        .unwrap()
+        .contains("serve --bg --https=8443 http://127.0.0.1:"));
+    assert!(pair(&d, "phone")
+        .await
+        .pairing_url
+        .starts_with("https://mac.example.ts.net:8443/#token="));
+    assert!(
+        !fake.calls().iter().any(|c| c.starts_with("serve")),
+        "{:?}",
+        fake.calls()
+    );
+}
+
+#[tokio::test]
+async fn serve_listens_on_loopback_whatever_the_bind() {
+    let fake = FakeTailscale::new(r#"["mac.example.ts.net"]"#);
+    let d = start_with_tailscale(None, Some(fake.bin())).await;
+    set_config(&d, serve_config(RemoteServe::Manual, "0.0.0.0"))
+        .await
+        .unwrap();
+    let s = wait_for_state(&d, RemoteState::Listening).await;
+    assert!(s.address.unwrap().starts_with("127.0.0.1:"));
+    assert_eq!(s.config.bind, "0.0.0.0");
+}
+
+#[tokio::test]
+async fn serve_needs_https_certificates() {
+    let fake = FakeTailscale::new("null");
+    let d = start_with_tailscale(None, Some(fake.bin())).await;
+    set_config(&d, serve_config(RemoteServe::Managed, "127.0.0.1"))
+        .await
+        .unwrap();
+    let s = wait_for_state(&d, RemoteState::Error).await;
+    assert!(
+        s.error
+            .unwrap()
+            .contains("HTTPS certificates are not enabled"),
+        "{:?}",
+        status(&d).await
+    );
+    assert!(!fake.calls().iter().any(|c| c.starts_with("serve")));
+}
+
+#[tokio::test]
+async fn managed_serve_without_tailscale_is_an_error() {
+    let d = start_with_tailscale(None, Some(PathBuf::from("/nonexistent/tailscale"))).await;
+    set_config(&d, serve_config(RemoteServe::Managed, "127.0.0.1"))
+        .await
+        .unwrap();
+    let s = wait_for_state(&d, RemoteState::Error).await;
+    assert!(s.error.unwrap().contains("/nonexistent/tailscale"));
+    assert!(s.address.is_none());
 }

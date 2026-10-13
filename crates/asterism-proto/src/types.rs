@@ -262,6 +262,16 @@ pub struct RemoteConfig {
     pub enabled: bool,
     pub bind: String,
     pub port: u16,
+    /// Whether Tailscale serve terminates HTTPS in front of the listener; then it binds `127.0.0.1` regardless of `bind`.
+    #[serde(default)]
+    pub serve: RemoteServe,
+    #[serde(default = "default_serve_port")]
+    pub serve_port: u16,
+}
+
+// Not 443, so the user's own serve setup on 443 is never clobbered.
+fn default_serve_port() -> u16 {
+    8443
 }
 
 impl Default for RemoteConfig {
@@ -270,13 +280,25 @@ impl Default for RemoteConfig {
             enabled: false,
             bind: "127.0.0.1".into(),
             port: 7420,
+            serve: RemoteServe::Off,
+            serve_port: default_serve_port(),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteServe {
+    #[default]
+    Off,
+    Managed,
+    Manual,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RemoteState {
+    #[default]
     Disabled,
     Listening,
     Error,
@@ -291,6 +313,10 @@ pub struct RemoteStatus {
     pub address: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
+    #[serde(default)]
+    pub public_url: Option<String>,
+    #[serde(default)]
+    pub serve_command: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

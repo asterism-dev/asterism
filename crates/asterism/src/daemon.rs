@@ -77,6 +77,8 @@ pub struct DaemonOptions {
     pub mobile_dir: Option<PathBuf>,
     /// How long a failed remote listener waits before binding again.
     pub remote_retry: Duration,
+    /// The Tailscale CLI used for `tailscale serve`; tests inject a fake.
+    pub tailscale_bin: Option<PathBuf>,
 }
 
 impl Default for DaemonOptions {
@@ -93,6 +95,7 @@ impl Default for DaemonOptions {
                 .filter(|name| !name.trim().is_empty()),
             mobile_dir: default_mobile_dir(),
             remote_retry: Duration::from_secs(30),
+            tailscale_bin: Some(crate::remote::tailscale::default_bin()),
         }
     }
 }
@@ -292,6 +295,10 @@ impl Daemon {
 
     pub fn remote_retry(&self) -> Duration {
         self.options.remote_retry
+    }
+
+    pub fn tailscale_bin(&self) -> Option<&Path> {
+        self.options.tailscale_bin.as_deref()
     }
 
     pub fn paths(&self) -> &Paths {

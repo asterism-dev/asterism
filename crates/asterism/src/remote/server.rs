@@ -1,9 +1,9 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use asterism_proto::types::{RemoteConfig, RemoteState};
+use asterism_proto::types::{RemoteConfig, RemoteServe, RemoteState};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
@@ -17,6 +17,7 @@ use tokio::sync::mpsc;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeaderLayer;
 
+use super::{tailscale, Listener};
 use crate::daemon::Daemon;
 use crate::rpc::{self, Peer, OUT_QUEUE};
 
@@ -38,39 +39,93 @@ pub async fn run(daemon: Arc<Daemon>) {
         let config = match super::load_config(daemon.paths()) {
             Ok(config) => config,
             Err(e) => {
-                daemon.remote.set(RemoteState::Error, None, Some(e.message));
+                daemon.remote.set(Listener::failed(e.message));
                 wait(&daemon).await;
                 continue;
             }
         };
         if !config.enabled {
-            daemon.remote.set(RemoteState::Disabled, None, None);
+            daemon.remote.set(Listener::default());
             daemon.remote.changed.notified().await;
             continue;
         }
-        match bind(&config).await {
-            Ok(listener) => {
-                daemon
-                    .remote
-                    .set(RemoteState::Listening, listener.local_addr().ok(), None);
-                tokio::select! {
-                    result = axum::serve(listener, router(daemon.clone())) => {
-                        let message = result.err().map_or_else(
-                            || "the remote listener stopped".to_string(),
-                            |e| e.to_string(),
-                        );
-                        daemon.remote.set(RemoteState::Error, None, Some(message));
-                        wait(&daemon).await;
-                    }
-                    _ = daemon.remote.changed.notified() => {}
+        let listener = match bind(&config).await {
+            Ok(listener) => listener,
+            Err(message) => {
+                daemon.remote.set(Listener::failed(message));
+                wait(&daemon).await;
+                continue;
+            }
+        };
+        let address = listener.local_addr().ok();
+        let mut status = Listener {
+            state: RemoteState::Listening,
+            address,
+            ..Listener::default()
+        };
+        let bin = daemon.tailscale_bin();
+        let mut applied = false;
+        if config.serve != RemoteServe::Off {
+            let local_port = address.map_or(config.port, |a| a.port());
+            status.serve_command = Some(tailscale::serve_command(
+                bin.unwrap_or(Path::new("tailscale")),
+                config.serve_port,
+                local_port,
+            ));
+            match start_serve(bin, &config, local_port).await {
+                Ok(url) => {
+                    status.public_url = Some(url);
+                    applied = config.serve == RemoteServe::Managed;
+                }
+                Err(message) if config.serve == RemoteServe::Managed => {
+                    drop(listener);
+                    daemon.remote.set(Listener {
+                        serve_command: status.serve_command,
+                        ..Listener::failed(message)
+                    });
+                    wait(&daemon).await;
+                    continue;
+                }
+                // The user runs serve, so the listener stays up while the error is shown.
+                Err(message) => {
+                    status.state = RemoteState::Error;
+                    status.error = Some(message);
                 }
             }
-            Err(message) => {
-                daemon.remote.set(RemoteState::Error, None, Some(message));
-                wait(&daemon).await;
+        }
+        daemon.remote.set(status);
+        let failure = tokio::select! {
+            result = axum::serve(listener, router(daemon.clone())) => Some(result.err().map_or_else(
+                || "the remote listener stopped".to_string(),
+                |e| e.to_string(),
+            )),
+            _ = daemon.remote.changed.notified() => None,
+        };
+        // ponytail: on daemon shutdown serve stays configured (phones get a 502 until the daemon is back and re-applies it).
+        if let (true, Some(bin)) = (applied, bin) {
+            if let Err(e) = tailscale::serve_off(bin, config.serve_port).await {
+                eprintln!("asterismd: {e}");
             }
         }
+        if let Some(message) = failure {
+            daemon.remote.set(Listener::failed(message));
+            wait(&daemon).await;
+        }
     }
+}
+
+/// Checks the tailnet can issue certificates, then (managed) starts serve; returns the public URL.
+async fn start_serve(
+    bin: Option<&Path>,
+    config: &RemoteConfig,
+    local_port: u16,
+) -> Result<String, String> {
+    let bin = bin.ok_or("the Tailscale CLI was not found")?;
+    let url = tailscale::public_url(bin, config.serve_port).await?;
+    if config.serve == RemoteServe::Managed {
+        tailscale::serve_on(bin, config.serve_port, local_port).await?;
+    }
+    Ok(url)
 }
 
 async fn wait(daemon: &Daemon) {
@@ -81,10 +136,15 @@ async fn wait(daemon: &Daemon) {
 }
 
 async fn bind(config: &RemoteConfig) -> Result<TcpListener, String> {
-    let ip = config
-        .bind
-        .parse()
-        .map_err(|_| format!("invalid bind address {:?}", config.bind))?;
+    // Behind serve the tailnet reaches the listener only through Tailscale.
+    let ip = if config.serve == RemoteServe::Off {
+        config
+            .bind
+            .parse()
+            .map_err(|_| format!("invalid bind address {:?}", config.bind))?
+    } else {
+        IpAddr::from([127, 0, 0, 1])
+    };
     let addr = SocketAddr::new(ip, config.port);
     TcpListener::bind(addr)
         .await

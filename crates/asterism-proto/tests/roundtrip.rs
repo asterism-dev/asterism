@@ -523,14 +523,26 @@ fn remote_types_roundtrip() {
         RemoteConfig {
             enabled: false,
             bind: "127.0.0.1".into(),
-            port: 7420
+            port: 7420,
+            serve: RemoteServe::Off,
+            serve_port: 8443,
         }
+    );
+    let old: RemoteConfig =
+        serde_json::from_value(serde_json::json!({"enabled": true, "bind": "::", "port": 1}))
+            .unwrap();
+    assert_eq!((old.serve, old.serve_port), (RemoteServe::Off, 8443));
+    assert_eq!(
+        serde_json::to_value(RemoteServe::Managed).unwrap(),
+        "managed"
     );
     let status = RemoteStatus {
         config: RemoteConfig::default(),
         state: RemoteState::Listening,
         address: Some("127.0.0.1:7420".into()),
         error: None,
+        public_url: Some("https://mac.example.ts.net:8443".into()),
+        serve_command: None,
     };
     let json = serde_json::to_value(&status).unwrap();
     assert_eq!(json["state"], "listening");
