@@ -12,7 +12,10 @@ class FakeSocket implements SocketLike {
   send(data: string) {
     this.sent.push(JSON.parse(data));
   }
-  close() {}
+  closed = false;
+  close() {
+    this.closed = true;
+  }
   open() {
     this.readyState = 1;
     this.onopen?.();
@@ -164,5 +167,18 @@ describe('WsTransport', () => {
       state: 'incompatible',
       message: 'reload the page',
     });
+  });
+
+  it('retries when the handshake fails', async () => {
+    const t = transport();
+    t.start();
+    const s = sockets[0];
+    s.open();
+    s.fail(s.lastId(), 'internal', 'boom');
+    await flush();
+    expect(s.closed).toBe(true);
+    s.drop();
+    vi.advanceTimersByTime(1000);
+    expect(sockets).toHaveLength(2);
   });
 });

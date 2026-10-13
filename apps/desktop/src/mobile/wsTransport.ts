@@ -119,6 +119,8 @@ export class WsTransport implements Transport {
         this.stopped = true;
         this.options.onStatus({ state: 'incompatible', message: e.message });
         socket.close();
+      } else if (socket === this.socket) {
+        socket.close();
       }
     }
   }
