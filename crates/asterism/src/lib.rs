@@ -16,6 +16,7 @@ pub mod paths;
 pub mod plugins;
 pub mod pr_status;
 pub mod proc_stats;
+pub mod remote;
 pub mod repo_source;
 pub mod review;
 pub mod rpc;
