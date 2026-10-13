@@ -4,7 +4,13 @@ import QRCode from 'qrcode';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api, errorMessage } from '../api';
 import { relativeTime } from '../projects';
-import { bindWarning, interfaceLabel, statusLine } from '../remoteSettings';
+import {
+  SERVE_OPTIONS,
+  bindWarning,
+  interfaceLabel,
+  serveOffCommand,
+  statusLine,
+} from '../remoteSettings';
 import { toast } from '../store';
 import type {
   RemoteConfig,
@@ -18,10 +24,17 @@ const POLL_MS = 2000;
 const status = ref<RemoteStatus | null>(null);
 const interfaces = ref<RemoteInterface[]>([]);
 const devices = ref<RemoteDevice[]>([]);
-const form = ref<RemoteConfig>({ enabled: false, bind: '127.0.0.1', port: 7420 });
+const form = ref<RemoteConfig>({
+  enabled: false,
+  bind: '127.0.0.1',
+  port: 7420,
+  serve: 'off',
+  serve_port: 8443,
+});
 const newName = ref('');
 const pairing = ref<{ name: string; url: string; qr: string } | null>(null);
-const warning = computed(() => bindWarning(form.value.bind));
+const warning = computed(() => (form.value.serve === 'off' ? bindWarning(form.value.bind) : null));
+const serving = computed(() => status.value?.config.serve ?? 'off');
 const report = (e: unknown) => toast(errorMessage(e));
 let timer: number | undefined;
 let unmounted = false;
@@ -68,6 +81,10 @@ async function save() {
   } catch (e) {
     report(e);
   }
+}
+
+function copyCommand(command: string) {
+  navigator.clipboard.writeText(command).then(() => toast('Copied'), report);
 }
 
 async function showPairing(p: RemotePairing) {
@@ -120,18 +137,62 @@ function lastSeen(d: RemoteDevice): string {
         ><input v-model="form.enabled" type="checkbox" role="switch" /> Enable remote access</label
       >
       <div class="settings-row">
-        <select v-model="selected" aria-label="Interface">
+        <label for="remote-serve">HTTPS via Tailscale serve</label>
+        <select id="remote-serve" v-model="form.serve">
+          <option v-for="o in SERVE_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+        <input
+          v-if="form.serve !== 'off'"
+          v-model.number="form.serve_port"
+          type="number"
+          min="1"
+          max="65535"
+          aria-label="HTTPS port"
+        />
+      </div>
+      <p v-if="form.serve !== 'off'" class="hint">
+        Listens on 127.0.0.1 only; Tailscale serve forwards HTTPS to it.
+      </p>
+      <div class="settings-row">
+        <select v-if="form.serve === 'off'" v-model="selected" aria-label="Interface">
           <option v-for="i in interfaces" :key="i.address" :value="i.address">
             {{ interfaceLabel(i) }}
           </option>
           <option :value="CUSTOM">Custom address…</option>
         </select>
-        <input v-if="custom" v-model="form.bind" spellcheck="false" aria-label="Custom address" />
+        <input
+          v-if="custom && form.serve === 'off'"
+          v-model="form.bind"
+          spellcheck="false"
+          aria-label="Custom address"
+        />
         <input v-model.number="form.port" type="number" min="1" max="65535" aria-label="Port" />
         <button @click="save">Save</button>
       </div>
       <p v-if="warning" class="error">{{ warning }}</p>
       <p v-if="status" class="muted">{{ statusLine(status) }}</p>
+      <template v-if="status && serving !== 'off'">
+        <p v-if="status.public_url" class="muted">Phones open {{ status.public_url }}</p>
+        <template v-if="serving === 'manual' && status.serve_command">
+          <div class="settings-row">
+            <input
+              class="command"
+              :value="status.serve_command"
+              readonly
+              aria-label="Tailscale serve command"
+              @focus="($event.target as HTMLInputElement).select()"
+            />
+            <button @click="copyCommand(status.serve_command)">Copy</button>
+          </div>
+          <p class="hint">
+            Run it in a terminal. To stop it:
+            <code>{{ serveOffCommand(status.serve_command) }}</code>
+          </p>
+        </template>
+        <p class="hint">
+          The first connection can take up to a minute while Tailscale issues the certificate.
+        </p>
+      </template>
     </section>
     <section>
       <h3>Devices</h3>
@@ -168,6 +229,10 @@ function lastSeen(d: RemoteDevice): string {
 }
 .device-row .hint {
   flex: 1;
+}
+.command {
+  flex: 1;
+  font-family: ui-monospace, Menlo, monospace;
 }
 .danger {
   color: var(--danger);

@@ -1,4 +1,4 @@
-import type { RemoteInterface, RemoteStatus } from './types';
+import type { RemoteInterface, RemoteServe, RemoteStatus } from './types';
 
 export function interfaceLabel(i: RemoteInterface): string {
   if (i.tailscale) return `Tailscale · ${i.address}`;
@@ -16,4 +16,15 @@ export function statusLine(s: RemoteStatus): string {
   if (s.state === 'listening') return `Listening on ${s.address ?? ''}`;
   if (s.state === 'error') return `Not listening: ${s.error ?? 'unknown error'}`;
   return 'Off';
+}
+
+export const SERVE_OPTIONS: { value: RemoteServe; label: string }[] = [
+  { value: 'off', label: 'Off' },
+  { value: 'managed', label: 'Run it for me' },
+  { value: 'manual', label: "I'll run it myself" },
+];
+
+/** The command that undoes `serve_command`, e.g. `tailscale serve --https=8443 off`. */
+export function serveOffCommand(serveCommand: string): string {
+  return serveCommand.replace(/ --bg (--https=\d+) \S+$/, ' $1 off');
 }

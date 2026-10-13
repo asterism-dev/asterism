@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { bindWarning, interfaceLabel, statusLine } from './remoteSettings';
+import { bindWarning, interfaceLabel, serveOffCommand, statusLine } from './remoteSettings';
 import type { RemoteStatus } from './types';
 
-const config = { enabled: true, bind: '100.1.2.3', port: 7420 };
+const config = {
+  enabled: true,
+  bind: '100.1.2.3',
+  port: 7420,
+  serve: 'off' as const,
+  serve_port: 8443,
+};
 
 describe('remote settings', () => {
   it('labels interfaces', () => {
@@ -37,5 +43,16 @@ describe('remote settings', () => {
     expect(statusLine(s({ state: 'error', error: 'port in use' }))).toBe(
       'Not listening: port in use',
     );
+  });
+
+  it('derives the serve off command', () => {
+    expect(serveOffCommand('tailscale serve --bg --https=8443 http://127.0.0.1:7420')).toBe(
+      'tailscale serve --https=8443 off',
+    );
+    expect(
+      serveOffCommand(
+        '/Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg --https=443 http://127.0.0.1:1',
+      ),
+    ).toBe('/Applications/Tailscale.app/Contents/MacOS/Tailscale serve --https=443 off');
   });
 });

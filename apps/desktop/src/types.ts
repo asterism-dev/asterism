@@ -469,10 +469,13 @@ export interface ReviewResult {
   local_ahead: boolean;
 }
 
+export type RemoteServe = 'off' | 'managed' | 'manual';
 export interface RemoteConfig {
   enabled: boolean;
   bind: string;
   port: number;
+  serve: RemoteServe;
+  serve_port: number;
 }
 export type RemoteState = 'disabled' | 'listening' | 'error';
 export interface RemoteStatus {
@@ -480,6 +483,8 @@ export interface RemoteStatus {
   state: RemoteState;
   address?: string | null;
   error?: string | null;
+  public_url?: string | null;
+  serve_command?: string | null;
 }
 export interface RemoteInterface {
   name: string;
