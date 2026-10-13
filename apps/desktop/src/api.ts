@@ -76,8 +76,31 @@ async function command<T>(name: string, args: Record<string, unknown> = {}): Pro
   }
 }
 
+export interface Transport {
+  call<T>(method: string, params: Record<string, unknown>): Promise<T>;
+  attach(sessionId: number, onOutput: (data: string) => void): Promise<SessionAttachResult>;
+  detach(sessionId: number): Promise<void>;
+}
+
+const tauriTransport: Transport = {
+  call: <T>(method: string, params: Record<string, unknown>) =>
+    command<T>('node_call', { method, params }),
+  attach: (sessionId, onOutput) => {
+    const channel = new Channel<string>();
+    channel.onmessage = onOutput;
+    return command<SessionAttachResult>('session_attach', { sessionId, onOutput: channel });
+  },
+  detach: (sessionId) => command<void>('session_detach', { sessionId }),
+};
+
+let transport: Transport = tauriTransport;
+
+export function setTransport(next: Transport) {
+  transport = next;
+}
+
 function call<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-  return command<T>('node_call', { method, params });
+  return transport.call<T>(method, params);
 }
 
 const queues = new Map<number, Promise<unknown>>();
@@ -206,12 +229,9 @@ export const api = {
     call<null>('session.resize', { session_id: sessionId, rows, cols }),
   read: (sessionId: number, lines: number) =>
     call<SessionReadResult>('session.read', { session_id: sessionId, lines }),
-  attach: (sessionId: number, onOutput: Channel<string>) =>
-    serialized(sessionId, () =>
-      command<SessionAttachResult>('session_attach', { sessionId, onOutput }),
-    ),
-  detach: (sessionId: number) =>
-    serialized(sessionId, () => command<void>('session_detach', { sessionId })),
+  attach: (sessionId: number, onOutput: (data: string) => void) =>
+    serialized(sessionId, () => transport.attach(sessionId, onOutput)),
+  detach: (sessionId: number) => serialized(sessionId, () => transport.detach(sessionId)),
   agents: () => call<AgentInfo[]>('agent.list'),
   plugins: () => call<PluginInfo[]>('plugin.list'),
   pluginSettings: (name: string) => call<PluginSettings>('plugin.settings', { name }),

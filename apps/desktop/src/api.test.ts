@@ -23,9 +23,9 @@ beforeEach(() => {
 
 describe('attach/detach ordering', () => {
   it('sends operations for one session in call order', async () => {
-    const a = api.attach(1, {} as never);
+    const a = api.attach(1, () => {});
     const d = api.detach(1);
-    const b = api.attach(1, {} as never);
+    const b = api.attach(1, () => {});
     await tick();
     expect(names()).toEqual(['session_attach']);
     pending[0].resolve({});
@@ -39,7 +39,7 @@ describe('attach/detach ordering', () => {
   });
 
   it('does not block on a rejected operation', async () => {
-    const a = api.attach(2, {} as never);
+    const a = api.attach(2, () => {});
     const d = api.detach(2);
     await tick();
     pending[0].reject({ kind: 'not_found', message: 'gone' });
@@ -74,5 +74,31 @@ describe('send ordering', () => {
     await tick();
     expect(texts()).toEqual(['a', 'bc', 'd', 'e']);
     pending[3].resolve(null);
+  });
+});
+
+describe('transport', () => {
+  it('routes calls and attaches through the configured transport', async () => {
+    const { setTransport } = await import('./api');
+    const calls: string[] = [];
+    const outputs: ((d: string) => void)[] = [];
+    setTransport({
+      call: async <T>(method: string) => {
+        calls.push(method);
+        return [] as T;
+      },
+      attach: async (_id, onOutput) => {
+        outputs.push(onOutput);
+        return { snapshot: '', rows: 1, cols: 1 };
+      },
+      detach: async () => {},
+    });
+    await api.projects();
+    const seen: string[] = [];
+    await api.attach(9, (d) => seen.push(d));
+    outputs[0]('aGk=');
+    expect(calls).toEqual(['project.list']);
+    expect(seen).toEqual(['aGk=']);
+    expect(invoke).not.toHaveBeenCalled();
   });
 });
