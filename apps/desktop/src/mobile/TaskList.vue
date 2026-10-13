@@ -35,7 +35,7 @@ const selected = computed(() => (route.value.name === 'task' ? route.value.taskI
         :class="{ selected: t.id === selected, waiting: waitingTasks.has(t.id) }"
         @click="go({ name: 'task', taskId: t.id, tab: 'sessions', sessionId: null })"
       >
-        <StatusIndicator :status="taskStatus(state, t.id)" />
+        <span class="status"><StatusIndicator :status="taskStatus(state, t.id)" /></span>
         <span class="title">{{ t.title }}</span>
       </button>
       <p v-if="!g.tasks.length" class="empty">No tasks</p>
@@ -74,11 +74,20 @@ h2 {
 }
 .task {
   display: flex;
+  justify-content: flex-start;
   align-items: center;
   gap: 8px;
   width: 100%;
   min-height: 44px;
   text-align: left;
+  border: none;
+  background: none;
+}
+.status {
+  display: inline-flex;
+  justify-content: center;
+  flex: none;
+  width: 14px;
 }
 .task.selected {
   background: var(--select);

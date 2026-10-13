@@ -30,7 +30,7 @@ const KEYS = [
       />
     </div>
     <div v-if="session.status !== 'exited'" class="keys">
-      <template v-if="showKeys">
+      <div v-if="showKeys" class="scroll">
         <button
           v-for="k in KEYS"
           :key="k.label"
@@ -40,7 +40,7 @@ const KEYS = [
         >
           {{ k.label }}
         </button>
-      </template>
+      </div>
       <button
         class="toggle"
         :aria-label="showKeys ? 'Hide keys' : 'Show keys'"
@@ -67,11 +67,26 @@ const KEYS = [
   display: flex;
   gap: 4px;
   padding: 4px;
+}
+.scroll {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
   overflow-x: auto;
 }
 .keys button {
+  flex: none;
   min-width: 44px;
   min-height: 44px;
+}
+/* on a phone all keys must stay visible, so they share the width instead of scrolling */
+@media (max-width: 767.98px) {
+  .scroll button {
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+  }
 }
 .toggle {
   margin-left: auto;

@@ -54,7 +54,8 @@ const reload = () => window.location.reload();
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 1fr;
+  /* minmax(0, …): wide content such as the key bar must not widen the page */
+  grid-template-columns: minmax(0, 1fr);
 }
 @media (max-width: 767.98px) {
   .body.has-task .list-pane,

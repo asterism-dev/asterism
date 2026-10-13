@@ -68,7 +68,7 @@ function archive() {
     <section v-if="tab === 'sessions'" class="sessions">
       <div v-for="s in sessions" :key="s.id" class="session">
         <button class="open" @click="show('terminal', s.id)">
-          <StatusIndicator :status="s.status" />
+          <span class="status"><StatusIndicator :status="s.status" show-all /></span>
           {{ sessionLabel(s) }}
         </button>
         <button @click="closeSession(s)">Close</button>
@@ -114,14 +114,20 @@ h1 {
 }
 .tabs {
   display: flex;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
 }
 .tabs button {
   flex: 1;
   min-height: 44px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
 }
 .tabs button.active {
   font-weight: 600;
-  border-bottom: 2px solid currentColor;
+  border-bottom-color: currentColor;
 }
 .sessions,
 .terminal {
@@ -141,9 +147,17 @@ h1 {
   min-height: 44px;
 }
 .open {
-  display: flex;
-  align-items: center;
+  flex: 1;
+  justify-content: flex-start;
   gap: 8px;
+  border: none;
+  background: none;
+}
+.status {
+  display: inline-flex;
+  justify-content: center;
+  flex: none;
+  width: 14px;
 }
 .start {
   display: flex;
