@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import NewTaskDialog from '../components/NewTaskDialog.vue';
 import { state } from '../store';
 import { paired, revoked } from './connection';
 import PairScreen from './PairScreen.vue';
+import TaskList from './TaskList.vue';
+import { route } from './useRoute';
 
-const hostname = computed(() => ('hello' in state.node ? state.node.hello.hostname : ''));
 const reload = () => window.location.reload();
 </script>
 
@@ -16,9 +17,17 @@ const reload = () => window.location.reload();
     <div v-else-if="state.node.state === 'incompatible'" class="banner error">
       {{ state.node.message }} <button @click="reload">Reload</button>
     </div>
-    <main class="body">
-      <p v-if="hostname" class="empty">Connected to {{ hostname }}</p>
+    <main class="body" :class="{ 'has-task': route.name === 'task' }">
+      <TaskList class="list-pane" />
+      <section class="detail-pane">
+        <p class="empty">Select a task</p>
+      </section>
     </main>
+    <NewTaskDialog
+      v-if="state.newTaskFor !== null"
+      :project-id="state.newTaskFor"
+      @close="state.newTaskFor = null"
+    />
     <div class="toasts">
       <div v-for="t in state.toasts" :key="t.id" class="toast">{{ t.message }}</div>
     </div>
@@ -36,5 +45,20 @@ const reload = () => window.location.reload();
 .body {
   flex: 1;
   min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+}
+.body.has-task .list-pane,
+.body:not(.has-task) .detail-pane {
+  display: none;
+}
+@media (min-width: 768px) {
+  .body {
+    grid-template-columns: 320px minmax(0, 1fr);
+  }
+  .body .list-pane,
+  .body .detail-pane {
+    display: block;
+  }
 }
 </style>
