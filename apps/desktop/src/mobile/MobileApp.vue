@@ -3,6 +3,7 @@ import NewTaskDialog from '../components/NewTaskDialog.vue';
 import { state } from '../store';
 import { paired, revoked } from './connection';
 import PairScreen from './PairScreen.vue';
+import TaskDetail from './TaskDetail.vue';
 import TaskList from './TaskList.vue';
 import { route } from './useRoute';
 
@@ -20,7 +21,14 @@ const reload = () => window.location.reload();
     <main class="body" :class="{ 'has-task': route.name === 'task' }">
       <TaskList class="list-pane" />
       <section class="detail-pane">
-        <p class="empty">Select a task</p>
+        <TaskDetail
+          v-if="route.name === 'task'"
+          :key="route.taskId"
+          :task-id="route.taskId"
+          :tab="route.tab"
+          :session-id="route.sessionId"
+        />
+        <p v-else class="empty">Select a task</p>
       </section>
     </main>
     <NewTaskDialog
