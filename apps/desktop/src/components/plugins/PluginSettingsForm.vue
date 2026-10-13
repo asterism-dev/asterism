@@ -64,7 +64,12 @@ watch(() => props.plugin, load, { immediate: true });
           Clear
         </button>
       </template>
-      <input v-else-if="spec.type === 'bool'" v-model="draft.values[spec.key]" type="checkbox" />
+      <input
+        v-else-if="spec.type === 'bool'"
+        v-model="draft.values[spec.key]"
+        type="checkbox"
+        role="switch"
+      />
       <input
         v-else-if="spec.type === 'number'"
         v-model.number="draft.values[spec.key]"

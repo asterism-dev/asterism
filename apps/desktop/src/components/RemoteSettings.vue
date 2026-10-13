@@ -116,7 +116,9 @@ function lastSeen(d: RemoteDevice): string {
     <section>
       <h3>Remote access</h3>
       <p class="hint">Use asterism from your phone or tablet over Tailscale.</p>
-      <label><input v-model="form.enabled" type="checkbox" /> Enable remote access</label>
+      <label
+        ><input v-model="form.enabled" type="checkbox" role="switch" /> Enable remote access</label
+      >
       <div class="settings-row">
         <select v-model="selected" aria-label="Interface">
           <option v-for="i in interfaces" :key="i.address" :value="i.address">

@@ -83,6 +83,47 @@ button {
   width: 14px;
   height: 14px;
 }
+/* On/off settings render as sliders; plain checkboxes stay for ticking items off. */
+input[type='checkbox'][role='switch'] {
+  appearance: none;
+  flex: none;
+  position: relative;
+  width: 30px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 9px;
+  background: var(--border);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+input[type='checkbox'][role='switch']::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s;
+}
+input[type='checkbox'][role='switch']:checked {
+  background: var(--accent);
+}
+input[type='checkbox'][role='switch']:checked::before {
+  transform: translateX(12px);
+}
+input[type='checkbox'][role='switch']:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+input[type='checkbox'][role='switch']:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 button:disabled {
   opacity: 0.5;
   cursor: default;

@@ -148,7 +148,12 @@ watch(() => [state.storesVersion, state.pluginsVersion], load);
       </div>
     </form>
     <label class="toggle">
-      <input type="checkbox" :checked="list?.auto_update ?? false" @change="toggleAutoUpdate" />
+      <input
+        type="checkbox"
+        role="switch"
+        :checked="list?.auto_update ?? false"
+        @change="toggleAutoUpdate"
+      />
       Install updates automatically
     </label>
     <p class="muted">Updates that ask for new permissions always wait for you.</p>
