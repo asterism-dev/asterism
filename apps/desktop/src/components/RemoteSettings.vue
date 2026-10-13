@@ -63,7 +63,7 @@ onUnmounted(() => {
 
 async function save() {
   try {
-    await api.setRemoteConfig(form.value);
+    await api.setRemoteConfig({ ...form.value, bind: form.value.bind.trim() });
     await poll();
   } catch (e) {
     report(e);

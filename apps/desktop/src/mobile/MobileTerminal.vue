@@ -8,14 +8,14 @@ const props = defineProps<{ session: Session }>();
 const showKeys = ref(true);
 // Keys the iOS on-screen keyboard lacks; a hardware keyboard sends them directly.
 const KEYS = [
-  { label: 'Esc', data: '\x1b' },
-  { label: 'Tab', data: '\t' },
-  { label: '^C', data: '\x03' },
-  { label: '←', data: '\x1b[D' },
-  { label: '↑', data: '\x1b[A' },
-  { label: '↓', data: '\x1b[B' },
-  { label: '→', data: '\x1b[C' },
-  { label: '⏎', data: '\r' },
+  { label: 'Esc', name: 'Escape', data: '\x1b' },
+  { label: 'Tab', name: 'Tab', data: '\t' },
+  { label: '^C', name: 'Control C', data: '\x03' },
+  { label: '←', name: 'Left', data: '\x1b[D' },
+  { label: '↑', name: 'Up', data: '\x1b[A' },
+  { label: '↓', name: 'Down', data: '\x1b[B' },
+  { label: '→', name: 'Right', data: '\x1b[C' },
+  { label: '⏎', name: 'Enter', data: '\r' },
 ];
 </script>
 
@@ -23,7 +23,7 @@ const KEYS = [
   <div class="mobile-terminal">
     <div class="screen">
       <TerminalPane
-        :key="session.id"
+        :key="`${session.id}-${session.status === 'exited'}`"
         :session-id="session.id"
         :task-id="session.task_id"
         :live="session.status !== 'exited'"
@@ -34,13 +34,20 @@ const KEYS = [
         <button
           v-for="k in KEYS"
           :key="k.label"
+          :aria-label="k.name"
           @pointerdown.prevent
           @click="api.send(props.session.id, k.data)"
         >
           {{ k.label }}
         </button>
       </template>
-      <button class="toggle" @click="showKeys = !showKeys">{{ showKeys ? '⌄' : '⌃' }}</button>
+      <button
+        class="toggle"
+        :aria-label="showKeys ? 'Hide keys' : 'Show keys'"
+        @click="showKeys = !showKeys"
+      >
+        {{ showKeys ? '⌄' : '⌃' }}
+      </button>
     </div>
   </div>
 </template>

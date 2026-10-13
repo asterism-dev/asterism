@@ -54,6 +54,6 @@ Not in this version:
 ## Security
 
 - Every device has its own token. Only its SHA-256 hash is stored; the token itself exists only in the QR code and on the device.
-- A remote device cannot stop the daemon, change the remote access settings or manage devices. Those stay with the local app and CLI.
+- A remote device cannot stop the daemon, change the remote access settings or manage devices. Those stay with the desktop app.
 - Choosing `0.0.0.0` listens on every network interface of the Mac, not only Tailscale, and Settings warns about it. Prefer the Tailscale interface.
 - The connection is plain HTTP. Inside the tailnet WireGuard encrypts the traffic. Without HTTPS the browser gives the page no service worker, so there are no push notifications and no offline mode.

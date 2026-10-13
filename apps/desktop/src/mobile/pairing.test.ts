@@ -4,6 +4,7 @@ import {
   clearToken,
   loadToken,
   socketUrl,
+  tokenFromPairingInput,
   tokenFromHash,
   TOKEN_KEY,
 } from './pairing';
@@ -64,5 +65,19 @@ describe('pairing', () => {
   it('derives the socket url from the page', () => {
     expect(socketUrl({ protocol: 'http:', host: '100.1.2.3:7420' })).toBe('ws://100.1.2.3:7420/ws');
     expect(socketUrl({ protocol: 'https:', host: 'mac.ts.net' })).toBe('wss://mac.ts.net/ws');
+  });
+});
+
+describe('tokenFromPairingInput', () => {
+  it('accepts a full pairing URL', () => {
+    expect(tokenFromPairingInput('http://100.1.2.3:7420/#token=abc_DEF-123')).toBe('abc_DEF-123');
+  });
+  it('accepts a bare token and trims whitespace', () => {
+    expect(tokenFromPairingInput('  abc_DEF-123\n')).toBe('abc_DEF-123');
+  });
+  it('rejects garbage', () => {
+    expect(tokenFromPairingInput('')).toBeNull();
+    expect(tokenFromPairingInput('not a token!')).toBeNull();
+    expect(tokenFromPairingInput('http://host/#/tasks')).toBeNull();
   });
 });

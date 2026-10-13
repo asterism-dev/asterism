@@ -2,7 +2,7 @@ import { ref } from 'vue';
 import { errorMessage, setTransport } from '../api';
 import { applyEvent, isConnected, refresh, state, toast } from '../store';
 import type { NodeEvent, NodeStatus } from '../types';
-import { clearToken, socketUrl } from './pairing';
+import { adoptPairing, clearToken, socketUrl, tokenFromHash } from './pairing';
 import { WsTransport } from './wsTransport';
 
 export const paired = ref(false);
@@ -50,3 +50,11 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') transport?.wake();
 });
 window.addEventListener('online', () => transport?.wake());
+
+window.addEventListener('hashchange', () => {
+  const token = tokenFromHash(location.hash);
+  if (!token) return;
+  connect(adoptPairing(location, history, localStorage));
+  // replaceState does not fire hashchange; the router needs to see "#/".
+  window.dispatchEvent(new HashChangeEvent('hashchange'));
+});

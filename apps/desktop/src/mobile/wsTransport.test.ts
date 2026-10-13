@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import protoSource from '../../../../crates/asterism-proto/src/lib.rs?raw';
 import { RpcError } from '../api';
 import type { NodeEvent, NodeStatus } from '../types';
-import { UNAUTHORIZED, WsTransport, type SocketLike } from './wsTransport';
+import { PROTO_VERSION, UNAUTHORIZED, WsTransport, type SocketLike } from './wsTransport';
 
 class FakeSocket implements SocketLike {
   readyState = 0;
@@ -181,4 +182,9 @@ describe('WsTransport', () => {
     vi.advanceTimersByTime(1000);
     expect(sockets).toHaveLength(2);
   });
+});
+
+it('speaks the protocol version the daemon crate declares', () => {
+  const match = /pub const PROTO_VERSION: u32 = (\d+);/.exec(protoSource);
+  expect(Number(match?.[1])).toBe(PROTO_VERSION);
 });

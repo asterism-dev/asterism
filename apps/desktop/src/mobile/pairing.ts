@@ -4,6 +4,21 @@ export function tokenFromHash(hash: string): string | null {
   return /^#token=([A-Za-z0-9_-]+)$/.exec(hash)?.[1] ?? null;
 }
 
+/** Accepts a full pairing URL or a bare token. */
+export function tokenFromPairingInput(input: string): string | null {
+  const text = input.trim();
+  const hash = text.includes('#') ? text.slice(text.indexOf('#')) : `#token=${text}`;
+  return tokenFromHash(hash);
+}
+
+export function saveToken(storage: Pick<Storage, 'setItem'>, token: string) {
+  try {
+    storage.setItem(TOKEN_KEY, token);
+  } catch {
+    // Without storage the device stays paired only until the page reloads.
+  }
+}
+
 export function loadToken(storage: Pick<Storage, 'getItem'>): string | null {
   try {
     return storage.getItem(TOKEN_KEY);
@@ -28,11 +43,7 @@ export function adoptPairing(
 ): string | null {
   const fresh = tokenFromHash(loc.hash);
   if (!fresh) return loadToken(storage);
-  try {
-    storage.setItem(TOKEN_KEY, fresh);
-  } catch {
-    // Without storage the device stays paired only until the page reloads.
-  }
+  saveToken(storage, fresh);
   history.replaceState(null, '', `${loc.pathname}${loc.search}#/`);
   return fresh;
 }
