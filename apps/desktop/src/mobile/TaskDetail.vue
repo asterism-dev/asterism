@@ -2,7 +2,6 @@
 import { Archive, ChevronLeft } from '@lucide/vue';
 import { computed } from 'vue';
 import StatusIndicator from '../components/StatusIndicator.vue';
-import ReviewView from '../components/review/ReviewView.vue';
 import { api, errorMessage } from '../api';
 import { closeSession } from '../sessionActions';
 import { addSession, sessionLabel, state, taskSessions, toast } from '../store';
@@ -65,7 +64,6 @@ function archive() {
       >
         Terminal
       </button>
-      <button :class="{ active: tab === 'review' }" @click="show('review')">Review</button>
     </nav>
     <section v-if="tab === 'sessions'" class="sessions">
       <div v-for="s in sessions" :key="s.id" class="session">
@@ -83,12 +81,9 @@ function archive() {
         <button @click="start({ type: 'shell' })">+ Terminal</button>
       </div>
     </section>
-    <section v-else-if="tab === 'terminal'" class="terminal">
+    <section v-else class="terminal">
       <MobileTerminal v-if="terminal" :session="terminal" />
       <p v-else class="empty">No running session</p>
-    </section>
-    <section v-else class="review">
-      <ReviewView :task="task" />
     </section>
   </div>
   <p v-else class="empty">This task no longer exists.</p>
@@ -129,8 +124,7 @@ h1 {
   border-bottom: 2px solid currentColor;
 }
 .sessions,
-.terminal,
-.review {
+.terminal {
   flex: 1;
   min-height: 0;
   overflow: auto;

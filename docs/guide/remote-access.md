@@ -1,6 +1,6 @@
 # Remote access
 
-Asterism's mobile app runs in the browser of your phone or tablet. The daemon serves it itself, so it keeps working while the desktop app is closed. You can check session status, watch and type into terminals, start and close sessions, create tasks, review changes and archive tasks from anywhere your device can reach the Mac.
+Asterism's mobile app runs in the browser of your phone or tablet. The daemon serves it itself, so it keeps working while the desktop app is closed. You can check session status, watch and type into terminals, start and close sessions, create tasks and archive tasks from anywhere your device can reach the Mac.
 
 Remote access is off by default.
 
@@ -40,7 +40,6 @@ Both disconnect the device immediately.
 - Create tasks, including from pull requests and issues.
 - Start and close sessions.
 - Attach to a session's terminal and type into it. A key bar offers Esc, Tab, Ctrl-C, arrow keys and Enter; with a hardware keyboard those keys work directly.
-- Read and comment on the review.
 - Archive tasks.
 
 Not in this version:
@@ -48,6 +47,7 @@ Not in this version:
 - Adding projects through a folder picker (cloning by URL works).
 - Managing plugins and stores, and node settings.
 - Plugin panes.
+- Reviewing changes; use the desktop app for that.
 - The desktop dock layout on tablets; tablets get a two-column list and detail view.
 - HTTPS and push notifications.
 

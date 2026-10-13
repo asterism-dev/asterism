@@ -1,4 +1,4 @@
-export type DetailTab = 'sessions' | 'terminal' | 'review';
+export type DetailTab = 'sessions' | 'terminal';
 export type Route =
   { name: 'list' } | { name: 'task'; taskId: number; tab: DetailTab; sessionId: number | null };
 
@@ -10,18 +10,12 @@ export function parseRoute(hash: string): Route {
   if (taskId === null) return { name: 'list' };
   if (tabPart === 'terminal')
     return { name: 'task', taskId, tab: 'terminal', sessionId: id(sessionPart) };
-  return {
-    name: 'task',
-    taskId,
-    tab: tabPart === 'review' ? 'review' : 'sessions',
-    sessionId: null,
-  };
+  return { name: 'task', taskId, tab: 'sessions', sessionId: null };
 }
 
 export function formatRoute(route: Route): string {
   if (route.name === 'list') return '#/';
   const base = `#/t/${route.taskId}`;
   if (route.tab === 'sessions') return base;
-  if (route.tab === 'review') return `${base}/review`;
   return route.sessionId === null ? `${base}/terminal` : `${base}/terminal/${route.sessionId}`;
 }

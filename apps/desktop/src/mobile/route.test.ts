@@ -9,12 +9,6 @@ describe('route', () => {
       tab: 'sessions',
       sessionId: null,
     });
-    expect(parseRoute('#/t/4/review')).toEqual({
-      name: 'task',
-      taskId: 4,
-      tab: 'review',
-      sessionId: null,
-    });
     expect(parseRoute('#/t/4/terminal/9')).toEqual({
       name: 'task',
       taskId: 4,
@@ -32,7 +26,6 @@ describe('route', () => {
     const routes: Route[] = [
       { name: 'list' },
       { name: 'task', taskId: 1, tab: 'sessions', sessionId: null },
-      { name: 'task', taskId: 1, tab: 'review', sessionId: null },
       { name: 'task', taskId: 1, tab: 'terminal', sessionId: 3 },
     ];
     for (const r of routes) expect(parseRoute(formatRoute(r))).toEqual(r);
