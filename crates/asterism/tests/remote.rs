@@ -526,3 +526,54 @@ async fn missing_assets_show_an_error_page() {
     assert_eq!(status, 503);
     assert!(body.contains("not installed"));
 }
+
+#[tokio::test]
+async fn rotation_during_auth_closes_connection() {
+    let d = start().await;
+    let addr = enable(&d).await;
+    let phone = pair(&d, "phone").await;
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
+        .await
+        .unwrap();
+    let _: RemotePairing = d
+        .client
+        .call(
+            method::REMOTE_DEVICE_ROTATE,
+            RemoteDeviceIdParams {
+                device_id: phone.device.id,
+            },
+        )
+        .await
+        .unwrap();
+    ws.send(Message::Text(
+        json!({ "auth": token_of(&phone) }).to_string().into(),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(close_code(&mut ws).await, Some(4401));
+}
+
+#[tokio::test]
+async fn disabling_during_auth_closes_connection() {
+    let d = start().await;
+    let addr = enable(&d).await;
+    let token = token_of(&pair(&d, "phone").await);
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
+        .await
+        .unwrap();
+    set_config(
+        &d,
+        RemoteConfig {
+            enabled: false,
+            bind: "127.0.0.1".into(),
+            port: 0,
+        },
+    )
+    .await
+    .unwrap();
+    ws.send(Message::Text(json!({ "auth": token }).to_string().into()))
+        .await
+        .unwrap();
+    let code = close_code(&mut ws).await;
+    assert!(matches!(code, Some(1001) | Some(4401) | None), "{code:?}");
+}

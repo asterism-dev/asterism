@@ -12,7 +12,7 @@ use axum::routing::get;
 use axum::Router;
 use serde::Deserialize;
 use tokio::net::TcpListener;
-use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::broadcast::{self, error::RecvError};
 use tokio::sync::mpsc;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -121,8 +121,11 @@ async fn upgrade(
     if !same_origin(&headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
+    // Subscribed before the upgrade so revocations during auth are not missed.
+    let closing = daemon.remote.closing();
     ws.max_message_size(MAX_MESSAGE)
-        .on_upgrade(move |socket| serve_socket(daemon, socket))
+        .max_frame_size(MAX_MESSAGE)
+        .on_upgrade(move |socket| serve_socket(daemon, socket, closing))
 }
 
 /// Browsers always send `Origin` on WebSocket requests; non-browser clients may omit it.
@@ -160,13 +163,20 @@ async fn close(socket: &mut WebSocket, code: u16, reason: &'static str) {
     let _ = socket.send(Message::Close(Some(frame))).await;
 }
 
-async fn serve_socket(daemon: Arc<Daemon>, mut socket: WebSocket) {
+async fn serve_socket(
+    daemon: Arc<Daemon>,
+    mut socket: WebSocket,
+    mut closing: broadcast::Receiver<Option<i64>>,
+) {
     let Some(device_id) = authenticate(&daemon, &mut socket).await else {
         tokio::time::sleep(AUTH_FAILURE_DELAY).await;
         close(&mut socket, UNAUTHORIZED, "unauthorized").await;
         return;
     };
-    let mut closing = daemon.remote.closing();
+    if !super::load_config(daemon.paths()).is_ok_and(|c| c.enabled) {
+        close(&mut socket, GOING_AWAY, "remote access changed").await;
+        return;
+    }
     daemon.remote.connected(device_id);
     let (lines, incoming) = mpsc::channel::<String>(OUT_QUEUE);
     let (out, mut outgoing) = mpsc::channel::<String>(OUT_QUEUE);
