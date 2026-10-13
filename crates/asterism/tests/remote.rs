@@ -641,18 +641,23 @@ impl FakeTailscale {
     fn new(cert_domains: &str) -> Self {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
-        let log = dir.path().join("log");
-        let status = format!(
-            r#"{{"Self":{{"DNSName":"mac.example.ts.net."}},"CertDomains":{cert_domains}}}"#
-        );
         let script = format!(
-            "#!/bin/sh\necho \"$*\" >> '{}'\nif [ \"$1\" = status ]; then echo '{status}'; fi\n",
-            log.display()
+            "#!/bin/sh\necho \"$*\" >> '{0}/log'\nif [ \"$1\" = status ]; then cat '{0}/status.json'; fi\n",
+            dir.path().display()
         );
         let bin = dir.path().join("tailscale");
         std::fs::write(&bin, script).unwrap();
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-        Self { dir }
+        let fake = Self { dir };
+        fake.set_cert_domains(cert_domains);
+        fake
+    }
+
+    fn set_cert_domains(&self, cert_domains: &str) {
+        let status = format!(
+            r#"{{"Self":{{"DNSName":"mac.example.ts.net."}},"CertDomains":{cert_domains}}}"#
+        );
+        std::fs::write(self.dir.path().join("status.json"), status).unwrap();
     }
 
     fn bin(&self) -> PathBuf {
@@ -793,4 +798,75 @@ async fn managed_serve_without_tailscale_is_an_error() {
     let s = wait_for_state(&d, RemoteState::Error).await;
     assert!(s.error.unwrap().contains("/nonexistent/tailscale"));
     assert!(s.address.is_none());
+}
+
+#[tokio::test]
+async fn manual_serve_retries_the_https_lookup() {
+    let fake = FakeTailscale::new("null");
+    let d = start_with_tailscale(None, Some(fake.bin())).await;
+    set_config(&d, serve_config(RemoteServe::Manual, "127.0.0.1"))
+        .await
+        .unwrap();
+    let s = wait_for_state(&d, RemoteState::Error).await;
+    assert!(s.address.is_some(), "{s:?}");
+    fake.set_cert_domains(r#"["mac.example.ts.net"]"#);
+    let s = wait_for_state(&d, RemoteState::Listening).await;
+    assert_eq!(
+        s.public_url.as_deref(),
+        Some("https://mac.example.ts.net:8443")
+    );
+    assert!(s.error.is_none());
+}
+
+#[tokio::test]
+async fn pairing_needs_the_https_address_behind_serve() {
+    let fake = FakeTailscale::new("null");
+    let d = start_with_tailscale(None, Some(fake.bin())).await;
+    let phone = pair(&d, "phone").await;
+    set_config(&d, serve_config(RemoteServe::Manual, "127.0.0.1"))
+        .await
+        .unwrap();
+    wait_for_state(&d, RemoteState::Error).await;
+    let err = d
+        .client
+        .call::<_, Value>(
+            method::REMOTE_DEVICE_ADD,
+            RemoteDeviceAddParams {
+                name: "tablet".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Tailscale HTTPS address not available yet"),
+        "{err}"
+    );
+    d.client
+        .call::<_, Value>(
+            method::REMOTE_DEVICE_ROTATE,
+            RemoteDeviceIdParams {
+                device_id: phone.device.id,
+            },
+        )
+        .await
+        .unwrap_err();
+    let addr: SocketAddr = status(&d).await.address.unwrap().parse().unwrap();
+    let mut ws = connect(addr, &token_of(&phone)).await;
+    assert!(request(&mut ws, 1, "hello", hello()).await["result"].is_object());
+}
+
+#[tokio::test]
+async fn serve_port_zero_is_rejected() {
+    let d = start().await;
+    let err = set_config(
+        &d,
+        RemoteConfig {
+            serve_port: 0,
+            ..serve_config(RemoteServe::Managed, "127.0.0.1")
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, ClientError::Rpc(e) if e.kind() == ErrorKind::InvalidParams));
 }

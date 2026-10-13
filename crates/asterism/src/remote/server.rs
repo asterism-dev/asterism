@@ -1,3 +1,4 @@
+use std::future::IntoFuture;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
@@ -65,8 +66,8 @@ pub async fn run(daemon: Arc<Daemon>) {
         };
         let bin = daemon.tailscale_bin();
         let mut applied = false;
+        let local_port = address.map_or(config.port, |a| a.port());
         if config.serve != RemoteServe::Off {
-            let local_port = address.map_or(config.port, |a| a.port());
             status.serve_command = Some(tailscale::serve_command(
                 bin.unwrap_or(Path::new("tailscale")),
                 config.serve_port,
@@ -93,13 +94,31 @@ pub async fn run(daemon: Arc<Daemon>) {
                 }
             }
         }
-        daemon.remote.set(status);
-        let failure = tokio::select! {
-            result = axum::serve(listener, router(daemon.clone())) => Some(result.err().map_or_else(
-                || "the remote listener stopped".to_string(),
-                |e| e.to_string(),
-            )),
-            _ = daemon.remote.changed.notified() => None,
+        let mut lookup_failed = status.state == RemoteState::Error;
+        daemon.remote.set(status.clone());
+        let serving = axum::serve(listener, router(daemon.clone())).into_future();
+        tokio::pin!(serving);
+        let failure = loop {
+            tokio::select! {
+                result = &mut serving => break Some(result.err().map_or_else(
+                    || "the remote listener stopped".to_string(),
+                    |e| e.to_string(),
+                )),
+                _ = daemon.remote.changed.notified() => break None,
+                // ponytail: Tailscale may start after us (login); accepts pause during this one quick CLI call.
+                _ = tokio::time::sleep(daemon.remote_retry()), if lookup_failed => {
+                    match start_serve(bin, &config, local_port).await {
+                        Ok(url) => {
+                            status.state = RemoteState::Listening;
+                            status.error = None;
+                            status.public_url = Some(url);
+                            lookup_failed = false;
+                        }
+                        Err(message) => status.error = Some(message),
+                    }
+                    daemon.remote.set(status.clone());
+                }
+            }
         };
         // ponytail: on daemon shutdown serve stays configured (phones get a 502 until the daemon is back and re-applies it).
         if let (true, Some(bin)) = (applied, bin) {

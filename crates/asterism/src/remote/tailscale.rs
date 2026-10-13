@@ -1,8 +1,12 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use std::process::Stdio;
+
 use serde_json::Value;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
+use tokio::task::JoinHandle;
 
 const APP_BUNDLE: &str = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
 const TIMEOUT: Duration = Duration::from_secs(30);
@@ -32,7 +36,8 @@ fn serve_on_args(https_port: u16, local_port: u16) -> Vec<String> {
 }
 
 fn shell_word(s: &str) -> String {
-    if s.contains(|c: char| c.is_whitespace() || c == '\'') {
+    let plain = |c: char| c.is_ascii_alphanumeric() || "/._-".contains(c);
+    if s.is_empty() || !s.chars().all(plain) {
         format!("'{}'", s.replace('\'', r"'\''"))
     } else {
         s.to_string()
@@ -46,23 +51,59 @@ pub fn serve_command(bin: &Path, https_port: u16, local_port: u16) -> String {
         .join(" ")
 }
 
+fn read_all<R: AsyncRead + Unpin + Send + 'static>(pipe: Option<R>) -> JoinHandle<Vec<u8>> {
+    tokio::spawn(async move {
+        let mut buf = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut buf).await;
+        }
+        buf
+    })
+}
+
 async fn run(bin: &Path, args: &[String]) -> Result<Vec<u8>, String> {
-    let mut command = Command::new(bin);
-    command.args(args).kill_on_drop(true);
-    let output = tokio::time::timeout(TIMEOUT, command.output())
-        .await
-        .map_err(|_| format!("tailscale {} timed out", args.join(" ")))?
+    run_with_timeout(bin, args, TIMEOUT).await
+}
+
+async fn run_with_timeout(
+    bin: &Path,
+    args: &[String],
+    timeout: Duration,
+) -> Result<Vec<u8>, String> {
+    let command_line = format!("tailscale {}", args.join(" "));
+    let mut child = Command::new(bin)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
         .map_err(|e| format!("cannot run {}: {e}", bin.display()))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = read_all(child.stdout.take());
+    let stderr = read_all(child.stderr.take());
+    let Ok(status) = tokio::time::timeout(timeout, child.wait()).await else {
+        let _ = child.kill().await;
+        let partial = tokio::time::timeout(Duration::from_secs(1), stderr)
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default();
         return Err(format!(
-            "tailscale {} failed ({}): {}",
-            args.join(" "),
-            output.status,
-            stderr.trim()
+            "{command_line} timed out; Tailscale serve may need to be enabled for this tailnet in the Tailscale admin console. {}",
+            String::from_utf8_lossy(&partial).trim()
+        )
+        .trim_end()
+        .to_string());
+    };
+    let status = status.map_err(|e| format!("{command_line} failed: {e}"))?;
+    let stderr = stderr.await.unwrap_or_default();
+    if !status.success() {
+        return Err(format!(
+            "{command_line} failed ({status}): {}",
+            String::from_utf8_lossy(&stderr).trim()
         ));
     }
-    Ok(output.stdout)
+    Ok(stdout.await.unwrap_or_default())
 }
 
 pub async fn serve_on(bin: &Path, https_port: u16, local_port: u16) -> Result<(), String> {
@@ -127,5 +168,29 @@ mod tests {
             serve_command(Path::new("/a b/tailscale"), 8443, 7420),
             "'/a b/tailscale' serve --bg --https=8443 http://127.0.0.1:7420"
         );
+        assert_eq!(shell_word("/bin/ts$x"), "'/bin/ts$x'");
+        assert_eq!(shell_word("it's"), r"'it'\''s'");
+        assert_eq!(
+            shell_word("/Applications/Tailscale.app/Contents/MacOS/Tailscale"),
+            "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+        );
+    }
+
+    #[tokio::test]
+    async fn timeout_keeps_stderr_and_points_at_serve_setup() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("tailscale");
+        std::fs::write(
+            &bin,
+            "#!/bin/sh\necho 'visit https://login.example' >&2\nexec sleep 5\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let err = run_with_timeout(&bin, &["serve".into()], Duration::from_millis(500))
+            .await
+            .unwrap_err();
+        assert!(err.contains("admin console"), "{err}");
+        assert!(err.contains("visit https://login.example"), "{err}");
     }
 }

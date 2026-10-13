@@ -9,7 +9,8 @@ use std::sync::Mutex;
 use crate::paths::Paths;
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::{
-    RemoteConfig, RemoteDevice, RemoteInterface, RemotePairing, RemoteState, RemoteStatus,
+    RemoteConfig, RemoteDevice, RemoteInterface, RemotePairing, RemoteServe, RemoteState,
+    RemoteStatus,
 };
 use tokio::sync::{broadcast, Notify};
 
@@ -20,7 +21,7 @@ use crate::error::{Error, Result};
 use crate::lock;
 use crate::store::StoredRemoteDevice;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Listener {
     pub state: RemoteState,
     pub address: Option<SocketAddr>,
@@ -65,8 +66,25 @@ impl Hub {
         lock(&self.listener).address
     }
 
-    pub fn public_url(&self) -> Option<String> {
-        lock(&self.listener).public_url.clone()
+    /// Behind serve only the HTTPS address reaches the listener, so pairing fails without it.
+    fn https_base(&self, config: &RemoteConfig) -> Result<Option<String>> {
+        if config.serve == RemoteServe::Off {
+            return Ok(None);
+        }
+        let listener = lock(&self.listener);
+        match &listener.public_url {
+            Some(url) => Ok(Some(url.clone())),
+            None => Err(Error::new(
+                ErrorKind::Internal,
+                format!(
+                    "Tailscale HTTPS address not available yet: {}",
+                    listener
+                        .error
+                        .as_deref()
+                        .unwrap_or("remote access is not listening")
+                ),
+            )),
+        }
     }
 
     /// Closes the connections of one device, or of every device for `None`.
@@ -116,6 +134,9 @@ fn save_config(paths: &Paths, config: &RemoteConfig) -> Result<()> {
         .bind
         .parse::<IpAddr>()
         .map_err(|_| invalid(format!("invalid bind address {:?}", config.bind)))?;
+    if config.serve != RemoteServe::Off && config.serve_port == 0 {
+        return Err(invalid("the HTTPS port must not be 0".into()));
+    }
     let _guard = lock(&SAVE_LOCK);
     let mut file = Config::load(&paths.config())?;
     file.remote = (config != &RemoteConfig::default()).then(|| config.clone());
@@ -221,21 +242,36 @@ fn device_info(daemon: &Daemon, stored: StoredRemoteDevice) -> RemoteDevice {
     }
 }
 
-fn pairing(daemon: &Daemon, stored: StoredRemoteDevice, token: &str) -> Result<RemotePairing> {
+struct PairingTarget {
+    config: RemoteConfig,
+    https_base: Option<String>,
+}
+
+fn pairing_target(daemon: &Daemon) -> Result<PairingTarget> {
     let config = load_config(daemon.paths())?;
-    let url = match daemon.remote.public_url() {
+    let https_base = daemon.remote.https_base(&config)?;
+    Ok(PairingTarget { config, https_base })
+}
+
+fn pairing(
+    daemon: &Daemon,
+    target: &PairingTarget,
+    stored: StoredRemoteDevice,
+    token: &str,
+) -> RemotePairing {
+    let url = match &target.https_base {
         Some(base) => format!("{base}/#token={token}"),
         None => pairing_url(
-            &config,
+            &target.config,
             daemon.remote.bound(),
             &interfaces().unwrap_or_default(),
             token,
         ),
     };
-    Ok(RemotePairing {
+    RemotePairing {
         pairing_url: url,
         device: device_info(daemon, stored),
-    })
+    }
 }
 
 fn not_found(id: i64) -> Error {
@@ -247,11 +283,12 @@ pub fn add_device(daemon: &Daemon, name: &str) -> Result<RemotePairing> {
     if name.is_empty() {
         return Err(invalid("a device needs a name".into()));
     }
+    let target = pairing_target(daemon)?;
     let token = token::generate()?;
     let stored = daemon
         .store()
         .add_remote_device(name, &token::hash(&token))?;
-    pairing(daemon, stored, &token)
+    Ok(pairing(daemon, &target, stored, &token))
 }
 
 pub fn list_devices(daemon: &Daemon) -> Result<Vec<RemoteDevice>> {
@@ -260,6 +297,7 @@ pub fn list_devices(daemon: &Daemon) -> Result<Vec<RemoteDevice>> {
 }
 
 pub fn rotate_device(daemon: &Daemon, id: i64) -> Result<RemotePairing> {
+    let target = pairing_target(daemon)?;
     let token = token::generate()?;
     if !daemon
         .store()
@@ -272,7 +310,7 @@ pub fn rotate_device(daemon: &Daemon, id: i64) -> Result<RemotePairing> {
         .store()
         .remote_device(id)?
         .ok_or_else(|| not_found(id))?;
-    pairing(daemon, stored, &token)
+    Ok(pairing(daemon, &target, stored, &token))
 }
 
 pub fn remove_device(daemon: &Daemon, id: i64) -> Result<()> {
