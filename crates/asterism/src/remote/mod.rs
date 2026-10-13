@@ -1,3 +1,4 @@
+pub mod server;
 pub mod token;
 
 use std::collections::HashMap;
