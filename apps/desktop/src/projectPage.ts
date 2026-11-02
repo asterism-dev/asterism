@@ -1,5 +1,5 @@
 import { aggregate } from './store';
-import type { Session, SessionStatus, Task, Worktree } from './types';
+import type { Session, SessionStatus, Task, TaskDeleteCheck, Worktree } from './types';
 
 export type TaskFilter = 'all' | 'active' | 'archived';
 
@@ -31,4 +31,16 @@ export function formatSize(bytes: number | undefined): string {
     unit++;
   }
   return unit === 0 ? `${value} B` : `${value.toFixed(1)} ${units[unit]}`;
+}
+
+export function deleteWarnings(checks: TaskDeleteCheck[]): string[] {
+  const count = (pick: (c: TaskDeleteCheck) => boolean) => checks.filter(pick).length;
+  const dirty = count((c) => c.dirty && !c.shared_with.length);
+  const shared = count((c) => c.shared_with.length > 0);
+  const unmerged = count((c) => c.branch_exists && c.unmerged_commits > 0);
+  return [
+    dirty && `${dirty} with uncommitted changes, which will be lost.`,
+    shared && `${shared} sharing a worktree with another task — it stays.`,
+    unmerged && `${unmerged} with commits not on their base branch.`,
+  ].filter((w): w is string => !!w);
 }

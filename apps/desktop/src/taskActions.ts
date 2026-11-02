@@ -36,11 +36,40 @@ export async function deleteTask(task: Task) {
         kind: 'warning',
       });
     }
-    const result = await api.deleteTask(task.id, deleteBranch);
-    remove(workspaceKey(task.id));
-    remove(floatKey(task.id));
-    if (result.warning) toast(`Deleted with a warning: ${result.warning}`);
+    const warning = await removeTask(task, deleteBranch);
+    if (warning) toast(`Deleted with a warning: ${warning}`);
   } catch (e) {
     report(e);
   }
 }
+
+async function removeTask(task: Task, deleteBranch: boolean): Promise<string | null> {
+  const result = await api.deleteTask(task.id, deleteBranch);
+  remove(workspaceKey(task.id));
+  remove(floatKey(task.id));
+  return result.warning;
+}
+
+// Sequential: each call runs git against the same repo, and one failure shouldn't stop the rest.
+async function eachTask(tasks: Task[], verb: string, run: (t: Task) => Promise<unknown>) {
+  const problems: string[] = [];
+  for (const task of tasks) {
+    try {
+      const warning = await run(task);
+      if (typeof warning === 'string') problems.push(`${task.title}: ${warning}`);
+    } catch (e) {
+      problems.push(`${task.title}: ${errorMessage(e)}`);
+    }
+  }
+  if (problems.length)
+    toast(`${verb} ${tasks.length} task(s) with problems — ${problems.join('; ')}`);
+}
+
+export const archiveTasks = (tasks: Task[]) =>
+  eachTask(tasks, 'Archived', (t) => api.archiveTask(t.id));
+
+export const restoreTasks = (tasks: Task[]) =>
+  eachTask(tasks, 'Restored', (t) => api.restoreTask(t.id));
+
+export const deleteTasks = (tasks: Task[], deleteBranches: boolean) =>
+  eachTask(tasks, 'Deleted', (t) => removeTask(t, deleteBranches));
