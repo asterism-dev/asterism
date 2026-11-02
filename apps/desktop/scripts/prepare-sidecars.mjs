@@ -28,6 +28,12 @@ execFileSync(
     stdio: 'inherit',
   },
 );
+// Honours a target-dir set in cargo config or CARGO_TARGET_DIR instead of assuming <root>/target.
+const { target_directory: target } = JSON.parse(
+  execFileSync('cargo', ['metadata', '--format-version', '1', '--no-deps'], {
+    cwd: root,
+  }).toString(),
+);
 mkdirSync(binaries, { recursive: true });
 for (const bin of [
   'asterismd',
@@ -37,7 +43,7 @@ for (const bin of [
   'asterism-plugin-linear',
 ]) {
   copyFileSync(
-    join(root, 'target', ...(cross ? [triple] : []), release ? 'release' : 'debug', bin),
+    join(target, ...(cross ? [triple] : []), release ? 'release' : 'debug', bin),
     join(binaries, `${bin}-${triple}`),
   );
 }
