@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { filterTasks, formatSize, taskState, worktreeActions } from './projectPage';
-import type { Session, Task, Worktree } from './types';
+import { deleteWarnings, filterTasks, formatSize, taskState, worktreeActions } from './projectPage';
+import type { Session, Task, TaskDeleteCheck, Worktree } from './types';
 
 const task = (id: number, archived = false): Task => ({
   id,
@@ -55,5 +55,29 @@ describe('project page', () => {
     expect(formatSize(1536)).toBe('1.5 KB');
     expect(formatSize(5 * 1024 * 1024)).toBe('5.0 MB');
     expect(formatSize(3 * 1024 ** 3)).toBe('3.0 GB');
+  });
+
+  it('summarises delete checks across tasks', () => {
+    const check = (over: Partial<TaskDeleteCheck>): TaskDeleteCheck => ({
+      dirty: false,
+      branch: 'b',
+      branch_exists: true,
+      unmerged_commits: 0,
+      shared_with: [],
+      ...over,
+    });
+    expect(deleteWarnings([check({})])).toEqual([]);
+    expect(
+      deleteWarnings([
+        check({ dirty: true }),
+        check({ dirty: true, shared_with: [9] }),
+        check({ unmerged_commits: 2 }),
+        check({ unmerged_commits: 2, branch_exists: false }),
+      ]),
+    ).toEqual([
+      '1 with uncommitted changes, which will be lost.',
+      '1 sharing a worktree with another task — it stays.',
+      '1 with commits not on their base branch.',
+    ]);
   });
 });

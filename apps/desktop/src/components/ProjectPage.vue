@@ -3,6 +3,7 @@ import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { computed, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
+import BulkDeleteDialog from './BulkDeleteDialog.vue';
 import PrBadge from './PrBadge.vue';
 import { prSummary } from '../prBadge';
 import { staleDefault } from '../baseBranch';
@@ -15,7 +16,7 @@ import {
 } from '../projectPage';
 import { relativeTime } from '../projects';
 import { applyPrList, state, toast } from '../store';
-import { archiveTask, deleteTask, restoreTask } from '../taskActions';
+import { archiveTask, archiveTasks, deleteTask, restoreTask, restoreTasks } from '../taskActions';
 import type { ProjectBranches, Task, Worktree } from '../types';
 
 const props = defineProps<{ projectId: number }>();
@@ -33,6 +34,12 @@ const worktrees = ref<Worktree[]>([]);
 const sizes = ref<Record<string, number>>({});
 const now = ref(Date.now() / 1000);
 const shown = computed(() => filterTasks(tasks.value, filter.value));
+const picked = ref(new Set<number>());
+const selected = computed(() => shown.value.filter((t) => picked.value.has(t.id)));
+const allPicked = computed(
+  () => shown.value.length > 0 && selected.value.length === shown.value.length,
+);
+const bulkDeleting = ref(false);
 const taskTitle = (id: number | null) => tasks.value.find((t) => t.id === id)?.title ?? '—';
 
 async function loadTasks() {
@@ -61,6 +68,21 @@ function setDefaultBase(value: string) {
     .catch(report);
 }
 
+function togglePick(id: number) {
+  const next = new Set(picked.value);
+  if (!next.delete(id)) next.add(id);
+  picked.value = next;
+}
+
+function toggleAll() {
+  picked.value = new Set(allPicked.value ? [] : shown.value.map((t) => t.id));
+}
+
+async function bulk(run: (tasks: Task[]) => Promise<void>, tasks: Task[]) {
+  await run(tasks);
+  picked.value = new Set();
+}
+
 function openTask(id: number | null) {
   if (id === null) return;
   state.projectPage = null;
@@ -76,6 +98,7 @@ async function removeWorktree(w: Worktree) {
 }
 
 watch(() => [props.projectId, state.tasksVersion], loadTasks, { immediate: true });
+watch([filter, () => props.projectId], () => (picked.value = new Set()));
 watch(
   () => props.projectId,
   (id) => {
@@ -141,12 +164,47 @@ watch(
           {{ f }}
         </button>
       </div>
+      <div v-if="selected.length" class="toolbar bulk">
+        <span>{{ selected.length }} selected</span>
+        <button
+          v-if="selected.some((t) => !t.archived)"
+          @click="
+            bulk(
+              archiveTasks,
+              selected.filter((t) => !t.archived),
+            )
+          "
+        >
+          Archive
+        </button>
+        <button
+          v-if="selected.some((t) => t.archived)"
+          @click="
+            bulk(
+              restoreTasks,
+              selected.filter((t) => t.archived),
+            )
+          "
+        >
+          Restore
+        </button>
+        <button class="danger" @click="bulkDeleting = true">Delete</button>
+      </div>
       <p v-if="state.prErrors[projectId]" class="error">
         PR status: {{ state.prErrors[projectId] }}
       </p>
       <table>
         <thead>
           <tr>
+            <th class="pick">
+              <input
+                type="checkbox"
+                aria-label="Select all tasks"
+                :checked="allPicked"
+                :indeterminate="selected.length > 0 && !allPicked"
+                @change="toggleAll"
+              />
+            </th>
             <th>Task</th>
             <th>Branch</th>
             <th>PR</th>
@@ -158,6 +216,14 @@ watch(
         </thead>
         <tbody>
           <tr v-for="t in shown" :key="t.id">
+            <td class="pick">
+              <input
+                type="checkbox"
+                :aria-label="`Select ${t.title}`"
+                :checked="picked.has(t.id)"
+                @change="togglePick(t.id)"
+              />
+            </td>
             <td>
               {{ t.title }}
               <a
@@ -188,6 +254,12 @@ watch(
         </tbody>
       </table>
       <p v-if="!shown.length" class="muted">No tasks.</p>
+      <BulkDeleteDialog
+        v-if="bulkDeleting"
+        :tasks="selected"
+        @close="bulkDeleting = false"
+        @deleted="((bulkDeleting = false), (picked = new Set()))"
+      />
     </div>
     <div v-else-if="tab === 'worktrees'" class="body">
       <div v-if="worktrees.some((w) => w.prunable)" class="toolbar">
@@ -334,6 +406,20 @@ button.danger {
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--muted);
+}
+.pick {
+  width: 1%;
+}
+.pick input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+}
+.bulk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .segmented button {
   text-transform: capitalize;
