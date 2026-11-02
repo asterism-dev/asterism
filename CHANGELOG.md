@@ -1,3 +1,9 @@
+## v0.18.0 (2026-11-02)
+
+### Feat
+
+- **desktop**: bulk archive/restore/delete tasks on the project page (#22)
+
 ## v0.17.0 (2026-10-13)
 
 ### Feat
