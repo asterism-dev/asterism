@@ -12,6 +12,9 @@ pub mod method {
     pub const PROJECT_ADD: &str = "project.add";
     pub const PROJECT_REMOVE: &str = "project.remove";
     pub const TASK_LIST: &str = "task.list";
+    pub const NOTIFICATION_LIST: &str = "notification.list";
+    pub const NOTIFICATION_READ: &str = "notification.read";
+    pub const NOTIFICATION_READ_ALL: &str = "notification.read_all";
     pub const TASK_CREATE: &str = "task.create";
     pub const TASK_ARCHIVE: &str = "task.archive";
     pub const TASK_DIFF: &str = "task.diff";
@@ -976,6 +979,27 @@ pub struct TaskCreateResult {
     pub warning: Option<String>,
 }
 
+pub const NOTIFICATION_KIND_WAITING: &str = "waiting";
+
+/// Task and project names are copied at creation so the entry outlives an archived task.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NotificationEntry {
+    pub id: i64,
+    pub kind: String,
+    pub created_at: i64,
+    pub task_id: Option<i64>,
+    pub session_id: Option<i64>,
+    pub task_title: Option<String>,
+    pub project_name: Option<String>,
+    pub resolved_at: Option<i64>,
+    pub read_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NotificationIdParams {
+    pub id: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskIdParams {
     pub task_id: i64,
@@ -1561,6 +1585,10 @@ pub enum Event {
     SubagentStarted { session_id: i64, subagent: Subagent },
     #[serde(rename = "subagent.updated")]
     SubagentUpdated { session_id: i64, subagent: Subagent },
+    #[serde(rename = "notification.changed")]
+    NotificationChanged(NotificationEntry),
+    #[serde(rename = "notification.removed")]
+    NotificationRemoved { id: i64 },
 }
 
 impl Event {
