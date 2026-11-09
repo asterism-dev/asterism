@@ -82,7 +82,7 @@ fn bare_origin(dir: &Path) -> String {
 async fn clone_places_repo_under_owner_and_registers_it() {
     let env = setup(false);
     let url = bare_origin(env.home.path());
-    let project = env.daemon.clone_project(&url, None).await.unwrap();
+    let project = env.daemon.clone_project(&url, None, None).await.unwrap();
     let expected = env.home.path().join("h/repos/acme/demo");
     assert_eq!(
         Path::new(&project.path).canonicalize().unwrap(),
@@ -90,7 +90,11 @@ async fn clone_places_repo_under_owner_and_registers_it() {
     );
     assert!(expected.join("README.md").exists());
     assert_eq!(
-        env.daemon.clone_project(&url, None).await.unwrap_err().kind,
+        env.daemon
+            .clone_project(&url, None, None)
+            .await
+            .unwrap_err()
+            .kind,
         ErrorKind::InvalidParams
     );
 }
@@ -100,7 +104,7 @@ async fn failed_clone_removes_partial_target() {
     let env = setup(false);
     let err = env
         .daemon
-        .clone_project("file:///definitely/missing/acme/nothing.git", None)
+        .clone_project("file:///definitely/missing/acme/nothing.git", None, None)
         .await
         .unwrap_err();
     assert_eq!(err.kind, ErrorKind::Git);
@@ -232,7 +236,7 @@ async fn remote_failure_keeps_local_repo() {
 async fn worktrees_are_grouped_by_owner_and_root_changes_keep_existing_tasks() {
     let env = setup(false);
     let url = bare_origin(env.home.path());
-    let project = env.daemon.clone_project(&url, None).await.unwrap();
+    let project = env.daemon.clone_project(&url, None, None).await.unwrap();
     let create = |title: &str| {
         let params = TaskCreateParams {
             project_id: project.id,
@@ -343,7 +347,11 @@ async fn unknown_remote_owners_create_nothing() {
 async fn shorthand_clones_through_the_authenticated_forge() {
     let env = setup(false);
     bare_origin(env.home.path());
-    let project = env.daemon.clone_project("acme/demo", None).await.unwrap();
+    let project = env
+        .daemon
+        .clone_project("acme/demo", None, None)
+        .await
+        .unwrap();
     let expected = env.home.path().join("h/repos/acme/demo");
     assert_eq!(
         Path::new(&project.path).canonicalize().unwrap(),
@@ -366,7 +374,7 @@ async fn shorthand_with_an_unknown_default_forge_cleans_up() {
     .unwrap();
     let err = env
         .daemon
-        .clone_project("acme/demo", None)
+        .clone_project("acme/demo", None, None)
         .await
         .unwrap_err();
     assert_eq!(err.kind, ErrorKind::InvalidParams);
@@ -381,7 +389,7 @@ async fn shorthand_honours_an_explicit_forge() {
     let env = setup(false);
     bare_origin(env.home.path());
     env.daemon
-        .clone_project("acme/demo", Some("github"))
+        .clone_project("acme/demo", Some("github"), None)
         .await
         .unwrap();
     assert!(env.home.path().join("h/repos/acme/demo/README.md").exists());
@@ -392,7 +400,7 @@ async fn shorthand_with_an_unknown_explicit_forge_cleans_up() {
     let env = setup(false);
     let err = env
         .daemon
-        .clone_project("acme/demo", Some("nope"))
+        .clone_project("acme/demo", Some("nope"), None)
         .await
         .unwrap_err();
     assert_eq!(err.kind, ErrorKind::InvalidParams);
@@ -494,7 +502,7 @@ fn has_upstream(repo: &Path, branch: &str) -> bool {
 async fn task_starts_from_fetched_origin_without_touching_local_main() {
     let env = setup(false);
     let url = bare_origin(env.home.path());
-    let project = env.daemon.clone_project(&url, None).await.unwrap();
+    let project = env.daemon.clone_project(&url, None, None).await.unwrap();
     let repo = Path::new(&project.path);
     push_commit(&url, env.home.path(), "remote.txt");
     let local_main = run_git(repo, &["rev-parse", "main"]);
@@ -530,7 +538,7 @@ async fn task_starts_from_fetched_origin_without_touching_local_main() {
 async fn explicit_base_is_used_and_bad_bases_leave_no_task() {
     let env = setup(false);
     let url = bare_origin(env.home.path());
-    let project = env.daemon.clone_project(&url, None).await.unwrap();
+    let project = env.daemon.clone_project(&url, None, None).await.unwrap();
     let repo = Path::new(&project.path);
     run_git(repo, &["checkout", "-q", "-b", "feature"]);
     std::fs::write(repo.join("feature.txt"), "f\n").unwrap();
@@ -597,7 +605,7 @@ async fn empty_repository_gives_clear_error_and_no_task() {
 async fn configured_default_base_is_used_until_it_disappears() {
     let env = setup(false);
     let url = bare_origin(env.home.path());
-    let project = env.daemon.clone_project(&url, None).await.unwrap();
+    let project = env.daemon.clone_project(&url, None, None).await.unwrap();
     let repo = Path::new(&project.path);
     run_git(repo, &["branch", "develop"]);
 
@@ -653,7 +661,7 @@ async fn configured_default_base_is_used_until_it_disappears() {
 async fn fetch_failure_is_reported_and_missing_origin_head_falls_back() {
     let env = setup(false);
     let url = bare_origin(env.home.path());
-    let project = env.daemon.clone_project(&url, None).await.unwrap();
+    let project = env.daemon.clone_project(&url, None, None).await.unwrap();
     let repo = Path::new(&project.path);
     run_git(repo, &["remote", "set-head", "origin", "-d"]);
     run_git(
@@ -676,7 +684,7 @@ async fn fetch_failure_is_reported_and_missing_origin_head_falls_back() {
 async fn pruned_base_still_counts_unmerged_commits() {
     let env = setup(false);
     let url = bare_origin(env.home.path());
-    let project = env.daemon.clone_project(&url, None).await.unwrap();
+    let project = env.daemon.clone_project(&url, None, None).await.unwrap();
     let pusher = env.home.path().join("pusher");
     run_git(
         env.home.path(),
@@ -709,7 +717,7 @@ async fn pruned_base_still_counts_unmerged_commits() {
 async fn relative_bases_are_stored_as_commits() {
     let env = setup(false);
     let url = bare_origin(env.home.path());
-    let project = env.daemon.clone_project(&url, None).await.unwrap();
+    let project = env.daemon.clone_project(&url, None, None).await.unwrap();
     let head = run_git(Path::new(&project.path), &["rev-parse", "HEAD"])
         .trim()
         .to_string();
@@ -744,4 +752,120 @@ async fn startup_removes_the_obsolete_claude_settings_file() {
     )
     .unwrap();
     assert!(!stale.exists());
+}
+
+fn work_workspace(env: &Env) -> Workspace {
+    env.daemon
+        .create_workspace(WorkspaceCreateParams {
+            name: "Work".into(),
+            label: "W".into(),
+            repos: Some(env.home.path().join("w/repos").display().to_string()),
+            worktrees: Some(env.home.path().join("w/wt").display().to_string()),
+        })
+        .unwrap()
+}
+
+#[tokio::test]
+async fn clones_and_worktrees_use_the_workspace_folders() {
+    let env = setup(false);
+    let url = bare_origin(env.home.path());
+    let work = work_workspace(&env);
+    let project = env
+        .daemon
+        .clone_project(&url, None, Some(work.id))
+        .await
+        .unwrap();
+    assert!(Path::new(&project.path)
+        .starts_with(env.home.path().join("w/repos").canonicalize().unwrap()));
+    assert_eq!(project.workspace_id, work.id);
+    let task = env
+        .daemon
+        .create_task(TaskCreateParams {
+            project_id: project.id,
+            title: "t".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .task;
+    assert!(
+        Path::new(&task.worktree_path).starts_with(env.home.path().join("w/wt")),
+        "{}",
+        task.worktree_path
+    );
+    let default = env.daemon.clone_project(&url, None, None).await.unwrap();
+    assert!(Path::new(&default.path)
+        .starts_with(env.home.path().join("h/repos").canonicalize().unwrap()));
+}
+
+#[tokio::test]
+async fn clone_copy_creates_a_separate_project() {
+    let env = setup(false);
+    let url = bare_origin(env.home.path());
+    let work = work_workspace(&env);
+    let original = env.daemon.clone_project(&url, None, None).await.unwrap();
+    let copy = env
+        .daemon
+        .clone_copy(ProjectCloneCopyParams {
+            project_id: original.id,
+            workspace_id: work.id,
+        })
+        .await
+        .unwrap();
+    assert_ne!(copy.id, original.id);
+    assert_eq!(copy.name, original.name);
+    assert!(
+        Path::new(&copy.path).starts_with(env.home.path().join("w/repos").canonicalize().unwrap())
+    );
+    assert_eq!(copy.workspace_id, work.id);
+    let same = env.daemon.projects().unwrap();
+    let unchanged = same.iter().find(|p| p.id == original.id).unwrap();
+    assert_eq!(unchanged.workspace_id, original.workspace_id);
+    let err = env
+        .daemon
+        .clone_copy(ProjectCloneCopyParams {
+            project_id: original.id,
+            workspace_id: original.workspace_id,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
+}
+
+#[tokio::test]
+async fn clone_copy_without_origin_fails() {
+    let env = setup(false);
+    let work = work_workspace(&env);
+    let repo = env.home.path().join("plain");
+    std::fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+    let project = env.daemon.add_project(&repo.display().to_string()).unwrap();
+    let before = env.daemon.projects().unwrap().len();
+    let err = env
+        .daemon
+        .clone_copy(ProjectCloneCopyParams {
+            project_id: project.id,
+            workspace_id: work.id,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
+    assert!(err.message.contains("no origin"), "{}", err.message);
+    assert_eq!(env.daemon.projects().unwrap().len(), before);
+    assert!(!env.home.path().join("w/repos").exists());
+}
+
+#[tokio::test]
+async fn unknown_workspace_clones_nothing() {
+    let env = setup(false);
+    let url = bare_origin(env.home.path());
+    let work = work_workspace(&env);
+    let err = env
+        .daemon
+        .clone_project(&url, None, Some(9999))
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::NotFound);
+    assert!(!env.home.path().join("h/repos/acme").exists());
+    assert!(!Path::new(&work.repos).join("acme").exists());
 }

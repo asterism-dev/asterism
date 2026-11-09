@@ -996,11 +996,18 @@ impl Daemon {
     }
 
     pub fn add_project(&self, path: &str) -> Result<Project> {
+        self.add_project_in(path, None)
+    }
+
+    pub fn add_project_in(&self, path: &str, workspace_id: Option<i64>) -> Result<Project> {
+        let workspace = self.resolve_workspace(workspace_id)?;
         let root = git::toplevel(Path::new(path))?;
         let name = root
             .file_name()
             .map_or_else(|| "project".into(), |n| n.to_string_lossy().into_owned());
-        let project = self.store().add_project(&name, &root.to_string_lossy())?;
+        let project = self
+            .store()
+            .add_project_in(&name, &root.to_string_lossy(), workspace.id)?;
         self.emit(Event::ProjectChanged(project.clone()));
         Ok(project)
     }
@@ -1110,6 +1117,20 @@ impl Daemon {
         };
         self.emit(Event::ProjectChanged(project.clone()));
         Ok(project)
+    }
+
+    fn resolve_workspace(&self, id: Option<i64>) -> Result<Workspace> {
+        let store = self.store();
+        match id {
+            Some(id) => store
+                .workspace(id)?
+                .ok_or_else(|| not_found("workspace", id)),
+            None => store
+                .workspaces()?
+                .into_iter()
+                .next()
+                .ok_or_else(|| Error::new(ErrorKind::Internal, "no workspaces")),
+        }
     }
 
     pub fn workspaces(&self) -> Result<Vec<Workspace>> {
@@ -1479,10 +1500,8 @@ impl Daemon {
         Ok(id)
     }
 
-    fn new_repo_dir(&self, owner: &str, name: &str) -> Result<PathBuf> {
-        let dir = node_settings::repos_dir(&self.paths)?
-            .join(owner)
-            .join(name);
+    fn new_repo_dir(&self, workspace: &Workspace, owner: &str, name: &str) -> Result<PathBuf> {
+        let dir = self.workspace_dirs(workspace)?.0.join(owner).join(name);
         if let Some(parent) = dir.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -1501,9 +1520,11 @@ impl Daemon {
         self: &Arc<Self>,
         source: &str,
         forge: Option<&str>,
+        workspace_id: Option<i64>,
     ) -> Result<Project> {
+        let workspace = self.resolve_workspace(workspace_id)?;
         let source = repo_source::parse_source(source)?;
-        let target = self.new_repo_dir(&source.owner, &source.repo)?;
+        let target = self.new_repo_dir(&workspace, &source.owner, &source.repo)?;
         let cloned = match &source.url {
             Some(url) => self.git_clone(url.clone(), target.clone()).await,
             None => {
@@ -1516,7 +1537,28 @@ impl Daemon {
             let _ = std::fs::remove_dir_all(&target);
             return Err(e);
         }
-        self.add_project(&target.to_string_lossy())
+        self.add_project_in(&target.to_string_lossy(), Some(workspace.id))
+    }
+
+    pub async fn clone_copy(self: &Arc<Self>, p: ProjectCloneCopyParams) -> Result<Project> {
+        let project = self
+            .store()
+            .project(p.project_id)?
+            .ok_or_else(|| not_found("project", p.project_id))?;
+        if project.workspace_id == p.workspace_id {
+            return Err(invalid_params(format!(
+                "{} is already in that workspace",
+                project.name
+            )));
+        }
+        let origin = git::remote_url(Path::new(&project.path), "origin").ok_or_else(|| {
+            invalid_params(format!(
+                "{} has no origin remote to clone from",
+                project.name
+            ))
+        })?;
+        self.clone_project(&origin, None, Some(p.workspace_id))
+            .await
     }
 
     async fn git_clone(&self, url: String, target: PathBuf) -> Result<()> {
@@ -1569,6 +1611,7 @@ impl Daemon {
         self: &Arc<Self>,
         params: &ProjectCreateParams,
     ) -> Result<ProjectCreateResult> {
+        let workspace = self.resolve_workspace(params.workspace_id)?;
         repo_source::check_name("repository name", &params.name)?;
         let owner = match &params.remote {
             Some(target) => {
@@ -1590,7 +1633,7 @@ impl Daemon {
             }
             None => LOCAL_OWNER.to_string(),
         };
-        let dir = self.new_repo_dir(&owner, &params.name)?;
+        let dir = self.new_repo_dir(&workspace, &owner, &params.name)?;
         let (init_dir, name, env) = (
             dir.clone(),
             params.name.clone(),
@@ -1604,7 +1647,7 @@ impl Daemon {
             let _ = std::fs::remove_dir_all(&dir);
             return Err(e);
         }
-        let project = self.add_project(&dir.to_string_lossy())?;
+        let project = self.add_project_in(&dir.to_string_lossy(), Some(workspace.id))?;
         let remote_error = match &params.remote {
             Some(target) => {
                 let create = CreateRemoteParams {
@@ -1875,7 +1918,13 @@ impl Daemon {
     fn worktree_root(&self, repo: &Path, project: &Project) -> Result<PathBuf> {
         let origin = git::remote_url(repo, "origin");
         let (owner, repo_name) = node_settings::layout_owner_repo(origin.as_deref(), &project.name);
-        Ok(node_settings::worktrees_dir(&self.paths)?
+        let workspace = self
+            .store()
+            .workspace(project.workspace_id)?
+            .ok_or_else(|| not_found("workspace", project.workspace_id))?;
+        Ok(self
+            .workspace_dirs(&workspace)?
+            .1
             .join(owner)
             .join(repo_name))
     }
@@ -2343,7 +2392,8 @@ impl Daemon {
     }
 
     fn tidy_worktree_parents(&self, project_id: i64, repo: &Path, worktree: &Path) {
-        if let Ok(Some(project)) = self.store().project(project_id) {
+        let project = self.store().project(project_id);
+        if let Ok(Some(project)) = project {
             if let Ok(root) = self.worktree_root(repo, &project) {
                 remove_empty_parents(worktree, &root);
             }

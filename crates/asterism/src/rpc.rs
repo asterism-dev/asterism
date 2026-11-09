@@ -248,7 +248,8 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
         method::HELLO => to_value(daemon.hello(params(raw)?)?),
         method::PROJECT_LIST => to_value(daemon.projects()?),
         method::PROJECT_ADD => {
-            to_value(daemon.add_project(&params::<ProjectAddParams>(raw)?.path)?)
+            let p = params::<ProjectAddParams>(raw)?;
+            to_value(daemon.add_project_in(&p.path, p.workspace_id)?)
         }
         method::PROJECT_REMOVE => {
             daemon.remove_project(params::<ProjectIdParams>(raw)?.project_id)?;
@@ -421,8 +422,13 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
         method::PR_SEARCH => to_value(daemon.search_pull_requests(&params(raw)?).await?),
         method::PROJECT_CLONE => {
             let p = params::<ProjectCloneParams>(raw)?;
-            to_value(daemon.clone_project(&p.source, p.forge.as_deref()).await?)
+            to_value(
+                daemon
+                    .clone_project(&p.source, p.forge.as_deref(), p.workspace_id)
+                    .await?,
+            )
         }
+        method::PROJECT_CLONE_COPY => to_value(daemon.clone_copy(params(raw)?).await?),
         method::PROJECT_CREATE => to_value(
             daemon
                 .create_project(&params::<ProjectCreateParams>(raw)?)
