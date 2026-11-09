@@ -73,7 +73,7 @@ const selected = computed(() => (route.value.name === 'task' ? route.value.taskI
       @click="toggleMore"
     >
       <span aria-hidden="true">{{ moreOpen ? '⌄' : '›' }}</span> {{ grouped.idle.length }} more
-      projects
+      {{ grouped.idle.length === 1 ? 'project' : 'projects' }}
     </button>
     <template v-if="moreOpen">
       <section v-for="g in grouped.idle" :key="g.project.id">
@@ -153,6 +153,7 @@ h2 {
 .more {
   width: 100%;
   min-height: 44px;
+  justify-content: flex-start;
   text-align: left;
   border: none;
   background: none;

@@ -262,7 +262,7 @@ function taskMenu(e: MouseEvent, t: Task) {
             @click="toggleMore"
           >
             <ChevronDown v-if="showIdle" /><ChevronRight v-else />{{ grouped.idle.length }} more
-            projects
+            {{ grouped.idle.length === 1 ? 'project' : 'projects' }}
           </button>
           <div v-else class="project" :class="{ offline: !connected }">
             <div class="row project-row" @contextmenu="projectMenu($event, item.project)">
@@ -417,10 +417,10 @@ function taskMenu(e: MouseEvent, t: Task) {
 .more-row {
   margin-top: 8px;
   width: 100%;
+  justify-content: flex-start;
   border: 0;
   background: transparent;
   color: var(--muted);
-  text-align: left;
 }
 .disclosure {
   border: 0;
