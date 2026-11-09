@@ -52,6 +52,7 @@ async fn shell_session(client: &Client, repo: &Path) -> Session {
             method::PROJECT_ADD,
             ProjectAddParams {
                 path: repo.display().to_string(),
+                workspace_id: None,
             },
         )
         .await
@@ -189,6 +190,7 @@ async fn subscribe_delivers_change_events() {
             method::PROJECT_ADD,
             ProjectAddParams {
                 path: repo.path().display().to_string(),
+                workspace_id: None,
             },
         )
         .await
@@ -310,6 +312,7 @@ async fn stalled_attached_client_does_not_block_others() {
             method::PROJECT_ADD,
             ProjectAddParams {
                 path: repo.path().display().to_string(),
+                workspace_id: None,
             },
         )
         .await
@@ -532,6 +535,7 @@ async fn project_and_path_methods_are_routed() {
         .call::<_, Project>(
             method::PROJECT_CLONE,
             ProjectCloneParams {
+                workspace_id: None,
                 source: "nope".into(),
                 forge: None,
             },
@@ -554,6 +558,7 @@ async fn project_and_path_methods_are_routed() {
         .call::<_, ProjectCreateResult>(
             method::PROJECT_CREATE,
             ProjectCreateParams {
+                workspace_id: None,
                 name: "../x".into(),
                 remote: None,
             },
@@ -574,6 +579,7 @@ async fn project_branches_and_update_over_rpc() {
             method::PROJECT_ADD,
             ProjectAddParams {
                 path: repo.path().display().to_string(),
+                workspace_id: None,
             },
         )
         .await

@@ -323,6 +323,7 @@ async fn paired_device_uses_rpc_and_receives_events() {
             method::PROJECT_ADD,
             ProjectAddParams {
                 path: repo.path().display().to_string(),
+                workspace_id: None,
             },
         )
         .await

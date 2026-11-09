@@ -10,6 +10,12 @@ pub mod method {
     pub const SUBSCRIBE: &str = "subscribe";
     pub const PROJECT_LIST: &str = "project.list";
     pub const PROJECT_ADD: &str = "project.add";
+    pub const WORKSPACE_LIST: &str = "workspace.list";
+    pub const WORKSPACE_CREATE: &str = "workspace.create";
+    pub const WORKSPACE_UPDATE: &str = "workspace.update";
+    pub const WORKSPACE_DELETE: &str = "workspace.delete";
+    pub const PROJECT_MOVE: &str = "project.move";
+    pub const PROJECT_CLONE_COPY: &str = "project.clone_copy";
     pub const PROJECT_REMOVE: &str = "project.remove";
     pub const TASK_LIST: &str = "task.list";
     pub const NOTIFICATION_LIST: &str = "notification.list";
@@ -157,11 +163,63 @@ pub struct Project {
     /// Base for new tasks; `None` means automatic (origin's default branch).
     #[serde(default)]
     pub default_base: Option<String>,
+    #[serde(default)]
+    pub workspace_id: i64,
+}
+
+/// Empty `repos`/`worktrees` mean the global `[paths]` from config.toml.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Workspace {
+    pub id: i64,
+    pub name: String,
+    pub label: String,
+    pub position: i64,
+    pub repos: String,
+    pub worktrees: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceCreateParams {
+    pub name: String,
+    pub label: String,
+    #[serde(default)]
+    pub repos: Option<String>,
+    #[serde(default)]
+    pub worktrees: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceUpdateParams {
+    pub workspace_id: i64,
+    pub name: String,
+    pub label: String,
+    pub repos: String,
+    pub worktrees: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceDeleteParams {
+    pub workspace_id: i64,
+    pub move_to: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectMoveParams {
+    pub project_id: i64,
+    pub workspace_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectCloneCopyParams {
+    pub project_id: i64,
+    pub workspace_id: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectAddParams {
     pub path: String,
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -698,6 +756,8 @@ pub struct ProjectCloneParams {
     /// Forge for an `owner/repo` shorthand; the default forge when absent.
     #[serde(default)]
     pub forge: Option<String>,
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -705,6 +765,8 @@ pub struct ProjectCreateParams {
     pub name: String,
     #[serde(default)]
     pub remote: Option<RemoteTarget>,
+    #[serde(default)]
+    pub workspace_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1570,6 +1632,10 @@ pub enum Event {
     ProjectChanged(Project),
     #[serde(rename = "project.removed")]
     ProjectRemoved { project_id: i64 },
+    #[serde(rename = "workspace.changed")]
+    WorkspaceChanged(Workspace),
+    #[serde(rename = "workspace.removed")]
+    WorkspaceRemoved { workspace_id: i64 },
     #[serde(rename = "plugins.changed")]
     PluginsChanged {},
     #[serde(rename = "stores.changed")]

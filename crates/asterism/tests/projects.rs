@@ -113,6 +113,7 @@ async fn create_local_repository() {
     let result = env
         .daemon
         .create_project(&ProjectCreateParams {
+            workspace_id: None,
             name: "notes".into(),
             remote: None,
         })
@@ -128,6 +129,7 @@ async fn create_local_repository() {
     let err = env
         .daemon
         .create_project(&ProjectCreateParams {
+            workspace_id: None,
             name: "../x".into(),
             remote: None,
         })
@@ -137,6 +139,7 @@ async fn create_local_repository() {
     let err = env
         .daemon
         .create_project(&ProjectCreateParams {
+            workspace_id: None,
             name: "notes".into(),
             remote: None,
         })
@@ -158,6 +161,7 @@ async fn remote_creation_validates_owner_and_visibility() {
     let ok = env
         .daemon
         .create_project(&ProjectCreateParams {
+            workspace_id: None,
             name: "svc".into(),
             remote: target("acme", Visibility::Internal),
         })
@@ -168,6 +172,7 @@ async fn remote_creation_validates_owner_and_visibility() {
     let cased = env
         .daemon
         .create_project(&ProjectCreateParams {
+            workspace_id: None,
             name: "svc2".into(),
             remote: target("ACME", Visibility::Private),
         })
@@ -187,6 +192,7 @@ async fn remote_creation_validates_owner_and_visibility() {
         let err = env
             .daemon
             .create_project(&ProjectCreateParams {
+                workspace_id: None,
                 name: "x".into(),
                 remote: target(owner, visibility),
             })
@@ -202,6 +208,7 @@ async fn remote_failure_keeps_local_repo() {
     let result = env
         .daemon
         .create_project(&ProjectCreateParams {
+            workspace_id: None,
             name: "svc".into(),
             remote: Some(RemoteTarget {
                 forge: "github".into(),
@@ -318,6 +325,7 @@ async fn unknown_remote_owners_create_nothing() {
     let err = env
         .daemon
         .create_project(&ProjectCreateParams {
+            workspace_id: None,
             name: "svc".into(),
             remote: Some(RemoteTarget {
                 forge: "github".into(),
@@ -429,6 +437,7 @@ async fn existing_target_directory_is_left_untouched() {
     let err = env
         .daemon
         .create_project(&ProjectCreateParams {
+            workspace_id: None,
             name: "notes".into(),
             remote: None,
         })
