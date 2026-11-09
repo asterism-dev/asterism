@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { open } from '@tauri-apps/plugin-dialog';
-import { onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api, errorMessage } from '../api';
+import type { Project } from '../types';
 import { matchAction } from '../shortcuts';
 import { state, type ProjectDialogTab } from '../store';
 import CloneForm from './CloneForm.vue';
@@ -14,6 +15,14 @@ const TABS: { id: ProjectDialogTab; label: string }[] = [
   { id: 'create', label: 'New repository' },
 ];
 
+const workspaceId = ref<number | null>(state.activeWorkspace);
+const existing = ref<Project | null>(null);
+const existingIn = computed(
+  () =>
+    state.workspaces.find((w) => w.id === existing.value?.workspace_id)?.name ??
+    'another workspace',
+);
+const chosenName = computed(() => state.workspaces.find((w) => w.id === workspaceId.value)?.name);
 const busy = ref(false);
 const error = ref<string | null>(null);
 const chooseButton = ref<HTMLButtonElement>();
@@ -23,6 +32,7 @@ const dialog = ref<HTMLElement>();
 function onKey(e: KeyboardEvent) {
   if (matchAction(e) !== 'confirm' || busy.value) return;
   e.preventDefault();
+  if (existing.value) return;
   if (state.projectDialog === 'folder') void chooseFolder();
   // Clicking (not requestSubmit) respects the button's disabled state and works on Safari 15.
   else dialog.value?.querySelector<HTMLButtonElement>('button[type="submit"]')?.click();
@@ -39,7 +49,26 @@ function close() {
 }
 
 function select(tab: ProjectDialogTab) {
-  if (!busy.value) state.projectDialog = tab;
+  if (busy.value) return;
+  existing.value = null;
+  error.value = null;
+  state.projectDialog = tab;
+}
+
+async function resolveExisting(action: 'move' | 'clone') {
+  if (!existing.value || workspaceId.value === null) return;
+  busy.value = true;
+  error.value = null;
+  try {
+    const run = action === 'move' ? api.moveProject : api.cloneCopy;
+    const project = await run(existing.value.id, workspaceId.value);
+    delete state.collapsed[project.id];
+    state.projectDialog = null;
+  } catch (e) {
+    error.value = errorMessage(e);
+  } finally {
+    busy.value = false;
+  }
 }
 
 async function chooseFolder() {
@@ -48,9 +77,12 @@ async function chooseFolder() {
   if (typeof path !== 'string') return;
   busy.value = true;
   try {
-    const project = await api.addProject(path);
+    const project = await api.addProject(path, workspaceId.value ?? undefined);
     delete state.collapsed[project.id];
-    state.projectDialog = null;
+    // The daemon returns an already-known project unchanged, so a mismatch means it lives elsewhere.
+    if (workspaceId.value !== null && project.workspace_id !== workspaceId.value)
+      existing.value = project;
+    else state.projectDialog = null;
   } catch (e) {
     error.value = errorMessage(e);
   } finally {
@@ -62,6 +94,12 @@ async function chooseFolder() {
 <template>
   <div class="modal-backdrop" tabindex="-1" @click.self="close" @keydown.esc="close">
     <div ref="dialog" class="modal" role="dialog" aria-modal="true" aria-label="Add project">
+      <label class="add-form"
+        >Workspace
+        <select v-model="workspaceId" :disabled="busy">
+          <option v-for="w in state.workspaces" :key="w.id" :value="w.id">{{ w.name }}</option>
+        </select>
+      </label>
       <div class="segmented" role="tablist">
         <button
           v-for="t in TABS"
@@ -76,7 +114,20 @@ async function chooseFolder() {
           {{ t.label }}
         </button>
       </div>
-      <div v-if="state.projectDialog === 'folder'" class="add-form">
+      <div v-if="state.projectDialog === 'folder' && existing" class="add-form">
+        <p>{{ existing.name }} is already in {{ existingIn }}.</p>
+        <p v-if="error" class="error">{{ error }}</p>
+        <div class="actions">
+          <button type="button" :disabled="busy" @click="close">Cancel</button>
+          <button type="button" :disabled="busy" @click="resolveExisting('clone')">
+            Create a second clone
+          </button>
+          <button type="button" class="primary" :disabled="busy" @click="resolveExisting('move')">
+            Move to {{ chosenName }}
+          </button>
+        </div>
+      </div>
+      <div v-else-if="state.projectDialog === 'folder'" class="add-form">
         <p class="muted">Add a git repository that already exists on this computer.</p>
         <p v-if="error" class="error">{{ error }}</p>
         <div class="actions">
@@ -94,10 +145,16 @@ async function chooseFolder() {
       </div>
       <CloneForm
         v-else-if="state.projectDialog === 'clone'"
+        :workspace-id="workspaceId"
         @busy="busy = $event"
         @close="state.projectDialog = null"
       />
-      <CreateRepoForm v-else @busy="busy = $event" @close="state.projectDialog = null" />
+      <CreateRepoForm
+        v-else
+        :workspace-id="workspaceId"
+        @busy="busy = $event"
+        @close="state.projectDialog = null"
+      />
     </div>
   </div>
 </template>

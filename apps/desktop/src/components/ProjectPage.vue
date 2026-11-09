@@ -68,6 +68,10 @@ function setDefaultBase(value: string) {
     .catch(report);
 }
 
+function moveToWorkspace(id: number) {
+  api.moveProject(props.projectId, id).catch(report);
+}
+
 function togglePick(id: number) {
   const next = new Set(picked.value);
   if (!next.delete(id)) next.add(id);
@@ -306,6 +310,15 @@ watch(
       </table>
     </div>
     <div v-else class="body">
+      <label
+        >Workspace
+        <select
+          :value="project?.workspace_id ?? ''"
+          @change="moveToWorkspace(Number(($event.target as HTMLSelectElement).value))"
+        >
+          <option v-for="w in state.workspaces" :key="w.id" :value="w.id">{{ w.name }}</option>
+        </select>
+      </label>
       <label
         >Default base branch
         <select

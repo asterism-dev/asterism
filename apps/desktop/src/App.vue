@@ -32,6 +32,7 @@ import {
   toast,
 } from './store';
 import { forwardEvent, initPluginFrames } from './pluginFrames';
+import { workspaceProjects } from './projects';
 import { matchAction, type GlobalActionId } from './shortcuts';
 import { leaveSettings } from './settingsGuard';
 import { startUpdater } from './updater';
@@ -71,7 +72,9 @@ function onStatus(status: NodeStatus) {
 
 const actions: Record<GlobalActionId, () => void> = {
   newTask: () => {
-    const projectId = selectedTask.value?.project_id ?? state.projects[0]?.id;
+    const projectId =
+      selectedTask.value?.project_id ??
+      workspaceProjects(state.projects, state.activeWorkspace)[0]?.id;
     if (projectId !== undefined) state.newTaskFor = projectId;
   },
   // A dialog that is already open may be mid-clone; switching its tab would orphan that work.
