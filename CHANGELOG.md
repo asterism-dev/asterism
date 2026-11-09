@@ -1,3 +1,9 @@
+## v0.19.0 (2026-11-09)
+
+### Feat
+
+- notification view for waiting sessions (#23)
+
 ## v0.18.0 (2026-11-02)
 
 ### Feat
