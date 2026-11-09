@@ -10,7 +10,7 @@ concurrency:
 jobs:
   check:
     # Same runner as the release build: the app is macOS-only and clippy also checks the Tauri crate.
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

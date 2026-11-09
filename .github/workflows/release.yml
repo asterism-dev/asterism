@@ -69,7 +69,7 @@ jobs:
   build:
     needs: bump
     if: needs.bump.outputs.released == 'true'
-    runs-on: macos-14
+    runs-on: macos-15
     strategy:
       # tauri-action merges each platform into latest.json; parallel uploads could drop one.
       max-parallel: 1
