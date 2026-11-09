@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Project, Session, Task, Workspace } from './types';
-import { resolveWorkspace, waitingByWorkspace } from './workspaces';
+import { defaultFolders, resolveWorkspace, slugText, waitingByWorkspace } from './workspaces';
 
 const ws_ = (id: number, position: number): Workspace => ({
   id,
@@ -37,5 +37,22 @@ describe('waitingByWorkspace', () => {
       { id: 11, task_id: 3 },
     ] as Session[];
     expect(waitingByWorkspace(projects, tasks, waiting)).toEqual({ 2: 2 });
+  });
+});
+
+describe('slugText', () => {
+  it('mirrors the daemon slug', () => {
+    expect(slugText('  My Work!! 2 ')).toBe('my-work-2');
+    expect(slugText('---')).toBe('');
+  });
+});
+
+describe('defaultFolders', () => {
+  it('uses the parent of the default repos path and a fallback slug', () => {
+    expect(defaultFolders('/home/a/repos', 'Side Gig')).toEqual({
+      repos: '/home/a/side-gig/repos',
+      worktrees: '/home/a/side-gig/worktrees',
+    });
+    expect(defaultFolders('/home/a/repos', '!').repos).toBe('/home/a/workspace/repos');
   });
 });

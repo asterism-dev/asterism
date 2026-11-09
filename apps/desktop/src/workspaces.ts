@@ -60,3 +60,16 @@ export const loadWorkspaceTasks = () => loadMap<number>(TASKS_KEY, (v) => typeof
 export const saveWorkspaceTasks = (map: Record<number, number>) => save(TASKS_KEY, map);
 export const loadMoreOpen = () => loadMap<boolean>(MORE_KEY, (v) => typeof v === 'boolean');
 export const saveMoreOpen = (map: Record<number, boolean>) => save(MORE_KEY, map);
+
+export function slugText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+export function defaultFolders(reposDefault: string, name: string) {
+  const home = reposDefault.replace(/[\\/][^\\/]*$/, '');
+  const slug = slugText(name) || 'workspace';
+  return { repos: `${home}/${slug}/repos`, worktrees: `${home}/${slug}/worktrees` };
+}
