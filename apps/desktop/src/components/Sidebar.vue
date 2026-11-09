@@ -202,13 +202,23 @@ function taskMenu(e: MouseEvent, t: Task) {
           offlineLabel
         }}</span>
         <button
-          v-if="badgeCount || state.notificationsOpen"
+          v-if="badgeCount"
           class="badge"
           :aria-pressed="state.notificationsOpen"
           @click="state.notificationsOpen = !state.notificationsOpen"
         >
           <template v-if="onlyWaiting">{{ badgeCount }} waiting</template>
           <template v-else><Bell class="bell" /> {{ badgeCount }}</template>
+        </button>
+        <button
+          class="add"
+          :class="{ active: state.notificationsOpen }"
+          title="Notifications"
+          aria-label="Notifications"
+          :aria-pressed="state.notificationsOpen"
+          @click="state.notificationsOpen = !state.notificationsOpen"
+        >
+          <Bell />
         </button>
         <button
           class="add"
@@ -420,6 +430,9 @@ function taskMenu(e: MouseEvent, t: Task) {
   width: 12px;
   height: 12px;
   vertical-align: -2px;
+}
+.add.active {
+  color: var(--accent);
 }
 .update-badge {
   margin-left: 6px;
