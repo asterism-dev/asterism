@@ -1007,7 +1007,10 @@ mod tests {
         let path = dir.path().join("db.sqlite");
         {
             let conn = rusqlite::Connection::open(&path).unwrap();
-            let before = MIGRATIONS.len() - 1;
+            let before = MIGRATIONS
+                .iter()
+                .position(|m| m.contains("CREATE TABLE workspaces"))
+                .unwrap();
             for m in &MIGRATIONS[..before] {
                 conn.execute_batch(m).unwrap();
             }
