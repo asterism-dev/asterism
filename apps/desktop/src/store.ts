@@ -170,10 +170,11 @@ export function notificationTarget(
   s: State,
   n: NotificationEntry,
 ): { session: Session } | { taskId: number } | null {
-  const session = s.sessions.find((x) => x.id === n.session_id);
-  if (session) return { session };
   const taskId = n.task_id;
-  return taskId !== null && s.tasks.some((t) => t.id === taskId) ? { taskId } : null;
+  // Sessions of archived tasks are still listed, so the task decides whether the row is live.
+  if (taskId === null || !s.tasks.some((t) => t.id === taskId)) return null;
+  const session = s.sessions.find((x) => x.id === n.session_id);
+  return session ? { session } : { taskId };
 }
 
 export function sessionLabel(session: Session): string {

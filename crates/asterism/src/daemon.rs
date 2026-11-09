@@ -205,6 +205,13 @@ impl Daemon {
         // Moved to plugins/data/claude/ with the Claude plugin.
         let _ = std::fs::remove_file(paths.home.join("claude-settings.json"));
         let store = Store::open(&paths.db())?;
+        // Before any client can list them: respawned sessions report waiting afresh.
+        let tidied = store
+            .resolve_all_waiting()
+            .and_then(|()| store.prune_notifications(unix_now() - NOTIFICATION_RETENTION_SECS));
+        if let Err(e) = tidied {
+            eprintln!("asterismd: tidying notifications: {e}");
+        }
         let (events, _) = broadcast::channel(1024);
         let runtime = Runtime {
             env: plugin_env(&paths, &options.plugin_env)?,
@@ -3094,12 +3101,6 @@ impl Daemon {
     }
 
     pub async fn recover(self: &Arc<Self>) -> Result<()> {
-        {
-            // Respawned sessions report waiting afresh, so nothing from the last run stays active.
-            let store = self.store();
-            store.resolve_all_waiting()?;
-            store.prune_notifications(unix_now() - NOTIFICATION_RETENTION_SECS)?;
-        }
         let stored = self.store().sessions(None)?;
         for crate::store::StoredSession { session, agent_ref } in stored {
             if matches!(

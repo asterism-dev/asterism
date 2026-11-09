@@ -1203,3 +1203,20 @@ async fn read_all_skips_active_waiting() {
     env.daemon.read_all_notifications().unwrap();
     assert_eq!(env.daemon.notifications().unwrap()[0].read_at, None);
 }
+
+#[tokio::test]
+async fn reopening_the_daemon_resolves_waiting_entries_before_recover() {
+    let env = setup();
+    let task = new_task(&env, "restart").await;
+    let session = start(&env, &task, sh("sleep 30")).await;
+    hook(&env, &session, HookEvent::Notification);
+    wait_for_entries(&env, 1).await;
+    let reopened = Daemon::with_options(
+        Paths {
+            home: env.home.path().to_path_buf(),
+        },
+        common::daemon_options(),
+    )
+    .unwrap();
+    assert!(reopened.notifications().unwrap()[0].resolved_at.is_some());
+}

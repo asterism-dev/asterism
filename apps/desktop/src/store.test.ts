@@ -290,4 +290,10 @@ describe('notifications', () => {
     s.sessions = [session(77, 99)];
     expect(notificationTarget(s, n)).toEqual({ session: s.sessions[0] });
   });
+
+  it('archived task rows stay inert even when their session is loaded', () => {
+    const s = initialState();
+    s.sessions = [session(77, 99)];
+    expect(notificationTarget(s, entry(1, { task_id: 99, session_id: 77 }))).toBeNull();
+  });
 });
