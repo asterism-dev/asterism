@@ -54,7 +54,11 @@ function menu(e: MouseEvent, w: Workspace) {
       class="tile"
       :class="{ active: state.activeWorkspace === w.id }"
       :title="w.name"
-      :aria-label="w.name"
+      :aria-label="
+        !waiting[w.id] || state.activeWorkspace === w.id
+          ? w.name
+          : `${w.name}, ${waiting[w.id]} waiting`
+      "
       :aria-pressed="state.activeWorkspace === w.id"
       @click="select(w)"
       @contextmenu="menu($event, w)"

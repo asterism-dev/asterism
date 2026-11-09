@@ -383,10 +383,10 @@ export async function refresh() {
     .prList()
     .then((l) => applyPrList(state, l, null))
     .catch(() => {});
-  if (state.selectedTaskId !== null && !tasks.some((t) => t.id === state.selectedTaskId))
-    state.selectedTaskId = null;
+  const inActive = (id: number) => taskWorkspace(state, id) === state.activeWorkspace;
+  if (state.selectedTaskId !== null && !inActive(state.selectedTaskId)) state.selectedTaskId = null;
   if (state.selectedTaskId === null && state.activeWorkspace !== null) {
     const last = state.workspaceTasks[state.activeWorkspace];
-    if (last !== undefined && tasks.some((t) => t.id === last)) state.selectedTaskId = last;
+    if (last !== undefined && inActive(last)) state.selectedTaskId = last;
   }
 }

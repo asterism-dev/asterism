@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { Plus } from '@lucide/vue';
-import { computed, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import StatusIndicator from '../components/StatusIndicator.vue';
 import { groupProjects, loadSortMode } from '../projects';
 import { state, switchWorkspace, taskStatus, waitingSessions } from '../store';
-import { waitingByWorkspace } from '../workspaces';
+import { loadMoreOpen, saveMoreOpen, waitingByWorkspace } from '../workspaces';
 import { go, route } from './useRoute';
 
 const query = ref('');
@@ -16,7 +16,14 @@ const grouped = computed(() =>
 const waitingCounts = computed(() =>
   waitingByWorkspace(state.projects, state.tasks, waitingSessions(state)),
 );
-const moreOpen = ref(false);
+const openByWorkspace = reactive<Record<number, boolean>>(loadMoreOpen());
+const moreOpen = computed(
+  () => state.activeWorkspace !== null && !!openByWorkspace[state.activeWorkspace],
+);
+function toggleMore() {
+  if (state.activeWorkspace !== null) openByWorkspace[state.activeWorkspace] = !moreOpen.value;
+}
+watch(openByWorkspace, saveMoreOpen, { deep: true });
 const selected = computed(() => (route.value.name === 'task' ? route.value.taskId : null));
 </script>
 
@@ -63,7 +70,7 @@ const selected = computed(() => (route.value.name === 'task' ? route.value.taskI
       type="button"
       class="more"
       :aria-expanded="moreOpen"
-      @click="moreOpen = !moreOpen"
+      @click="toggleMore"
     >
       <span aria-hidden="true">{{ moreOpen ? '⌄' : '›' }}</span> {{ grouped.idle.length }} more
       projects

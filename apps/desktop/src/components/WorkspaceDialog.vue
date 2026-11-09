@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api, errorMessage } from '../api';
 import { matchAction } from '../shortcuts';
-import { state } from '../store';
+import { state, switchWorkspace } from '../store';
 import { defaultFolders } from '../workspaces';
 import type { Workspace } from '../types';
 import Kbd from './Kbd.vue';
@@ -63,8 +63,16 @@ async function submit() {
       );
     else if (props.mode === 'rename' && w)
       await api.updateWorkspace({ ...w, name: name.value.trim(), label: label.value.trim() });
-    else if (props.mode === 'delete' && w && moveTo.value !== undefined)
+    else if (props.mode === 'delete' && w && moveTo.value !== undefined) {
+      const wasActive = state.activeWorkspace === w.id;
+      const selected = state.selectedTaskId;
       await api.deleteWorkspace(w.id, moveTo.value);
+      if (wasActive) {
+        switchWorkspace(state, moveTo.value);
+        if (selected !== null && state.tasks.some((t) => t.id === selected))
+          state.selectedTaskId = selected;
+      }
+    }
     emit('close');
   } catch (e) {
     error.value = errorMessage(e);
@@ -135,3 +143,9 @@ async function submit() {
     </form>
   </div>
 </template>
+
+<style scoped>
+button.danger {
+  color: var(--danger);
+}
+</style>

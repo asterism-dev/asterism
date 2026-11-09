@@ -31,6 +31,7 @@ import {
   saveCollapsed,
   saveSortMode,
   type SortMode,
+  workspaceProjects,
 } from '../projects';
 import { loadMoreOpen, saveMoreOpen } from '../workspaces';
 import { leaveSettings } from '../settingsGuard';
@@ -325,7 +326,10 @@ function taskMenu(e: MouseEvent, t: Task) {
           </div>
         </template>
         <p v-if="searching && !rows.length" class="hint muted">No matches</p>
-        <p v-if="connected && !state.projects.length" class="hint">
+        <p
+          v-if="connected && !workspaceProjects(state.projects, state.activeWorkspace).length"
+          class="hint"
+        >
           Click + to add, clone or create a project.
         </p>
       </div>
