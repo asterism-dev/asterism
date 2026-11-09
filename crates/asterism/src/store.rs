@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use asterism_proto::types::{
-    DiffSide, IssueRef, Project, Session, SessionKind, SessionStatus, Task,
+    DiffSide, IssueRef, NotificationEntry, Project, Session, SessionKind, SessionStatus, Task,
+    NOTIFICATION_KIND_WAITING,
 };
 use rusqlite::types::Type;
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -74,6 +75,19 @@ const MIGRATIONS: &[&str] = &[
         created_at INTEGER NOT NULL,
         last_seen_at INTEGER
      );",
+    "CREATE TABLE notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        task_id INTEGER,
+        session_id INTEGER,
+        task_title TEXT,
+        project_name TEXT,
+        resolved_at INTEGER,
+        read_at INTEGER
+     );
+     CREATE INDEX notifications_session ON notifications(session_id);
+     CREATE INDEX notifications_task ON notifications(task_id);",
 ];
 
 const PROJECT_COLUMNS: &str = "id, name, path, created_at, default_base";
@@ -110,6 +124,11 @@ pub struct StoredRemoteDevice {
 }
 
 const REMOTE_DEVICE_COLUMNS: &str = "id, name, created_at, last_seen_at";
+const NOTIFICATION_COLUMNS: &str =
+    "id, kind, created_at, task_id, session_id, task_title, project_name, resolved_at, read_at";
+/// Active waiting entries clear only by resolving, never by being read.
+const READABLE: &str =
+    "read_at IS NULL AND NOT (kind = 'waiting' AND resolved_at IS NULL)";
 
 fn side_str(side: DiffSide) -> &'static str {
     match side {
@@ -482,6 +501,106 @@ impl Store {
         rows.collect()
     }
 
+    pub fn insert_notification(
+        &self,
+        kind: &str,
+        task_id: Option<i64>,
+        session_id: Option<i64>,
+        task_title: Option<&str>,
+        project_name: Option<&str>,
+    ) -> rusqlite::Result<NotificationEntry> {
+        self.conn.query_row(
+            &format!(
+                "INSERT INTO notifications (kind, created_at, task_id, session_id, task_title, project_name)
+                 VALUES (?1, unixepoch(), ?2, ?3, ?4, ?5) RETURNING {NOTIFICATION_COLUMNS}"
+            ),
+            params![kind, task_id, session_id, task_title, project_name],
+            notification_row,
+        )
+    }
+
+    pub fn active_waiting(&self, session_id: i64) -> rusqlite::Result<Option<NotificationEntry>> {
+        self.conn
+            .query_row(
+                &format!(
+                    "SELECT {NOTIFICATION_COLUMNS} FROM notifications
+                     WHERE kind = ?1 AND session_id = ?2 AND resolved_at IS NULL"
+                ),
+                params![NOTIFICATION_KIND_WAITING, session_id],
+                notification_row,
+            )
+            .optional()
+    }
+
+    pub fn resolve_waiting(&self, session_id: i64) -> rusqlite::Result<Option<NotificationEntry>> {
+        self.conn
+            .query_row(
+                &format!(
+                    "UPDATE notifications SET resolved_at = unixepoch(), read_at = unixepoch()
+                     WHERE kind = ?1 AND session_id = ?2 AND resolved_at IS NULL
+                     RETURNING {NOTIFICATION_COLUMNS}"
+                ),
+                params![NOTIFICATION_KIND_WAITING, session_id],
+                notification_row,
+            )
+            .optional()
+    }
+
+    pub fn resolve_all_waiting(&self) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE notifications SET resolved_at = unixepoch(), read_at = unixepoch()
+             WHERE kind = ?1 AND resolved_at IS NULL",
+            [NOTIFICATION_KIND_WAITING],
+        )?;
+        Ok(())
+    }
+
+    pub fn notifications(&self) -> rusqlite::Result<Vec<NotificationEntry>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {NOTIFICATION_COLUMNS} FROM notifications ORDER BY id"
+        ))?;
+        let rows = stmt.query_map([], notification_row)?;
+        rows.collect()
+    }
+
+    pub fn mark_notification_read(&self, id: i64) -> rusqlite::Result<Option<NotificationEntry>> {
+        self.conn
+            .query_row(
+                &format!(
+                    "UPDATE notifications SET read_at = unixepoch() WHERE id = ?1 AND {READABLE}
+                     RETURNING {NOTIFICATION_COLUMNS}"
+                ),
+                [id],
+                notification_row,
+            )
+            .optional()
+    }
+
+    pub fn mark_all_notifications_read(&self) -> rusqlite::Result<Vec<NotificationEntry>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "UPDATE notifications SET read_at = unixepoch() WHERE {READABLE}
+             RETURNING {NOTIFICATION_COLUMNS}"
+        ))?;
+        let rows = stmt.query_map([], notification_row)?;
+        rows.collect()
+    }
+
+    pub fn delete_task_notifications(&self, task_id: i64) -> rusqlite::Result<Vec<i64>> {
+        let mut stmt = self
+            .conn
+            .prepare("DELETE FROM notifications WHERE task_id = ?1 RETURNING id")?;
+        let rows = stmt.query_map([task_id], |row| row.get(0))?;
+        rows.collect()
+    }
+
+    pub fn prune_notifications(&self, older_than: i64) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "DELETE FROM notifications WHERE read_at IS NOT NULL AND read_at < ?1",
+            [older_than],
+        )?;
+        Ok(())
+    }
+
     pub fn add_remote_device(
         &self,
         name: &str,
@@ -605,6 +724,20 @@ fn session_row(row: &Row) -> rusqlite::Result<StoredSession> {
     })
 }
 
+fn notification_row(row: &Row) -> rusqlite::Result<NotificationEntry> {
+    Ok(NotificationEntry {
+        id: row.get(0)?,
+        kind: row.get(1)?,
+        created_at: row.get(2)?,
+        task_id: row.get(3)?,
+        session_id: row.get(4)?,
+        task_title: row.get(5)?,
+        project_name: row.get(6)?,
+        resolved_at: row.get(7)?,
+        read_at: row.get(8)?,
+    })
+}
+
 fn remote_device_row(row: &Row) -> rusqlite::Result<StoredRemoteDevice> {
     Ok(StoredRemoteDevice {
         id: row.get(0)?,
@@ -618,6 +751,92 @@ fn remote_device_row(row: &Row) -> rusqlite::Result<StoredRemoteDevice> {
 mod tests {
     use super::*;
     use asterism_proto::types::{DiffSide, SessionKind, SessionStatus};
+
+    fn waiting(store: &Store, task_id: i64, session_id: i64) -> NotificationEntry {
+        store
+            .insert_notification(
+                NOTIFICATION_KIND_WAITING,
+                Some(task_id),
+                Some(session_id),
+                Some("t"),
+                Some("p"),
+            )
+            .unwrap()
+    }
+
+    fn other(store: &Store, task_id: i64) -> NotificationEntry {
+        store
+            .insert_notification("test", Some(task_id), None, None, None)
+            .unwrap()
+    }
+
+    #[test]
+    fn waiting_entry_resolves_once() {
+        let store = Store::open_in_memory().unwrap();
+        let entry = waiting(&store, 1, 7);
+        assert_eq!(store.active_waiting(7).unwrap(), Some(entry));
+        let resolved = store.resolve_waiting(7).unwrap().unwrap();
+        assert!(resolved.resolved_at.is_some() && resolved.read_at.is_some());
+        assert_eq!(store.resolve_waiting(7).unwrap(), None);
+        assert_eq!(store.active_waiting(7).unwrap(), None);
+    }
+
+    #[test]
+    fn active_waiting_cannot_be_read() {
+        let store = Store::open_in_memory().unwrap();
+        let entry = waiting(&store, 1, 7);
+        assert_eq!(store.mark_notification_read(entry.id).unwrap(), None);
+        assert!(store.mark_all_notifications_read().unwrap().is_empty());
+        assert_eq!(store.notifications().unwrap()[0].read_at, None);
+    }
+
+    #[test]
+    fn other_kinds_are_read_individually_and_all() {
+        let store = Store::open_in_memory().unwrap();
+        let a = other(&store, 1);
+        let b = other(&store, 1);
+        assert!(store.mark_notification_read(a.id).unwrap().unwrap().read_at.is_some());
+        assert_eq!(store.mark_notification_read(a.id).unwrap(), None);
+        let all = store.mark_all_notifications_read().unwrap();
+        assert_eq!(all.iter().map(|n| n.id).collect::<Vec<_>>(), vec![b.id]);
+    }
+
+    #[test]
+    fn resolve_all_waiting_clears_stale_entries() {
+        let store = Store::open_in_memory().unwrap();
+        waiting(&store, 1, 1);
+        waiting(&store, 1, 2);
+        store.resolve_all_waiting().unwrap();
+        assert_eq!(store.active_waiting(1).unwrap(), None);
+        assert_eq!(store.active_waiting(2).unwrap(), None);
+    }
+
+    #[test]
+    fn prune_keeps_unread_and_active() {
+        let store = Store::open_in_memory().unwrap();
+        let active = waiting(&store, 1, 1);
+        let unread = other(&store, 1);
+        let read = other(&store, 1);
+        store
+            .conn
+            .execute("UPDATE notifications SET read_at = 0 WHERE id = ?1", [read.id])
+            .unwrap();
+        store.prune_notifications(1).unwrap();
+        let ids: Vec<i64> = store.notifications().unwrap().iter().map(|n| n.id).collect();
+        assert_eq!(ids, vec![active.id, unread.id]);
+    }
+
+    #[test]
+    fn delete_task_notifications_returns_ids() {
+        let store = Store::open_in_memory().unwrap();
+        let a = other(&store, 1);
+        let b = waiting(&store, 1, 3);
+        other(&store, 2);
+        let mut deleted = store.delete_task_notifications(1).unwrap();
+        deleted.sort();
+        assert_eq!(deleted, vec![a.id, b.id]);
+        assert_eq!(store.notifications().unwrap().len(), 1);
+    }
 
     #[test]
     fn upgrading_keeps_tasks_and_adds_issue_columns() {
