@@ -3,7 +3,6 @@ import { ask } from '@tauri-apps/plugin-dialog';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import {
   ArrowDownUp,
-  Bell,
   BookOpen,
   ChevronDown,
   ChevronRight,
@@ -11,35 +10,34 @@ import {
   Settings,
   SquarePlus,
 } from '@lucide/vue';
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
 import {
   applyPrList,
   isConnected,
-  notificationBadgeCount,
+  nextWaiting,
+  selectSession,
   showMenu,
   state,
   taskStatus,
   toast,
-  waitingNotifications,
+  waitingSessions,
 } from '../store';
 import {
-  filterTasks,
+  groupProjects,
   loadCollapsed,
   loadSortMode,
   relativeTime,
   saveCollapsed,
   saveSortMode,
-  sortProjects,
-  sortTasks,
   type SortMode,
 } from '../projects';
+import { loadMoreOpen, saveMoreOpen } from '../workspaces';
 import { leaveSettings } from '../settingsGuard';
 import { startSession } from '../sessionActions';
 import { withHint } from '../shortcuts';
 import { archiveTask, deleteTask } from '../taskActions';
 import Kbd from './Kbd.vue';
-import NotificationsView from './NotificationsView.vue';
 import PrBadge from './PrBadge.vue';
 import StatusIndicator from './StatusIndicator.vue';
 import { DOCS_URL, installUpdate, updateLabel, updater } from '../updater';
@@ -49,8 +47,7 @@ const connected = computed(() => isConnected(state.node));
 const nodeName = computed(() =>
   'hello' in state.node ? state.node.hello.hostname : 'This computer',
 );
-const badgeCount = computed(() => notificationBadgeCount(state));
-const onlyWaiting = computed(() => badgeCount.value === waitingNotifications(state).length);
+const waiting = computed(() => waitingSessions(state));
 const offlineLabel = computed(() => {
   switch (state.node.state) {
     case 'connecting':
@@ -66,12 +63,20 @@ const offlineLabel = computed(() => {
 const sortMode = ref<SortMode>(loadSortMode());
 const query = ref('');
 const searching = computed(() => query.value.trim() !== '');
-const visible = computed(() =>
-  sortProjects(state.projects, state.tasks, sortMode.value).flatMap((project) => {
-    const tasks = filterTasks(project, state.tasks, query.value);
-    return tasks ? [{ project, tasks: sortTasks(tasks, sortMode.value) }] : [];
-  }),
+const grouped = computed(() =>
+  groupProjects(state.projects, state.tasks, state.activeWorkspace, query.value, sortMode.value),
 );
+const moreOpen = reactive<Record<number, boolean>>({});
+const showIdle = computed(
+  () => state.activeWorkspace !== null && !!moreOpen[state.activeWorkspace],
+);
+const rows = computed(() => [
+  ...grouped.value.active,
+  ...(showIdle.value ? grouped.value.idle : []),
+]);
+function toggleMore() {
+  if (state.activeWorkspace !== null) moreOpen[state.activeWorkspace] = !showIdle.value;
+}
 const now = ref(Date.now() / 1000);
 let clock: ReturnType<typeof setInterval> | undefined;
 const formatDate = (seconds: number) =>
@@ -84,10 +89,12 @@ function openIssue(url: string) {
 
 onMounted(() => {
   Object.assign(state.collapsed, loadCollapsed());
+  Object.assign(moreOpen, loadMoreOpen());
   clock = setInterval(() => (now.value = Date.now() / 1000), 60_000);
 });
 onUnmounted(() => clearInterval(clock));
 watch(sortMode, saveSortMode);
+watch(moreOpen, saveMoreOpen, { deep: true });
 
 const SORT_LABELS: Record<SortMode, string> = {
   alphabetical: 'Alphabetical',
@@ -128,6 +135,14 @@ function openProject(p: Project) {
       if (left) state.projectPage = p.id;
     })
     .catch(report);
+}
+
+function jump() {
+  const session = nextWaiting(state);
+  if (session)
+    leaveSettings()
+      .then((left) => left && selectSession(state, session))
+      .catch(report);
 }
 
 async function restartDaemon() {
@@ -201,24 +216,8 @@ function taskMenu(e: MouseEvent, t: Task) {
         <span v-if="!connected" class="muted offline-label" :title="offlineLabel">{{
           offlineLabel
         }}</span>
-        <button
-          v-if="badgeCount"
-          class="badge"
-          :aria-pressed="state.notificationsOpen"
-          @click="state.notificationsOpen = !state.notificationsOpen"
-        >
-          <template v-if="onlyWaiting">{{ badgeCount }} waiting</template>
-          <template v-else><Bell class="bell" /> {{ badgeCount }}</template>
-        </button>
-        <button
-          class="add"
-          :class="{ active: state.notificationsOpen }"
-          title="Notifications"
-          aria-label="Notifications"
-          :aria-pressed="state.notificationsOpen"
-          @click="state.notificationsOpen = !state.notificationsOpen"
-        >
-          <Bell />
+        <button v-if="waiting.length" class="badge" @click="jump">
+          {{ waiting.length }} waiting
         </button>
         <button
           class="add"
@@ -237,84 +236,85 @@ function taskMenu(e: MouseEvent, t: Task) {
           <SquarePlus />
         </button>
       </div>
-      <NotificationsView v-if="state.notificationsOpen" :now="now" />
-      <template v-else>
-        <div class="search-wrap">
-          <input
-            id="sidebar-search"
-            v-model="query"
-            class="search"
-            type="search"
-            placeholder="Search projects and tasks"
-            aria-label="Search projects and tasks"
-            @keydown.esc="query = ''"
-          />
-          <Kbd v-if="!query" action="search" class="search-kbd" />
+      <div class="search-wrap">
+        <input
+          id="sidebar-search"
+          v-model="query"
+          class="search"
+          type="search"
+          placeholder="Search projects and tasks"
+          aria-label="Search projects and tasks"
+          @keydown.esc="query = ''"
+        />
+        <Kbd v-if="!query" action="search" class="search-kbd" />
+      </div>
+      <div
+        v-for="{ project: p, tasks } in rows"
+        :key="p.id"
+        class="project"
+        :class="{ offline: !connected }"
+      >
+        <div class="row project-row" @contextmenu="projectMenu($event, p)">
+          <button
+            type="button"
+            class="disclosure"
+            :aria-expanded="!state.collapsed[p.id]"
+            :aria-label="state.collapsed[p.id] ? `Expand ${p.name}` : `Collapse ${p.name}`"
+            @click="toggle(p)"
+          >
+            <ChevronRight v-if="state.collapsed[p.id] && !searching" /><ChevronDown v-else />
+          </button>
+          <span
+            class="name"
+            :class="{ current: state.projectPage === p.id }"
+            @click="openProject(p)"
+            >{{ p.name }}</span
+          >
+          <button
+            class="hover-action"
+            :title="withHint('New task', 'newTask')"
+            @click="state.newTaskFor = p.id"
+          >
+            <Plus />Task
+          </button>
         </div>
-        <div
-          v-for="{ project: p, tasks } in visible"
-          :key="p.id"
-          class="project"
-          :class="{ offline: !connected }"
-        >
-          <div class="row project-row" @contextmenu="projectMenu($event, p)">
-            <button
-              type="button"
-              class="disclosure"
-              :aria-expanded="!state.collapsed[p.id]"
-              :aria-label="state.collapsed[p.id] ? `Expand ${p.name}` : `Collapse ${p.name}`"
-              @click="toggle(p)"
+        <template v-if="searching || !state.collapsed[p.id]">
+          <div
+            v-for="t in tasks"
+            :key="t.id"
+            class="row task-row"
+            :class="{ selected: state.selectedTaskId === t.id }"
+            @click="openTask(t)"
+            @contextmenu="taskMenu($event, t)"
+          >
+            <span class="name">{{ t.title }}</span>
+            <a
+              v-if="t.issue"
+              class="issue-key muted"
+              :href="t.issue.url"
+              :title="t.issue.url"
+              @click.prevent.stop="openIssue(t.issue.url)"
+              >{{ t.issue.key }}</a
             >
-              <ChevronRight v-if="state.collapsed[p.id] && !searching" /><ChevronDown v-else />
-            </button>
+            <PrBadge v-if="state.prs[t.id]" :pr="state.prs[t.id]!" />
             <span
-              class="name"
-              :class="{ current: state.projectPage === p.id }"
-              @click="openProject(p)"
-              >{{ p.name }}</span
+              class="age muted"
+              :title="`Created ${formatDate(t.created_at)} · Last activity ${formatDate(t.last_activity_at)}`"
             >
-            <button
-              class="hover-action"
-              :title="withHint('New task', 'newTask')"
-              @click="state.newTaskFor = p.id"
-            >
-              <Plus />Task
-            </button>
+              {{ relativeTime(t.last_activity_at, now) }}
+            </span>
+            <StatusIndicator :status="taskStatus(state, t.id)" />
           </div>
-          <template v-if="searching || !state.collapsed[p.id]">
-            <div
-              v-for="t in tasks"
-              :key="t.id"
-              class="row task-row"
-              :class="{ selected: state.selectedTaskId === t.id }"
-              @click="openTask(t)"
-              @contextmenu="taskMenu($event, t)"
-            >
-              <span class="name">{{ t.title }}</span>
-              <a
-                v-if="t.issue"
-                class="issue-key muted"
-                :href="t.issue.url"
-                :title="t.issue.url"
-                @click.prevent.stop="openIssue(t.issue.url)"
-                >{{ t.issue.key }}</a
-              >
-              <PrBadge v-if="state.prs[t.id]" :pr="state.prs[t.id]!" />
-              <span
-                class="age muted"
-                :title="`Created ${formatDate(t.created_at)} · Last activity ${formatDate(t.last_activity_at)}`"
-              >
-                {{ relativeTime(t.last_activity_at, now) }}
-              </span>
-              <StatusIndicator :status="taskStatus(state, t.id)" />
-            </div>
-          </template>
-        </div>
-        <p v-if="searching && !visible.length" class="hint muted">No matches</p>
-        <p v-if="connected && !state.projects.length" class="hint">
-          Click + to add, clone or create a project.
-        </p>
-      </template>
+        </template>
+      </div>
+      <button v-if="grouped.idle.length" type="button" class="row more-row" @click="toggleMore">
+        <ChevronDown v-if="showIdle" /><ChevronRight v-else />{{ grouped.idle.length }} more
+        projects
+      </button>
+      <p v-if="searching && !rows.length" class="hint muted">No matches</p>
+      <p v-if="connected && !state.projects.length" class="hint">
+        Click + to add, clone or create a project.
+      </p>
     </div>
     <button
       class="settings-button"
@@ -386,6 +386,14 @@ function taskMenu(e: MouseEvent, t: Task) {
   margin-top: 8px;
   font-weight: 500;
 }
+.more-row {
+  margin-top: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+}
 .disclosure {
   border: 0;
   padding: 0 2px;
@@ -425,14 +433,6 @@ function taskMenu(e: MouseEvent, t: Task) {
   padding: 0 8px;
   border-radius: 10px;
   font-size: 12px;
-}
-.badge .bell {
-  width: 12px;
-  height: 12px;
-  vertical-align: -2px;
-}
-.add.active {
-  color: var(--accent);
 }
 .update-badge {
   margin-left: 6px;

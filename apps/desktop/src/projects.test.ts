@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   filterTasks,
+  groupProjects,
   relativeTime,
   repoNameError,
   sortProjects,
@@ -8,6 +9,7 @@ import {
   sourceOwnerRepo,
   targetPath,
   visibilityChoices,
+  workspaceProjects,
 } from './projects';
 import type { ForgeStatus, Project, Task } from './types';
 
@@ -161,5 +163,31 @@ describe('relativeTime', () => {
     expect(relativeTime(1000, 1000 + 15 * 86400)).toBe('2w');
     expect(relativeTime(1000, 1000 + 400 * 86400)).toBe('1y');
     expect(relativeTime(2000, 1000)).toBe('now');
+  });
+});
+
+describe('workspace grouping', () => {
+  const inWs = (id: number, name: string, workspace_id: number): Project => ({
+    ...proj(id, name, id),
+    workspace_id,
+  });
+  const projects = [inWs(1, 'p1name', 1), inWs(2, 'p2name', 1), inWs(3, 'p3name', 2)];
+  const tasks = [tsk(1, 1, 'a', 1, 1), tsk(2, 3, 'b', 1, 1)];
+
+  it('limits projects to a workspace', () => {
+    expect(workspaceProjects(projects, 2).map((x) => x.id)).toEqual([3]);
+  });
+
+  it('splits a workspace into active and idle projects', () => {
+    const g = groupProjects(projects, tasks, 1, '', 'added');
+    expect(g.active.map((x) => x.project.id)).toEqual([1]);
+    expect(g.idle.map((x) => x.project.id)).toEqual([2]);
+  });
+
+  it('search finds idle projects of the workspace only', () => {
+    const g = groupProjects(projects, tasks, 1, 'p2name', 'added');
+    expect(g.active.map((x) => x.project.id)).toEqual([2]);
+    expect(g.idle).toEqual([]);
+    expect(groupProjects(projects, tasks, 1, 'p3name', 'added').active).toEqual([]);
   });
 });

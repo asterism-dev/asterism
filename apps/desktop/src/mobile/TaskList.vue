@@ -2,26 +2,24 @@
 import { Plus } from '@lucide/vue';
 import { computed, ref } from 'vue';
 import StatusIndicator from '../components/StatusIndicator.vue';
-import { filterTasks, loadSortMode, sortProjects, sortTasks } from '../projects';
+import { groupProjects, loadSortMode } from '../projects';
 import { state, taskStatus, waitingSessions } from '../store';
 import { go, route } from './useRoute';
 
 const query = ref('');
 const sortMode = loadSortMode();
 const waitingTasks = computed(() => new Set(waitingSessions(state).map((s) => s.task_id)));
-const groups = computed(() =>
-  sortProjects(state.projects, state.tasks, sortMode).flatMap((project) => {
-    const tasks = filterTasks(project, state.tasks, query.value);
-    return tasks === null ? [] : [{ project, tasks: sortTasks(tasks, sortMode) }];
-  }),
+const grouped = computed(() =>
+  groupProjects(state.projects, state.tasks, state.activeWorkspace, query.value, sortMode),
 );
+const moreOpen = ref(false);
 const selected = computed(() => (route.value.name === 'task' ? route.value.taskId : null));
 </script>
 
 <template>
   <nav class="task-list">
     <input v-model="query" type="search" placeholder="Search projects and tasks" />
-    <section v-for="g in groups" :key="g.project.id">
+    <section v-for="g in grouped.active" :key="g.project.id">
       <header>
         <h2>{{ g.project.name }}</h2>
         <button class="icon" aria-label="New task" @click="state.newTaskFor = g.project.id">
@@ -40,7 +38,20 @@ const selected = computed(() => (route.value.name === 'task' ? route.value.taskI
       </button>
       <p v-if="!g.tasks.length" class="empty">No tasks</p>
     </section>
-    <p v-if="!groups.length" class="empty">Nothing found</p>
+    <button v-if="grouped.idle.length" class="more" @click="moreOpen = !moreOpen">
+      {{ moreOpen ? '⌄' : '›' }} {{ grouped.idle.length }} more projects
+    </button>
+    <template v-if="moreOpen">
+      <section v-for="g in grouped.idle" :key="g.project.id">
+        <header>
+          <h2>{{ g.project.name }}</h2>
+          <button class="icon" aria-label="New task" @click="state.newTaskFor = g.project.id">
+            <Plus :size="18" />
+          </button>
+        </header>
+      </section>
+    </template>
+    <p v-if="!grouped.active.length && !grouped.idle.length" class="empty">Nothing found</p>
   </nav>
 </template>
 
@@ -70,6 +81,14 @@ button.icon {
 h2 {
   font-size: 13px;
   text-transform: uppercase;
+  opacity: 0.7;
+}
+.more {
+  width: 100%;
+  min-height: 44px;
+  text-align: left;
+  border: none;
+  background: none;
   opacity: 0.7;
 }
 .task {
