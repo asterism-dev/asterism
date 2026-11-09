@@ -86,6 +86,7 @@ const proj = (id: number, name: string, created_at: number): Project => ({
   path: `/p/${id}`,
   created_at,
   default_base: null,
+  workspace_id: 1,
 });
 const tsk = (
   id: number,

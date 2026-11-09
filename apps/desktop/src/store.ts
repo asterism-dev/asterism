@@ -12,7 +12,15 @@ import type {
   Session,
   SessionStatus,
   Task,
+  Workspace,
 } from './types';
+import {
+  loadActiveWorkspace,
+  loadWorkspaceTasks,
+  resolveWorkspace,
+  saveActiveWorkspace,
+  saveWorkspaceTasks,
+} from './workspaces';
 
 export type Tab = number | null;
 export type ProjectDialogTab = 'folder' | 'clone' | 'create';
@@ -30,6 +38,9 @@ export interface Toast {
 export interface State {
   node: NodeStatus;
   projects: Project[];
+  workspaces: Workspace[];
+  activeWorkspace: number | null;
+  workspaceTasks: Record<number, number>;
   tasks: Task[];
   sessions: Session[];
   agents: AgentInfo[];
@@ -60,6 +71,9 @@ export function initialState(): State {
   return {
     node: { state: 'connecting' },
     projects: [],
+    workspaces: [],
+    activeWorkspace: null,
+    workspaceTasks: {},
     tasks: [],
     sessions: [],
     agents: [],
@@ -183,7 +197,27 @@ export function sessionLabel(session: Session): string {
   return session.kind.argv[0] ?? 'command';
 }
 
+export function taskWorkspace(s: State, taskId: number): number | null {
+  const projectId = s.tasks.find((t) => t.id === taskId)?.project_id;
+  return s.projects.find((p) => p.id === projectId)?.workspace_id ?? null;
+}
+
+export function switchWorkspace(s: State, id: number) {
+  if (s.activeWorkspace === id) return;
+  if (s.activeWorkspace !== null && s.selectedTaskId !== null)
+    s.workspaceTasks[s.activeWorkspace] = s.selectedTaskId;
+  s.activeWorkspace = id;
+  s.projectPage = null;
+  const remembered = s.workspaceTasks[id];
+  s.selectedTaskId =
+    remembered !== undefined && taskWorkspace(s, remembered) === id ? remembered : null;
+  saveActiveWorkspace(id);
+  saveWorkspaceTasks(s.workspaceTasks);
+}
+
 export function selectSession(s: State, session: Session) {
+  const ws = taskWorkspace(s, session.task_id);
+  if (ws !== null) switchWorkspace(s, ws);
   s.projectPage = null;
   s.selectedTaskId = session.task_id;
   s.selectedTab[session.task_id] = session.id;
@@ -258,9 +292,24 @@ export function applyEvent(s: State, event: NodeEvent): Session | null {
       s.tasksVersion++;
       dropTask(s, event.params.task_id);
       return null;
-    case 'project.changed':
-      upsert(s.projects, event.params);
+    case 'workspace.changed':
+      upsert(s.workspaces, event.params);
+      s.workspaces.sort((a, b) => a.position - b.position || a.id - b.id);
       return null;
+    case 'workspace.removed':
+      s.workspaces = s.workspaces.filter((w) => w.id !== event.params.workspace_id);
+      if (s.activeWorkspace === event.params.workspace_id)
+        s.activeWorkspace = resolveWorkspace(s.workspaces, null);
+      return null;
+    case 'project.changed': {
+      upsert(s.projects, event.params);
+      if (s.activeWorkspace !== null && event.params.workspace_id !== s.activeWorkspace) {
+        const selected = s.tasks.find((t) => t.id === s.selectedTaskId);
+        if (selected?.project_id === event.params.id) s.selectedTaskId = null;
+        if (s.projectPage === event.params.id) s.projectPage = null;
+      }
+      return null;
+    }
     case 'project.removed':
       if (s.projectPage === event.params.project_id) s.projectPage = null;
       s.projects = s.projects.filter((p) => p.id !== event.params.project_id);
@@ -313,8 +362,9 @@ export async function refreshPluginUpdates() {
 }
 
 export async function refresh() {
-  const [projects, tasks, sessions, agents, notifications] = await Promise.all([
+  const [projects, workspaces, tasks, sessions, agents, notifications] = await Promise.all([
     api.projects(),
+    api.workspaces(),
     api.tasks(),
     api.sessions(),
     api.agents(),
@@ -323,6 +373,9 @@ export async function refresh() {
   state.notifications = notifications;
   state.agents = agents;
   state.projects = projects;
+  state.workspaces = workspaces;
+  state.activeWorkspace = resolveWorkspace(workspaces, loadActiveWorkspace());
+  state.workspaceTasks = loadWorkspaceTasks();
   state.tasks = tasks;
   state.sessions = sessions;
   refreshPluginUpdates().catch(() => {});
@@ -332,4 +385,8 @@ export async function refresh() {
     .catch(() => {});
   if (state.selectedTaskId !== null && !tasks.some((t) => t.id === state.selectedTaskId))
     state.selectedTaskId = null;
+  if (state.selectedTaskId === null && state.activeWorkspace !== null) {
+    const last = state.workspaceTasks[state.activeWorkspace];
+    if (last !== undefined && tasks.some((t) => t.id === last)) state.selectedTaskId = last;
+  }
 }

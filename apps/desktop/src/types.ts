@@ -28,6 +28,15 @@ export interface Project {
   path: string;
   created_at: number;
   default_base: string | null;
+  workspace_id: number;
+}
+export interface Workspace {
+  id: number;
+  name: string;
+  label: string;
+  position: number;
+  repos: string;
+  worktrees: string;
 }
 export interface ProjectBranches {
   branches: string[];
@@ -162,6 +171,8 @@ export type NodeEvent =
   | { method: 'task.removed'; params: { task_id: number } }
   | { method: 'project.changed'; params: Project }
   | { method: 'project.removed'; params: { project_id: number } }
+  | { method: 'workspace.changed'; params: Workspace }
+  | { method: 'workspace.removed'; params: { workspace_id: number } }
   | { method: 'plugins.changed'; params: Record<string, never> }
   | { method: 'stores.changed'; params: Record<string, never> }
   | { method: 'review.changed'; params: { task_id: number } }

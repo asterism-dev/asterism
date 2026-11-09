@@ -10,12 +10,20 @@ import {
   notificationBadgeCount,
   notificationTarget,
   selectSession,
+  switchWorkspace,
   taskSessions,
   taskStatus,
   waitingNotifications,
   waitingSessions,
 } from './store';
-import type { NotificationEntry, PullRequest, Session, SessionStatus, Task } from './types';
+import type {
+  NotificationEntry,
+  Project,
+  PullRequest,
+  Session,
+  SessionStatus,
+  Task,
+} from './types';
 
 const task = (id: number, projectId = 1): Task => ({
   id,
@@ -92,7 +100,14 @@ describe('applyEvent', () => {
     applyEvent(s, { method: 'task.changed', params: task(1) });
     applyEvent(s, {
       method: 'project.changed',
-      params: { id: 1, name: 'repo', path: '/repo', created_at: 0, default_base: null },
+      params: {
+        id: 1,
+        name: 'repo',
+        path: '/repo',
+        created_at: 0,
+        default_base: null,
+        workspace_id: 1,
+      },
     });
     expect(s.sessions).toEqual([session(10, 1, 'idle')]);
     expect(s.tasks).toEqual([task(1)]);
@@ -132,8 +147,8 @@ describe('applyEvent', () => {
   it('removes a project and its tasks', () => {
     const s = initialState();
     s.projects = [
-      { id: 1, name: 'a', path: '/a', created_at: 0, default_base: null },
-      { id: 2, name: 'b', path: '/b', created_at: 0, default_base: null },
+      { id: 1, name: 'a', path: '/a', created_at: 0, default_base: null, workspace_id: 1 },
+      { id: 2, name: 'b', path: '/b', created_at: 0, default_base: null, workspace_id: 1 },
     ];
     s.tasks = [task(1, 1), task(2, 2)];
     applyEvent(s, { method: 'project.removed', params: { project_id: 1 } });
@@ -295,5 +310,72 @@ describe('notifications', () => {
     const s = initialState();
     s.sessions = [session(77, 99)];
     expect(notificationTarget(s, entry(1, { task_id: 99, session_id: 77 }))).toBeNull();
+  });
+});
+
+const project = (id: number, workspaceId: number): Project => ({
+  id,
+  name: `p${id}`,
+  path: `/p${id}`,
+  created_at: 0,
+  default_base: null,
+  workspace_id: workspaceId,
+});
+const wsState = () => {
+  const s = initialState();
+  s.projects = [project(1, 1), project(2, 2)];
+  s.tasks = [task(10, 1), task(20, 2)];
+  s.workspaces = [1, 2].map((id) => ({
+    id,
+    name: `w${id}`,
+    label: `W${id}`,
+    position: id,
+    repos: '',
+    worktrees: '',
+  }));
+  s.activeWorkspace = 1;
+  s.selectedTaskId = 10;
+  return s;
+};
+
+describe('workspaces', () => {
+  it('restores the last task per workspace on switch', () => {
+    const s = wsState();
+    switchWorkspace(s, 2);
+    expect(s.selectedTaskId).toBeNull();
+    s.selectedTaskId = 20;
+    switchWorkspace(s, 1);
+    expect(s.selectedTaskId).toBe(10);
+    expect(s.workspaceTasks).toEqual({ 1: 10, 2: 20 });
+  });
+
+  it('selects nothing when the remembered task is gone', () => {
+    const s = wsState();
+    s.tasks = [task(10, 1)];
+    s.workspaceTasks = { 2: 20 };
+    switchWorkspace(s, 2);
+    expect(s.selectedTaskId).toBeNull();
+  });
+
+  it('switches workspace when selecting a session elsewhere', () => {
+    const s = wsState();
+    selectSession(s, session(5, 20));
+    expect(s.activeWorkspace).toBe(2);
+    expect(s.selectedTaskId).toBe(20);
+  });
+
+  it('deselects a task whose project moved to another workspace', () => {
+    const s = wsState();
+    s.projectPage = 1;
+    applyEvent(s, { method: 'project.changed', params: { ...project(1, 1), workspace_id: 2 } });
+    expect(s.selectedTaskId).toBeNull();
+    expect(s.projectPage).toBeNull();
+  });
+
+  it('falls back when the active workspace is removed', () => {
+    const s = wsState();
+    s.activeWorkspace = 2;
+    applyEvent(s, { method: 'workspace.removed', params: { workspace_id: 2 } });
+    expect(s.activeWorkspace).toBe(1);
   });
 });
