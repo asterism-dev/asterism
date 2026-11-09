@@ -1141,7 +1141,10 @@ async fn waiting_hook_creates_one_entry_with_names() {
     assert_eq!(entries[0].kind, NOTIFICATION_KIND_WAITING);
     assert_eq!(entries[0].session_id, Some(session.id));
     assert_eq!(entries[0].task_title.as_deref(), Some(task.title.as_str()));
-    assert_eq!(entries[0].project_name.as_deref(), Some(project.name.as_str()));
+    assert_eq!(
+        entries[0].project_name.as_deref(),
+        Some(project.name.as_str())
+    );
     assert_eq!(entries[0].resolved_at, None);
 }
 
@@ -1156,7 +1159,10 @@ async fn waiting_episodes_each_get_one_entry() {
     assert!(eventually(|| env.daemon.notifications().unwrap()[0].resolved_at.is_some()).await);
     hook(&env, &session, HookEvent::Notification);
     let entries = wait_for_entries(&env, 2).await;
-    assert_eq!(entries.iter().filter(|n| n.resolved_at.is_none()).count(), 1);
+    assert_eq!(
+        entries.iter().filter(|n| n.resolved_at.is_none()).count(),
+        1
+    );
 }
 
 #[tokio::test]

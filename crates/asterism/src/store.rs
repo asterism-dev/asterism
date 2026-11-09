@@ -127,8 +127,7 @@ const REMOTE_DEVICE_COLUMNS: &str = "id, name, created_at, last_seen_at";
 const NOTIFICATION_COLUMNS: &str =
     "id, kind, created_at, task_id, session_id, task_title, project_name, resolved_at, read_at";
 /// Active waiting entries clear only by resolving, never by being read.
-const READABLE: &str =
-    "read_at IS NULL AND NOT (kind = 'waiting' AND resolved_at IS NULL)";
+const READABLE: &str = "read_at IS NULL AND NOT (kind = 'waiting' AND resolved_at IS NULL)";
 
 fn side_str(side: DiffSide) -> &'static str {
     match side {
@@ -795,7 +794,12 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let a = other(&store, 1);
         let b = other(&store, 1);
-        assert!(store.mark_notification_read(a.id).unwrap().unwrap().read_at.is_some());
+        assert!(store
+            .mark_notification_read(a.id)
+            .unwrap()
+            .unwrap()
+            .read_at
+            .is_some());
         assert_eq!(store.mark_notification_read(a.id).unwrap(), None);
         let all = store.mark_all_notifications_read().unwrap();
         assert_eq!(all.iter().map(|n| n.id).collect::<Vec<_>>(), vec![b.id]);
@@ -819,10 +823,18 @@ mod tests {
         let read = other(&store, 1);
         store
             .conn
-            .execute("UPDATE notifications SET read_at = 0 WHERE id = ?1", [read.id])
+            .execute(
+                "UPDATE notifications SET read_at = 0 WHERE id = ?1",
+                [read.id],
+            )
             .unwrap();
         store.prune_notifications(1).unwrap();
-        let ids: Vec<i64> = store.notifications().unwrap().iter().map(|n| n.id).collect();
+        let ids: Vec<i64> = store
+            .notifications()
+            .unwrap()
+            .iter()
+            .map(|n| n.id)
+            .collect();
         assert_eq!(ids, vec![active.id, unread.id]);
     }
 

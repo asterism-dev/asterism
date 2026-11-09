@@ -2527,7 +2527,10 @@ impl Daemon {
         match changed {
             Ok(Some(entry)) => self.emit(Event::NotificationChanged(entry)),
             Ok(None) => {}
-            Err(e) => eprintln!("asterismd: notification for session {session_id}: {}", e.message),
+            Err(e) => eprintln!(
+                "asterismd: notification for session {session_id}: {}",
+                e.message
+            ),
         }
     }
 
