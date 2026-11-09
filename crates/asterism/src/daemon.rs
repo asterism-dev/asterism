@@ -159,6 +159,8 @@ struct StoreStatus {
     last_error: Option<String>,
 }
 
+const NOTIFICATION_RETENTION_SECS: i64 = 7 * 24 * 3600;
+
 fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -203,6 +205,13 @@ impl Daemon {
         // Moved to plugins/data/claude/ with the Claude plugin.
         let _ = std::fs::remove_file(paths.home.join("claude-settings.json"));
         let store = Store::open(&paths.db())?;
+        // Before any client can list them: respawned sessions report waiting afresh.
+        let tidied = store
+            .resolve_all_waiting()
+            .and_then(|()| store.prune_notifications(unix_now() - NOTIFICATION_RETENTION_SECS));
+        if let Err(e) = tidied {
+            eprintln!("asterismd: tidying notifications: {e}");
+        }
         let (events, _) = broadcast::channel(1024);
         let runtime = Runtime {
             env: plugin_env(&paths, &options.plugin_env)?,
@@ -2106,10 +2115,14 @@ impl Daemon {
                 }
             }
         }
-        {
+        let removed_notifications = {
             let store = self.store();
             store.delete_task_sessions(task_id)?;
             store.delete_task(task_id)?;
+            store.delete_task_notifications(task_id)?
+        };
+        for id in removed_notifications {
+            self.emit(Event::NotificationRemoved { id });
         }
         for stored in sessions {
             lock(&self.subagents).remove(&stored.session.id);
@@ -2481,6 +2494,7 @@ impl Daemon {
                     session_id: id,
                     status,
                 });
+                daemon.track_waiting(id, task_id, status);
                 daemon.touch_task(task_id);
                 if matches!(status, SessionStatus::Exited | SessionStatus::Hibernated) {
                     break;
@@ -2488,6 +2502,59 @@ impl Daemon {
             }
         });
         Ok(())
+    }
+
+    pub fn notifications(&self) -> Result<Vec<NotificationEntry>> {
+        Ok(self.store().notifications()?)
+    }
+
+    pub fn read_notification(&self, id: i64) -> Result<()> {
+        let read = self.store().mark_notification_read(id)?;
+        if let Some(entry) = read {
+            self.emit(Event::NotificationChanged(entry));
+        }
+        Ok(())
+    }
+
+    pub fn read_all_notifications(&self) -> Result<()> {
+        let read = self.store().mark_all_notifications_read()?;
+        for entry in read {
+            self.emit(Event::NotificationChanged(entry));
+        }
+        Ok(())
+    }
+
+    /// Best effort like `touch_task`: notification bookkeeping must not break the session.
+    fn track_waiting(&self, session_id: i64, task_id: i64, status: SessionStatus) {
+        let changed = if status == SessionStatus::WaitingInput {
+            self.open_waiting(session_id, task_id)
+        } else {
+            self.store().resolve_waiting(session_id).map_err(Into::into)
+        };
+        match changed {
+            Ok(Some(entry)) => self.emit(Event::NotificationChanged(entry)),
+            Ok(None) => {}
+            Err(e) => eprintln!(
+                "asterismd: notification for session {session_id}: {}",
+                e.message
+            ),
+        }
+    }
+
+    fn open_waiting(&self, session_id: i64, task_id: i64) -> Result<Option<NotificationEntry>> {
+        if self.store().active_waiting(session_id)?.is_some() {
+            return Ok(None);
+        }
+        let task = self.task(task_id)?;
+        let project = self.store().project(task.project_id)?;
+        let entry = self.store().insert_notification(
+            NOTIFICATION_KIND_WAITING,
+            Some(task_id),
+            Some(session_id),
+            Some(&task.title),
+            project.as_ref().map(|p| p.name.as_str()),
+        )?;
+        Ok(Some(entry))
     }
 
     /// Best effort: a failed timestamp update must not break the session it reports on.
@@ -2574,7 +2641,7 @@ impl Daemon {
     /// Stops the session if it still runs, then forgets it entirely.
     pub async fn remove_session(&self, id: i64) -> Result<()> {
         let _waking = self.waking.lock().await;
-        self.session(id)?;
+        let task_id = self.session(id)?.task_id;
         // Taken out first so the status forwarder sees it gone and reports nothing after `session.removed`.
         let live = lock(&self.live).remove(&id);
         if let Some(live) = live {
@@ -2590,6 +2657,7 @@ impl Daemon {
                 let _ = live.pty.force_kill();
             }
         }
+        self.track_waiting(id, task_id, SessionStatus::Exited);
         self.store().delete_session(id)?;
         lock(&self.subagents).remove(&id);
         self.emit(Event::SessionRemoved { session_id: id });

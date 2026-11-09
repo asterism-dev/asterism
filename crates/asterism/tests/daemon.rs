@@ -1113,3 +1113,110 @@ async fn the_agents_panel_is_built_in_and_served() {
         })
         .is_err());
 }
+
+fn hook(env: &Env, session: &Session, event: HookEvent) {
+    env.daemon
+        .hook(SessionHookParams {
+            session_id: session.id,
+            event,
+            agent_ref: None,
+            subagent: None,
+        })
+        .unwrap();
+}
+
+async fn wait_for_entries(env: &Env, count: usize) -> Vec<NotificationEntry> {
+    assert!(eventually(|| env.daemon.notifications().unwrap().len() == count).await);
+    env.daemon.notifications().unwrap()
+}
+
+#[tokio::test]
+async fn waiting_hook_creates_one_entry_with_names() {
+    let env = setup();
+    let task = new_task(&env, "notify me").await;
+    let session = start(&env, &task, sh("sleep 30")).await;
+    hook(&env, &session, HookEvent::Notification);
+    let entries = wait_for_entries(&env, 1).await;
+    let project = &env.daemon.projects().unwrap()[0];
+    assert_eq!(entries[0].kind, NOTIFICATION_KIND_WAITING);
+    assert_eq!(entries[0].session_id, Some(session.id));
+    assert_eq!(entries[0].task_title.as_deref(), Some(task.title.as_str()));
+    assert_eq!(
+        entries[0].project_name.as_deref(),
+        Some(project.name.as_str())
+    );
+    assert_eq!(entries[0].resolved_at, None);
+}
+
+#[tokio::test]
+async fn waiting_episodes_each_get_one_entry() {
+    let env = setup();
+    let task = new_task(&env, "flip").await;
+    let session = start(&env, &task, sh("sleep 30")).await;
+    hook(&env, &session, HookEvent::Notification);
+    wait_for_entries(&env, 1).await;
+    hook(&env, &session, HookEvent::PromptSubmit);
+    assert!(eventually(|| env.daemon.notifications().unwrap()[0].resolved_at.is_some()).await);
+    hook(&env, &session, HookEvent::Notification);
+    let entries = wait_for_entries(&env, 2).await;
+    assert_eq!(
+        entries.iter().filter(|n| n.resolved_at.is_none()).count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn removing_a_waiting_session_resolves_its_entry() {
+    let env = setup();
+    let task = new_task(&env, "remove").await;
+    let session = start(&env, &task, sh("sleep 30")).await;
+    hook(&env, &session, HookEvent::Notification);
+    wait_for_entries(&env, 1).await;
+    env.daemon.remove_session(session.id).await.unwrap();
+    assert!(env.daemon.notifications().unwrap()[0].resolved_at.is_some());
+}
+
+#[tokio::test]
+async fn deleting_a_task_deletes_its_notifications() {
+    let env = setup();
+    let task = new_task(&env, "delete").await;
+    let session = start(&env, &task, sh("sleep 30")).await;
+    hook(&env, &session, HookEvent::Notification);
+    let id = wait_for_entries(&env, 1).await[0].id;
+    let mut events = env.daemon.subscribe();
+    env.daemon.delete_task(task.id, false).unwrap();
+    assert!(env.daemon.notifications().unwrap().is_empty());
+    let mut removed = false;
+    while let Ok(event) = events.try_recv() {
+        removed |= event == Event::NotificationRemoved { id };
+    }
+    assert!(removed);
+}
+
+#[tokio::test]
+async fn read_all_skips_active_waiting() {
+    let env = setup();
+    let task = new_task(&env, "read").await;
+    let session = start(&env, &task, sh("sleep 30")).await;
+    hook(&env, &session, HookEvent::Notification);
+    wait_for_entries(&env, 1).await;
+    env.daemon.read_all_notifications().unwrap();
+    assert_eq!(env.daemon.notifications().unwrap()[0].read_at, None);
+}
+
+#[tokio::test]
+async fn reopening_the_daemon_resolves_waiting_entries_before_recover() {
+    let env = setup();
+    let task = new_task(&env, "restart").await;
+    let session = start(&env, &task, sh("sleep 30")).await;
+    hook(&env, &session, HookEvent::Notification);
+    wait_for_entries(&env, 1).await;
+    let reopened = Daemon::with_options(
+        Paths {
+            home: env.home.path().to_path_buf(),
+        },
+        common::daemon_options(),
+    )
+    .unwrap();
+    assert!(reopened.notifications().unwrap()[0].resolved_at.is_some());
+}

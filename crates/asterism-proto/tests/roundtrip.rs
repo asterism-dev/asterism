@@ -556,3 +556,30 @@ fn remote_types_roundtrip() {
     assert_eq!(json["data"]["kind"], "forbidden");
     assert_eq!(json["code"], -32012);
 }
+
+#[test]
+fn notification_events_roundtrip() {
+    let entry = NotificationEntry {
+        id: 1,
+        kind: NOTIFICATION_KIND_WAITING.into(),
+        created_at: 1_700_000_000,
+        task_id: Some(3),
+        session_id: Some(7),
+        task_title: Some("Fix login".into()),
+        project_name: Some("asterism".into()),
+        resolved_at: None,
+        read_at: None,
+    };
+    let changed = Event::NotificationChanged(entry.clone()).to_notification();
+    assert_eq!(changed.method, "notification.changed");
+    assert_eq!(
+        Event::from_notification(&changed),
+        Some(Event::NotificationChanged(entry))
+    );
+    let removed = Event::NotificationRemoved { id: 5 }.to_notification();
+    assert_eq!(removed.method, "notification.removed");
+    assert_eq!(
+        Event::from_notification(&removed),
+        Some(Event::NotificationRemoved { id: 5 })
+    );
+}
