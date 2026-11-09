@@ -449,6 +449,15 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
                 .await?;
             Ok(Value::Null)
         }
+        method::NOTIFICATION_LIST => to_value(daemon.notifications()?),
+        method::NOTIFICATION_READ => {
+            daemon.read_notification(params::<NotificationIdParams>(raw)?.id)?;
+            Ok(Value::Null)
+        }
+        method::NOTIFICATION_READ_ALL => {
+            daemon.read_all_notifications()?;
+            Ok(Value::Null)
+        }
         method::TASK_LIST => to_value(daemon.tasks(params(raw)?)?),
         method::TASK_CREATE => to_value(daemon.create_task(params(raw)?).await?),
         method::TASK_ARCHIVE => {
