@@ -5,6 +5,7 @@ import type {
   AgentInfo,
   NodeEvent,
   NodeStatus,
+  NotificationEntry,
   PrList,
   Project,
   PullRequest,
@@ -51,6 +52,8 @@ export interface State {
   prs: Record<number, PullRequest>;
   prErrors: Record<number, string>;
   reviewVersion: Record<number, number>;
+  notifications: NotificationEntry[];
+  notificationsOpen: boolean;
 }
 
 export function initialState(): State {
@@ -79,6 +82,8 @@ export function initialState(): State {
     prs: {},
     prErrors: {},
     reviewVersion: {},
+    notifications: [],
+    notificationsOpen: false,
   };
 }
 
@@ -141,6 +146,34 @@ export function nextWaiting(s: State): Session | null {
   const tab = s.selectedTaskId === null ? undefined : s.selectedTab[s.selectedTaskId];
   const current = tab ?? -1;
   return waiting.find((x) => x.id > current) ?? waiting[0];
+}
+
+const isActiveWaiting = (n: NotificationEntry) => n.kind === 'waiting' && n.resolved_at === null;
+
+export function waitingNotifications(s: State): NotificationEntry[] {
+  return s.notifications
+    .filter(isActiveWaiting)
+    .sort((a, b) => a.created_at - b.created_at || a.id - b.id);
+}
+
+export function historyNotifications(s: State): NotificationEntry[] {
+  return s.notifications
+    .filter((n) => !isActiveWaiting(n))
+    .sort((a, b) => b.created_at - a.created_at || b.id - a.id);
+}
+
+export function notificationBadgeCount(s: State): number {
+  return s.notifications.filter((n) => isActiveWaiting(n) || n.read_at === null).length;
+}
+
+export function notificationTarget(
+  s: State,
+  n: NotificationEntry,
+): { session: Session } | { taskId: number } | null {
+  const session = s.sessions.find((x) => x.id === n.session_id);
+  if (session) return { session };
+  const taskId = n.task_id;
+  return taskId !== null && s.tasks.some((t) => t.id === taskId) ? { taskId } : null;
 }
 
 export function sessionLabel(session: Session): string {
@@ -236,6 +269,12 @@ export function applyEvent(s: State, event: NodeEvent): Session | null {
     case 'subagent.started':
     case 'subagent.updated':
       return null;
+    case 'notification.changed':
+      upsert(s.notifications, event.params);
+      return null;
+    case 'notification.removed':
+      s.notifications = s.notifications.filter((n) => n.id !== event.params.id);
+      return null;
   }
 }
 
@@ -273,12 +312,14 @@ export async function refreshPluginUpdates() {
 }
 
 export async function refresh() {
-  const [projects, tasks, sessions, agents] = await Promise.all([
+  const [projects, tasks, sessions, agents, notifications] = await Promise.all([
     api.projects(),
     api.tasks(),
     api.sessions(),
     api.agents(),
+    api.notifications(),
   ]);
+  state.notifications = notifications;
   state.agents = agents;
   state.projects = projects;
   state.tasks = tasks;

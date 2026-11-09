@@ -167,7 +167,21 @@ export type NodeEvent =
   | { method: 'review.changed'; params: { task_id: number } }
   | { method: 'pr.changed'; params: { task_id: number; pr: PullRequest | null } }
   | { method: 'subagent.started'; params: { session_id: number; subagent: Subagent } }
-  | { method: 'subagent.updated'; params: { session_id: number; subagent: Subagent } };
+  | { method: 'subagent.updated'; params: { session_id: number; subagent: Subagent } }
+  | { method: 'notification.changed'; params: NotificationEntry }
+  | { method: 'notification.removed'; params: { id: number } };
+
+export interface NotificationEntry {
+  id: number;
+  kind: string;
+  created_at: number;
+  task_id: number | null;
+  session_id: number | null;
+  task_title: string | null;
+  project_name: string | null;
+  resolved_at: number | null;
+  read_at: number | null;
+}
 
 export type SubagentStatus = 'running' | 'done' | 'failed' | 'ended';
 export interface Subagent {

@@ -4,14 +4,18 @@ import {
   aggregate,
   applyEvent,
   applyPrList,
+  historyNotifications,
   initialState,
   nextWaiting,
+  notificationBadgeCount,
+  notificationTarget,
   selectSession,
   taskSessions,
   taskStatus,
+  waitingNotifications,
   waitingSessions,
 } from './store';
-import type { PullRequest, Session, SessionStatus, Task } from './types';
+import type { NotificationEntry, PullRequest, Session, SessionStatus, Task } from './types';
 
 const task = (id: number, projectId = 1): Task => ({
   id,
@@ -227,5 +231,63 @@ describe('review.changed', () => {
     applyEvent(s, { method: 'review.changed', params: { task_id: 3 } });
     applyEvent(s, { method: 'review.changed', params: { task_id: 3 } });
     expect(s.reviewVersion).toEqual({ 3: 2 });
+  });
+});
+
+const entry = (id: number, over: Partial<NotificationEntry> = {}): NotificationEntry => ({
+  id,
+  kind: 'waiting',
+  created_at: id,
+  task_id: 1,
+  session_id: 10,
+  task_title: 't1',
+  project_name: 'p',
+  resolved_at: null,
+  read_at: null,
+  ...over,
+});
+
+describe('notifications', () => {
+  it('notification events upsert and remove', () => {
+    const s = initialState();
+    applyEvent(s, { method: 'notification.changed', params: entry(1) });
+    applyEvent(s, { method: 'notification.changed', params: entry(1, { resolved_at: 5 }) });
+    expect(s.notifications).toEqual([entry(1, { resolved_at: 5 })]);
+    applyEvent(s, { method: 'notification.removed', params: { id: 1 } });
+    expect(s.notifications).toEqual([]);
+  });
+
+  it('waiting and history are split and sorted', () => {
+    const s = initialState();
+    s.notifications = [
+      entry(1, { created_at: 200 }),
+      entry(2, { created_at: 100 }),
+      entry(3, { created_at: 50, resolved_at: 60, read_at: 60 }),
+      entry(4, { kind: 'test', created_at: 300 }),
+    ];
+    expect(waitingNotifications(s).map((n) => n.id)).toEqual([2, 1]);
+    expect(historyNotifications(s).map((n) => n.id)).toEqual([4, 3]);
+  });
+
+  it('badge counts waiting plus unread history', () => {
+    const s = initialState();
+    s.notifications = [
+      entry(1),
+      entry(2),
+      entry(3, { kind: 'test' }),
+      entry(4, { kind: 'test', read_at: 9 }),
+      entry(5, { resolved_at: 9, read_at: 9 }),
+    ];
+    expect(notificationBadgeCount(s)).toBe(3);
+  });
+
+  it('entry_target_is_null_for_unknown_task', () => {
+    const s = initialState();
+    const n = entry(1, { task_id: 99, session_id: 77 });
+    expect(notificationTarget(s, n)).toBeNull();
+    s.tasks = [task(99)];
+    expect(notificationTarget(s, n)).toEqual({ taskId: 99 });
+    s.sessions = [session(77, 99)];
+    expect(notificationTarget(s, n)).toEqual({ session: s.sessions[0] });
   });
 });
