@@ -390,6 +390,11 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             blocking(move || to_value(daemon.project_branches(id)?)).await
         }
         method::PROJECT_UPDATE => to_value(daemon.update_project(params(raw)?)?),
+        method::PROJECT_MOVE => to_value(daemon.move_project(params(raw)?)?),
+        method::WORKSPACE_LIST => to_value(daemon.workspaces()?),
+        method::WORKSPACE_CREATE => to_value(daemon.create_workspace(params(raw)?)?),
+        method::WORKSPACE_UPDATE => to_value(daemon.update_workspace(params(raw)?)?),
+        method::WORKSPACE_DELETE => to_value(daemon.delete_workspace(params(raw)?)?),
         method::FORGE_LIST => to_value(daemon.forges()),
         method::FORGE_STATUS => to_value(
             daemon

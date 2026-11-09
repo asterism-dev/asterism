@@ -606,3 +606,228 @@ async fn project_branches_and_update_over_rpc() {
         .unwrap();
     assert_eq!(updated.default_base.as_deref(), Some("main"));
 }
+
+fn create_params(name: &str, label: &str, repos: Option<String>) -> WorkspaceCreateParams {
+    WorkspaceCreateParams {
+        name: name.into(),
+        label: label.into(),
+        repos,
+        worktrees: None,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn workspaces_over_rpc() {
+    let (home, socket) = start_daemon().await;
+    let repo = tempfile::tempdir().unwrap();
+    init_repo(repo.path());
+    let client = client(&socket).await;
+    let kind = |e| rpc_kind(e);
+
+    let list: Vec<Workspace> = client.call(method::WORKSPACE_LIST, ()).await.unwrap();
+    assert_eq!(list.len(), 1);
+    let default = list[0].clone();
+    assert_eq!(default.name, "Default");
+    assert!(default.repos.is_empty() && default.worktrees.is_empty());
+
+    let work: Workspace = client
+        .call(
+            method::WORKSPACE_CREATE,
+            create_params(" Work Stuff ", "W", None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(work.name, "Work Stuff");
+    assert_eq!(
+        work.repos,
+        home.path().join("work-stuff/repos").display().to_string()
+    );
+    assert_eq!(
+        work.worktrees,
+        home.path()
+            .join("work-stuff/worktrees")
+            .display()
+            .to_string()
+    );
+
+    for bad in [
+        create_params("X", "ABC", None),
+        create_params("  ", "X", None),
+    ] {
+        let err = client
+            .call::<_, Workspace>(method::WORKSPACE_CREATE, bad)
+            .await
+            .unwrap_err();
+        assert_eq!(kind(err), ErrorKind::InvalidParams);
+    }
+    let err = client
+        .call::<_, Workspace>(
+            method::WORKSPACE_CREATE,
+            create_params("Dup", "X", Some(work.repos.clone())),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(kind(err), ErrorKind::InvalidParams);
+
+    let emoji: Workspace = client
+        .call(method::WORKSPACE_CREATE, create_params("🚀", "R", None))
+        .await
+        .unwrap();
+    assert_eq!(
+        emoji.repos,
+        home.path().join("workspace/repos").display().to_string()
+    );
+
+    let project: Project = client
+        .call(
+            method::PROJECT_ADD,
+            ProjectAddParams {
+                path: repo.path().display().to_string(),
+                workspace_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let moved: Project = client
+        .call(
+            method::PROJECT_MOVE,
+            ProjectMoveParams {
+                project_id: project.id,
+                workspace_id: work.id,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(moved.workspace_id, work.id);
+    for (project_id, workspace_id) in [(project.id, 9999), (9999, work.id)] {
+        let err = client
+            .call::<_, Project>(
+                method::PROJECT_MOVE,
+                ProjectMoveParams {
+                    project_id,
+                    workspace_id,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(kind(err), ErrorKind::NotFound);
+    }
+
+    let updated: Workspace = client
+        .call(
+            method::WORKSPACE_UPDATE,
+            WorkspaceUpdateParams {
+                workspace_id: work.id,
+                name: "Job".into(),
+                label: "J".into(),
+                repos: work.repos.clone(),
+                worktrees: work.worktrees.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.label, "J");
+    let err = client
+        .call::<_, Workspace>(
+            method::WORKSPACE_UPDATE,
+            WorkspaceUpdateParams {
+                workspace_id: work.id,
+                name: "Job".into(),
+                label: "J".into(),
+                repos: emoji.repos.clone(),
+                worktrees: work.worktrees.clone(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(kind(err), ErrorKind::InvalidParams);
+
+    let delete = |workspace_id, move_to| {
+        client.call::<_, ()>(
+            method::WORKSPACE_DELETE,
+            WorkspaceDeleteParams {
+                workspace_id,
+                move_to,
+            },
+        )
+    };
+    assert_eq!(
+        kind(delete(work.id, work.id).await.unwrap_err()),
+        ErrorKind::InvalidParams
+    );
+    assert_eq!(
+        kind(delete(work.id, 9999).await.unwrap_err()),
+        ErrorKind::InvalidParams
+    );
+    delete(work.id, default.id).await.unwrap();
+    delete(emoji.id, default.id).await.unwrap();
+    let projects: Vec<Project> = client.call(method::PROJECT_LIST, ()).await.unwrap();
+    assert_eq!(projects[0].workspace_id, default.id);
+    let list: Vec<Workspace> = client.call(method::WORKSPACE_LIST, ()).await.unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(
+        kind(delete(default.id, default.id).await.unwrap_err()),
+        ErrorKind::InvalidParams
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn workspace_events_are_broadcast() {
+    let (_home, socket) = start_daemon().await;
+    let repo = tempfile::tempdir().unwrap();
+    init_repo(repo.path());
+    let client = client(&socket).await;
+    let mut events = client.take_events().unwrap();
+    let _: () = client.call(method::SUBSCRIBE, ()).await.unwrap();
+    let default: Vec<Workspace> = client.call(method::WORKSPACE_LIST, ()).await.unwrap();
+    let work: Workspace = client
+        .call(method::WORKSPACE_CREATE, create_params("Work", "W", None))
+        .await
+        .unwrap();
+    let next = async |events: &mut tokio::sync::mpsc::UnboundedReceiver<Event>| {
+        tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    let event = next(&mut events).await;
+    assert!(matches!(event, Event::WorkspaceChanged(_)), "{event:?}");
+    let project: Project = client
+        .call(
+            method::PROJECT_ADD,
+            ProjectAddParams {
+                path: repo.path().display().to_string(),
+                workspace_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let event = next(&mut events).await;
+    assert!(matches!(event, Event::ProjectChanged(_)), "{event:?}");
+    let _: Project = client
+        .call(
+            method::PROJECT_MOVE,
+            ProjectMoveParams {
+                project_id: project.id,
+                workspace_id: work.id,
+            },
+        )
+        .await
+        .unwrap();
+    let event = next(&mut events).await;
+    assert!(matches!(event, Event::ProjectChanged(_)), "{event:?}");
+    let _: () = client
+        .call(
+            method::WORKSPACE_DELETE,
+            WorkspaceDeleteParams {
+                workspace_id: work.id,
+                move_to: default[0].id,
+            },
+        )
+        .await
+        .unwrap();
+    let event = next(&mut events).await;
+    assert!(matches!(event, Event::ProjectChanged(_)), "{event:?}");
+    let event = next(&mut events).await;
+    assert!(matches!(event, Event::WorkspaceRemoved { .. }), "{event:?}");
+}

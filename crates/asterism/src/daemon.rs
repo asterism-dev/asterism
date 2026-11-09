@@ -1112,6 +1112,142 @@ impl Daemon {
         Ok(project)
     }
 
+    pub fn workspaces(&self) -> Result<Vec<Workspace>> {
+        Ok(self.store().workspaces()?)
+    }
+
+    pub fn workspace_dirs(&self, w: &Workspace) -> Result<(PathBuf, PathBuf)> {
+        let resolve = |value: &str, global: fn(&Paths) -> Result<PathBuf>| {
+            if value.is_empty() {
+                global(&self.paths)
+            } else {
+                node_settings::expand_home(value)
+            }
+        };
+        Ok((
+            resolve(&w.repos, node_settings::repos_dir)?,
+            resolve(&w.worktrees, node_settings::worktrees_dir)?,
+        ))
+    }
+
+    pub fn create_workspace(&self, p: WorkspaceCreateParams) -> Result<Workspace> {
+        let (name, label) = validated_workspace_text(&p.name, &p.label)?;
+        let slug = match slug_text(&name) {
+            s if s.is_empty() => "workspace".to_string(),
+            s => s,
+        };
+        let default_dir = |leaf: &str| self.paths.home.join(&slug).join(leaf).display().to_string();
+        let folder = |given: Option<String>, leaf: &str| match given.map(|g| g.trim().to_string()) {
+            Some(g) if !g.is_empty() => g,
+            _ => default_dir(leaf),
+        };
+        let repos = folder(p.repos, "repos");
+        let worktrees = folder(p.worktrees, "worktrees");
+        let workspace = {
+            let store = self.store();
+            let candidate = Workspace {
+                id: 0,
+                name: name.clone(),
+                label: label.clone(),
+                position: 0,
+                repos: repos.clone(),
+                worktrees: worktrees.clone(),
+            };
+            self.check_workspace_dirs(&store.workspaces()?, &candidate)?;
+            store.add_workspace(&name, &label, &repos, &worktrees)?
+        };
+        self.emit(Event::WorkspaceChanged(workspace.clone()));
+        Ok(workspace)
+    }
+
+    pub fn update_workspace(&self, p: WorkspaceUpdateParams) -> Result<Workspace> {
+        let (name, label) = validated_workspace_text(&p.name, &p.label)?;
+        let workspace = {
+            let store = self.store();
+            if store.workspace(p.workspace_id)?.is_none() {
+                return Err(not_found("workspace", p.workspace_id));
+            }
+            let updated = Workspace {
+                id: p.workspace_id,
+                name,
+                label,
+                position: 0,
+                repos: p.repos.trim().to_string(),
+                worktrees: p.worktrees.trim().to_string(),
+            };
+            self.check_workspace_dirs(&store.workspaces()?, &updated)?;
+            store.update_workspace(&updated)?;
+            store
+                .workspace(p.workspace_id)?
+                .ok_or_else(|| not_found("workspace", p.workspace_id))?
+        };
+        self.emit(Event::WorkspaceChanged(workspace.clone()));
+        Ok(workspace)
+    }
+
+    pub fn delete_workspace(&self, p: WorkspaceDeleteParams) -> Result<()> {
+        let projects = {
+            let store = self.store();
+            let all = store.workspaces()?;
+            if !all.iter().any(|w| w.id == p.workspace_id) {
+                return Err(not_found("workspace", p.workspace_id));
+            }
+            if all.len() == 1 {
+                return Err(invalid_params("the last workspace cannot be deleted"));
+            }
+            if p.move_to == p.workspace_id || !all.iter().any(|w| w.id == p.move_to) {
+                return Err(invalid_params("move_to must be another existing workspace"));
+            }
+            store
+                .delete_workspace(p.workspace_id, p.move_to)?
+                .into_iter()
+                .filter_map(|id| store.project(id).transpose())
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for project in projects {
+            self.emit(Event::ProjectChanged(project));
+        }
+        self.emit(Event::WorkspaceRemoved {
+            workspace_id: p.workspace_id,
+        });
+        Ok(())
+    }
+
+    pub fn move_project(&self, p: ProjectMoveParams) -> Result<Project> {
+        let project = {
+            let store = self.store();
+            if store.project(p.project_id)?.is_none() {
+                return Err(not_found("project", p.project_id));
+            }
+            if store.workspace(p.workspace_id)?.is_none() {
+                return Err(not_found("workspace", p.workspace_id));
+            }
+            store.set_project_workspace(p.project_id, p.workspace_id)?;
+            store
+                .project(p.project_id)?
+                .ok_or_else(|| not_found("project", p.project_id))?
+        };
+        self.emit(Event::ProjectChanged(project.clone()));
+        Ok(project)
+    }
+
+    fn check_workspace_dirs(&self, existing: &[Workspace], candidate: &Workspace) -> Result<()> {
+        let (repos, worktrees) = self.workspace_dirs(candidate)?;
+        for other in existing.iter().filter(|w| w.id != candidate.id) {
+            let (other_repos, other_worktrees) = self.workspace_dirs(other)?;
+            let clash = [&repos, &worktrees]
+                .iter()
+                .any(|d| **d == other_repos || **d == other_worktrees);
+            if clash {
+                return Err(invalid_params(format!(
+                    "folders are already used by workspace {:?}",
+                    other.name
+                )));
+            }
+        }
+        Ok(())
+    }
+
     pub fn node_config(&self) -> Result<NodeConfigInfo> {
         node_settings::load(&self.paths)
     }
@@ -3167,6 +3303,21 @@ async fn write_blocking(pty: &Arc<Pty>, data: Vec<u8>) -> Result<()> {
         .await
         .map_err(|e| Error::new(ErrorKind::Internal, format!("pty write task failed: {e}")))??;
     Ok(())
+}
+
+fn invalid_params(message: impl Into<String>) -> Error {
+    Error::new(ErrorKind::InvalidParams, message)
+}
+
+fn validated_workspace_text(name: &str, label: &str) -> Result<(String, String)> {
+    let (name, label) = (name.trim(), label.trim());
+    if name.is_empty() {
+        return Err(invalid_params("workspace name must not be empty"));
+    }
+    if !(1..=2).contains(&label.chars().count()) {
+        return Err(invalid_params("workspace label must be 1-2 characters"));
+    }
+    Ok((name.to_string(), label.to_string()))
 }
 
 fn not_found(what: &str, id: i64) -> Error {
