@@ -1000,14 +1000,15 @@ impl Daemon {
     }
 
     pub fn add_project_in(&self, path: &str, workspace_id: Option<i64>) -> Result<Project> {
-        let workspace = self.resolve_workspace(workspace_id)?;
         let root = git::toplevel(Path::new(path))?;
         let name = root
             .file_name()
             .map_or_else(|| "project".into(), |n| n.to_string_lossy().into_owned());
-        let project = self
-            .store()
-            .add_project_in(&name, &root.to_string_lossy(), workspace.id)?;
+        let project = {
+            let store = self.store();
+            let workspace = Self::resolve_workspace_in(&store, workspace_id)?;
+            store.add_project_in(&name, &root.to_string_lossy(), workspace.id)?
+        };
         self.emit(Event::ProjectChanged(project.clone()));
         Ok(project)
     }
@@ -1120,7 +1121,10 @@ impl Daemon {
     }
 
     fn resolve_workspace(&self, id: Option<i64>) -> Result<Workspace> {
-        let store = self.store();
+        Self::resolve_workspace_in(&self.store(), id)
+    }
+
+    fn resolve_workspace_in(store: &Store, id: Option<i64>) -> Result<Workspace> {
         match id {
             Some(id) => store
                 .workspace(id)?
@@ -1254,6 +1258,11 @@ impl Daemon {
 
     fn check_workspace_dirs(&self, existing: &[Workspace], candidate: &Workspace) -> Result<()> {
         let (repos, worktrees) = self.workspace_dirs(candidate)?;
+        if repos == worktrees {
+            return Err(invalid_params(
+                "repositories and worktrees folders must differ",
+            ));
+        }
         for other in existing.iter().filter(|w| w.id != candidate.id) {
             let (other_repos, other_worktrees) = self.workspace_dirs(other)?;
             let clash = [&repos, &worktrees]
@@ -2392,6 +2401,7 @@ impl Daemon {
     }
 
     fn tidy_worktree_parents(&self, project_id: i64, repo: &Path, worktree: &Path) {
+        // Drop the store guard before worktree_root re-locks; an if-let scrutinee would hold it.
         let project = self.store().project(project_id);
         if let Ok(Some(project)) = project {
             if let Ok(root) = self.worktree_root(repo, &project) {

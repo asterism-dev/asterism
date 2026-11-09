@@ -742,6 +742,21 @@ async fn workspaces_over_rpc() {
         .unwrap_err();
     assert_eq!(kind(err), ErrorKind::InvalidParams);
 
+    let err = client
+        .call::<_, Workspace>(
+            method::WORKSPACE_UPDATE,
+            WorkspaceUpdateParams {
+                workspace_id: work.id,
+                name: "Job".into(),
+                label: "J".into(),
+                repos: work.repos.clone(),
+                worktrees: work.repos.clone(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(kind(err), ErrorKind::InvalidParams);
+
     let delete = |workspace_id, move_to| {
         client.call::<_, ()>(
             method::WORKSPACE_DELETE,

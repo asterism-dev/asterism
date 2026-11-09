@@ -169,6 +169,11 @@ impl Store {
             tx.pragma_update(None, "user_version", i + 1)?;
         }
         tx.commit()?;
+        conn.execute(
+            "UPDATE projects SET workspace_id = (SELECT id FROM workspaces ORDER BY position, id LIMIT 1)
+             WHERE workspace_id NOT IN (SELECT id FROM workspaces)",
+            [],
+        )?;
         Ok(Self { conn })
     }
 
@@ -1015,6 +1020,23 @@ mod tests {
         );
         assert_eq!((ws[0].repos.as_str(), ws[0].worktrees.as_str()), ("", ""));
         assert_eq!(store.project(1).unwrap().unwrap().workspace_id, ws[0].id);
+    }
+
+    #[test]
+    fn open_repoints_orphaned_projects_to_the_first_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.sqlite");
+        let first = Store::open(&path).unwrap().workspaces().unwrap()[0].id;
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute(
+                "INSERT INTO projects (name, path, workspace_id) VALUES ('p', '/p', 0)",
+                [],
+            )
+            .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.project(1).unwrap().unwrap().workspace_id, first);
     }
 
     #[test]
