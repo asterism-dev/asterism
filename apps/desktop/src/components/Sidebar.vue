@@ -72,6 +72,7 @@ const showIdle = computed(
 );
 const rows = computed(() => [
   ...grouped.value.active,
+  ...(grouped.value.idle.length ? ['more' as const] : []),
   ...(showIdle.value ? grouped.value.idle : []),
 ]);
 function toggleMore() {
@@ -248,69 +249,78 @@ function taskMenu(e: MouseEvent, t: Task) {
         />
         <Kbd v-if="!query" action="search" class="search-kbd" />
       </div>
-      <div
-        v-for="{ project: p, tasks } in rows"
-        :key="p.id"
-        class="project"
-        :class="{ offline: !connected }"
-      >
-        <div class="row project-row" @contextmenu="projectMenu($event, p)">
-          <button
-            type="button"
-            class="disclosure"
-            :aria-expanded="!state.collapsed[p.id]"
-            :aria-label="state.collapsed[p.id] ? `Expand ${p.name}` : `Collapse ${p.name}`"
-            @click="toggle(p)"
-          >
-            <ChevronRight v-if="state.collapsed[p.id] && !searching" /><ChevronDown v-else />
-          </button>
-          <span
-            class="name"
-            :class="{ current: state.projectPage === p.id }"
-            @click="openProject(p)"
-            >{{ p.name }}</span
-          >
-          <button
-            class="hover-action"
-            :title="withHint('New task', 'newTask')"
-            @click="state.newTaskFor = p.id"
-          >
-            <Plus />Task
-          </button>
-        </div>
-        <template v-if="searching || !state.collapsed[p.id]">
-          <div
-            v-for="t in tasks"
-            :key="t.id"
-            class="row task-row"
-            :class="{ selected: state.selectedTaskId === t.id }"
-            @click="openTask(t)"
-            @contextmenu="taskMenu($event, t)"
-          >
-            <span class="name">{{ t.title }}</span>
-            <a
-              v-if="t.issue"
-              class="issue-key muted"
-              :href="t.issue.url"
-              :title="t.issue.url"
-              @click.prevent.stop="openIssue(t.issue.url)"
-              >{{ t.issue.key }}</a
+      <template v-for="item in rows" :key="item === 'more' ? 'more' : item.project.id">
+        <button
+          v-if="item === 'more'"
+          type="button"
+          class="row more-row"
+          :aria-expanded="showIdle"
+          @click="toggleMore"
+        >
+          <ChevronDown v-if="showIdle" /><ChevronRight v-else />{{ grouped.idle.length }} more
+          projects
+        </button>
+        <div v-else class="project" :class="{ offline: !connected }">
+          <div class="row project-row" @contextmenu="projectMenu($event, item.project)">
+            <button
+              type="button"
+              class="disclosure"
+              :aria-expanded="!state.collapsed[item.project.id]"
+              :aria-label="
+                state.collapsed[item.project.id]
+                  ? `Expand ${item.project.name}`
+                  : `Collapse ${item.project.name}`
+              "
+              @click="toggle(item.project)"
             >
-            <PrBadge v-if="state.prs[t.id]" :pr="state.prs[t.id]!" />
+              <ChevronRight v-if="state.collapsed[item.project.id] && !searching" /><ChevronDown
+                v-else
+              />
+            </button>
             <span
-              class="age muted"
-              :title="`Created ${formatDate(t.created_at)} · Last activity ${formatDate(t.last_activity_at)}`"
+              class="name"
+              :class="{ current: state.projectPage === item.project.id }"
+              @click="openProject(item.project)"
+              >{{ item.project.name }}</span
             >
-              {{ relativeTime(t.last_activity_at, now) }}
-            </span>
-            <StatusIndicator :status="taskStatus(state, t.id)" />
+            <button
+              class="hover-action"
+              :title="withHint('New task', 'newTask')"
+              @click="state.newTaskFor = item.project.id"
+            >
+              <Plus />Task
+            </button>
           </div>
-        </template>
-      </div>
-      <button v-if="grouped.idle.length" type="button" class="row more-row" @click="toggleMore">
-        <ChevronDown v-if="showIdle" /><ChevronRight v-else />{{ grouped.idle.length }} more
-        projects
-      </button>
+          <template v-if="searching || !state.collapsed[item.project.id]">
+            <div
+              v-for="t in item.tasks"
+              :key="t.id"
+              class="row task-row"
+              :class="{ selected: state.selectedTaskId === t.id }"
+              @click="openTask(t)"
+              @contextmenu="taskMenu($event, t)"
+            >
+              <span class="name">{{ t.title }}</span>
+              <a
+                v-if="t.issue"
+                class="issue-key muted"
+                :href="t.issue.url"
+                :title="t.issue.url"
+                @click.prevent.stop="openIssue(t.issue.url)"
+                >{{ t.issue.key }}</a
+              >
+              <PrBadge v-if="state.prs[t.id]" :pr="state.prs[t.id]!" />
+              <span
+                class="age muted"
+                :title="`Created ${formatDate(t.created_at)} · Last activity ${formatDate(t.last_activity_at)}`"
+              >
+                {{ relativeTime(t.last_activity_at, now) }}
+              </span>
+              <StatusIndicator :status="taskStatus(state, t.id)" />
+            </div>
+          </template>
+        </div>
+      </template>
       <p v-if="searching && !rows.length" class="hint muted">No matches</p>
       <p v-if="connected && !state.projects.length" class="hint">
         Click + to add, clone or create a project.

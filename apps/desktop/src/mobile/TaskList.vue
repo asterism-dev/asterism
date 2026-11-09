@@ -38,8 +38,15 @@ const selected = computed(() => (route.value.name === 'task' ? route.value.taskI
       </button>
       <p v-if="!g.tasks.length" class="empty">No tasks</p>
     </section>
-    <button v-if="grouped.idle.length" class="more" @click="moreOpen = !moreOpen">
-      {{ moreOpen ? '⌄' : '›' }} {{ grouped.idle.length }} more projects
+    <button
+      v-if="grouped.idle.length"
+      type="button"
+      class="more"
+      :aria-expanded="moreOpen"
+      @click="moreOpen = !moreOpen"
+    >
+      <span aria-hidden="true">{{ moreOpen ? '⌄' : '›' }}</span> {{ grouped.idle.length }} more
+      projects
     </button>
     <template v-if="moreOpen">
       <section v-for="g in grouped.idle" :key="g.project.id">
