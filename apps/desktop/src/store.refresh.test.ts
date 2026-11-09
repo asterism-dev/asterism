@@ -5,8 +5,8 @@ vi.mock('./api', () => ({
   api: {
     projects: async () => mocks.projects,
     workspaces: async () => [
-      { id: 1, name: 'a', label: 'A', position: 1, repos: '', worktrees: '' },
-      { id: 2, name: 'b', label: 'B', position: 2, repos: '', worktrees: '' },
+      { id: 1, name: 'a', label: 'A', position: 1, repos: '', worktrees: '', color: '' },
+      { id: 2, name: 'b', label: 'B', position: 2, repos: '', worktrees: '', color: '' },
     ],
     tasks: async () => mocks.tasks,
     sessions: async () => [],

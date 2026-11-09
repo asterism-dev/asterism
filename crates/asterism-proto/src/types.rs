@@ -176,7 +176,13 @@ pub struct Workspace {
     pub position: i64,
     pub repos: String,
     pub worktrees: String,
+    #[serde(default)]
+    pub color: String,
 }
+
+pub const WORKSPACE_COLORS: &[&str] = &[
+    "blue", "green", "amber", "red", "purple", "pink", "teal", "slate",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkspaceCreateParams {
@@ -186,6 +192,9 @@ pub struct WorkspaceCreateParams {
     pub repos: Option<String>,
     #[serde(default)]
     pub worktrees: Option<String>,
+    /// `None` picks the first color no other workspace uses.
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -195,6 +204,8 @@ pub struct WorkspaceUpdateParams {
     pub label: String,
     pub repos: String,
     pub worktrees: String,
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

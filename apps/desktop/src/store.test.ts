@@ -332,6 +332,7 @@ const wsState = () => {
     position: id,
     repos: '',
     worktrees: '',
+    color: '',
   }));
   s.activeWorkspace = 1;
   s.selectedTaskId = 10;

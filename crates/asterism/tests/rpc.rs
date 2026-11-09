@@ -613,6 +613,7 @@ fn create_params(name: &str, label: &str, repos: Option<String>) -> WorkspaceCre
         label: label.into(),
         repos,
         worktrees: None,
+        color: None,
     }
 }
 
@@ -722,6 +723,7 @@ async fn workspaces_over_rpc() {
                 label: "J".into(),
                 repos: work.repos.clone(),
                 worktrees: work.worktrees.clone(),
+                color: None,
             },
         )
         .await
@@ -736,6 +738,7 @@ async fn workspaces_over_rpc() {
                 label: "J".into(),
                 repos: emoji.repos.clone(),
                 worktrees: work.worktrees.clone(),
+                color: None,
             },
         )
         .await
@@ -751,6 +754,7 @@ async fn workspaces_over_rpc() {
                 label: "J".into(),
                 repos: work.repos.clone(),
                 worktrees: work.repos.clone(),
+                color: None,
             },
         )
         .await
@@ -845,4 +849,54 @@ async fn workspace_events_are_broadcast() {
     assert!(matches!(event, Event::ProjectChanged(_)), "{event:?}");
     let event = next(&mut events).await;
     assert!(matches!(event, Event::WorkspaceRemoved { .. }), "{event:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn workspace_colors_are_picked_validated_and_kept() {
+    let (_home, socket) = start_daemon().await;
+    let client = client(&socket).await;
+
+    let first: Workspace = client
+        .call(method::WORKSPACE_CREATE, create_params("One", "1", None))
+        .await
+        .unwrap();
+    let second: Workspace = client
+        .call(method::WORKSPACE_CREATE, create_params("Two", "2", None))
+        .await
+        .unwrap();
+    assert_eq!(
+        (first.color.as_str(), second.color.as_str()),
+        ("blue", "green")
+    );
+
+    let err = client
+        .call::<_, Workspace>(
+            method::WORKSPACE_CREATE,
+            WorkspaceCreateParams {
+                color: Some("nope".into()),
+                ..create_params("Three", "3", None)
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_kind(err), ErrorKind::InvalidParams);
+
+    let update = |color: Option<String>| WorkspaceUpdateParams {
+        workspace_id: first.id,
+        name: first.name.clone(),
+        label: "X".into(),
+        repos: first.repos.clone(),
+        worktrees: first.worktrees.clone(),
+        color,
+    };
+    let kept: Workspace = client
+        .call(method::WORKSPACE_UPDATE, update(None))
+        .await
+        .unwrap();
+    assert_eq!((kept.label.as_str(), kept.color.as_str()), ("X", "blue"));
+    let cleared: Workspace = client
+        .call(method::WORKSPACE_UPDATE, update(Some(String::new())))
+        .await
+        .unwrap();
+    assert_eq!(cleared.color, "");
 }

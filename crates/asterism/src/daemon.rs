@@ -1170,6 +1170,11 @@ impl Daemon {
         let worktrees = folder(p.worktrees, "worktrees");
         let workspace = {
             let store = self.store();
+            let existing = store.workspaces()?;
+            let color = match p.color {
+                Some(c) => validated_color(&c)?,
+                None => next_free_color(&existing),
+            };
             let candidate = Workspace {
                 id: 0,
                 name: name.clone(),
@@ -1177,9 +1182,10 @@ impl Daemon {
                 position: 0,
                 repos: repos.clone(),
                 worktrees: worktrees.clone(),
+                color: color.clone(),
             };
-            self.check_workspace_dirs(&store.workspaces()?, &candidate)?;
-            store.add_workspace(&name, &label, &repos, &worktrees)?
+            self.check_workspace_dirs(&existing, &candidate)?;
+            store.add_workspace(&name, &label, &repos, &worktrees, &color)?
         };
         self.emit(Event::WorkspaceChanged(workspace.clone()));
         Ok(workspace)
@@ -1189,9 +1195,13 @@ impl Daemon {
         let (name, label) = validated_workspace_text(&p.name, &p.label)?;
         let workspace = {
             let store = self.store();
-            if store.workspace(p.workspace_id)?.is_none() {
-                return Err(not_found("workspace", p.workspace_id));
-            }
+            let current = store
+                .workspace(p.workspace_id)?
+                .ok_or_else(|| not_found("workspace", p.workspace_id))?;
+            let color = match p.color {
+                Some(c) => validated_color(&c)?,
+                None => current.color,
+            };
             let updated = Workspace {
                 id: p.workspace_id,
                 name,
@@ -1199,6 +1209,7 @@ impl Daemon {
                 position: 0,
                 repos: p.repos.trim().to_string(),
                 worktrees: p.worktrees.trim().to_string(),
+                color,
             };
             self.check_workspace_dirs(&store.workspaces()?, &updated)?;
             store.update_workspace(&updated)?;
@@ -3378,6 +3389,24 @@ fn validated_workspace_text(name: &str, label: &str) -> Result<(String, String)>
         return Err(invalid_params("workspace label must be 1-2 characters"));
     }
     Ok((name.to_string(), label.to_string()))
+}
+
+fn validated_color(color: &str) -> Result<String> {
+    let color = color.trim();
+    if color.is_empty() || WORKSPACE_COLORS.contains(&color) {
+        Ok(color.to_string())
+    } else {
+        Err(invalid_params(format!("unknown workspace color {color}")))
+    }
+}
+
+/// Cycles through the palette once every color is taken.
+fn next_free_color(existing: &[Workspace]) -> String {
+    WORKSPACE_COLORS
+        .iter()
+        .find(|c| !existing.iter().any(|w| w.color == **c))
+        .unwrap_or(&WORKSPACE_COLORS[existing.len() % WORKSPACE_COLORS.len()])
+        .to_string()
 }
 
 fn not_found(what: &str, id: i64) -> Error {

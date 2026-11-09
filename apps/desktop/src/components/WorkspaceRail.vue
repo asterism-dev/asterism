@@ -4,7 +4,7 @@ import { computed, ref, watch } from 'vue';
 import { errorMessage } from '../api';
 import { leaveSettings } from '../settingsGuard';
 import { showMenu, state, switchWorkspace, toast, waitingSessions } from '../store';
-import { saveWorkspaceTasks, waitingByWorkspace } from '../workspaces';
+import { colorVar, saveWorkspaceTasks, waitingByWorkspace } from '../workspaces';
 import type { Workspace } from '../types';
 import WorkspaceDialog from './WorkspaceDialog.vue';
 
@@ -31,7 +31,7 @@ function select(w: Workspace) {
 
 function menu(e: MouseEvent, w: Workspace) {
   showMenu(e, [
-    { label: 'Rename…', action: () => (dialog.value = { mode: 'rename', workspace: w }) },
+    { label: 'Edit…', action: () => (dialog.value = { mode: 'rename', workspace: w }) },
     ...(state.workspaces.length > 1
       ? [
           {
@@ -52,7 +52,8 @@ function menu(e: MouseEvent, w: Workspace) {
       :key="w.id"
       type="button"
       class="tile"
-      :class="{ active: state.activeWorkspace === w.id }"
+      :class="{ active: state.activeWorkspace === w.id, colored: !!w.color }"
+      :style="{ '--tile': colorVar(w.color) }"
       :title="w.name"
       :aria-label="
         !waiting[w.id] || state.activeWorkspace === w.id
@@ -108,6 +109,14 @@ function menu(e: MouseEvent, w: Workspace) {
 .tile.active {
   background: var(--select);
   border-color: var(--muted);
+}
+.tile.colored {
+  color: var(--tile);
+  border-color: var(--tile);
+}
+.tile.colored.active {
+  background: var(--tile);
+  color: var(--bg);
 }
 .tile.add {
   margin-top: auto;

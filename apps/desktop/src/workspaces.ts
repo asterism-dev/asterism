@@ -73,3 +73,26 @@ export function defaultFolders(reposDefault: string, name: string) {
   const slug = slugText(name) || 'workspace';
   return { repos: `${home}/${slug}/repos`, worktrees: `${home}/${slug}/worktrees` };
 }
+
+export const WORKSPACE_COLORS = [
+  'blue',
+  'green',
+  'amber',
+  'red',
+  'purple',
+  'pink',
+  'teal',
+  'slate',
+] as const;
+
+/** Mirrors the daemon's pick so the create dialog can preselect it. */
+export function nextFreeColor(workspaces: Workspace[]): string {
+  return (
+    WORKSPACE_COLORS.find((c) => !workspaces.some((w) => w.color === c)) ??
+    WORKSPACE_COLORS[workspaces.length % WORKSPACE_COLORS.length]
+  );
+}
+
+export function colorVar(color: string): string | undefined {
+  return color ? `var(--ws-${color})` : undefined;
+}

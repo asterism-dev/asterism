@@ -50,14 +50,15 @@ Workspaces group your projects, for example "Work" and "Personal". The narrow co
 sidebar has one tile per workspace, showing its label. The sidebar lists only the projects of the active
 workspace.
 
-- **Create:** click **+** at the bottom of the column and enter a name, a one- or two-character label and,
-  optionally, the folders for repositories and worktrees. Blank folders default to
-  `<home>/<name>/repos` and `<home>/<name>/worktrees`.
+- **Create:** click **+** at the bottom of the column and enter a name, a one- or two-character label, a
+  color and, optionally, the folders for repositories and worktrees. Blank folders default to
+  `<home>/<name>/repos` and `<home>/<name>/worktrees`. The color tints the tile and a thin strip along the
+  top of the window, so you can tell at a glance which workspace you're in.
 - **Switch:** click a tile. Each workspace remembers its last open task, which comes back when you return.
   The active workspace is stored per device.
 - **Waiting sessions:** an orange number on an inactive tile counts the sessions waiting for input in that
   workspace. ++cmd+j++ jumps to the next waiting session, switching workspace if needed.
-- **Rename:** right-click a tile and choose **Rename…**. This changes the name and label only.
+- **Edit:** right-click a tile and choose **Edit…** to change the name, label or color.
 - **Delete:** right-click a tile and choose **Delete…**, then pick the workspace that receives its projects.
   Nothing is removed from disk. The last remaining workspace cannot be deleted.
 

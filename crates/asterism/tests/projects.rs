@@ -761,6 +761,7 @@ fn work_workspace(env: &Env) -> Workspace {
             label: "W".into(),
             repos: Some(env.home.path().join("w/repos").display().to_string()),
             worktrees: Some(env.home.path().join("w/wt").display().to_string()),
+            color: None,
         })
         .unwrap()
 }

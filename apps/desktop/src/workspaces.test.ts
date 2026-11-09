@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { Project, Session, Task, Workspace } from './types';
-import { defaultFolders, resolveWorkspace, slugText, waitingByWorkspace } from './workspaces';
+import {
+  colorVar,
+  defaultFolders,
+  nextFreeColor,
+  resolveWorkspace,
+  slugText,
+  waitingByWorkspace,
+} from './workspaces';
 
 const ws_ = (id: number, position: number): Workspace => ({
   id,
@@ -9,6 +16,7 @@ const ws_ = (id: number, position: number): Workspace => ({
   position,
   repos: '',
   worktrees: '',
+  color: '',
 });
 
 describe('resolveWorkspace', () => {
@@ -54,5 +62,23 @@ describe('defaultFolders', () => {
       worktrees: '/home/a/side-gig/worktrees',
     });
     expect(defaultFolders('/home/a/repos', '!').repos).toBe('/home/a/workspace/repos');
+  });
+});
+
+describe('nextFreeColor', () => {
+  it('picks the first unused color and cycles when all are taken', () => {
+    expect(nextFreeColor([])).toBe('blue');
+    expect(nextFreeColor([{ ...ws_(1, 0), color: 'blue' }, ws_(2, 1)])).toBe('green');
+    const all = ['blue', 'green', 'amber', 'red', 'purple', 'pink', 'teal', 'slate'].map(
+      (color, i) => ({ ...ws_(i, i), color }),
+    );
+    expect(nextFreeColor(all)).toBe('blue');
+  });
+});
+
+describe('colorVar', () => {
+  it('maps a color to its theme token and none to undefined', () => {
+    expect(colorVar('teal')).toBe('var(--ws-teal)');
+    expect(colorVar('')).toBeUndefined();
   });
 });

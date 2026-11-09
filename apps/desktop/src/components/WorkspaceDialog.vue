@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api, errorMessage } from '../api';
 import { matchAction } from '../shortcuts';
 import { state, switchWorkspace } from '../store';
-import { defaultFolders } from '../workspaces';
+import { WORKSPACE_COLORS, colorVar, defaultFolders, nextFreeColor } from '../workspaces';
 import type { Workspace } from '../types';
 import Kbd from './Kbd.vue';
 
@@ -14,6 +14,7 @@ const name = ref(props.workspace?.name ?? '');
 const label = ref(props.workspace?.label ?? '');
 const repos = ref('');
 const worktrees = ref('');
+const color = ref(props.workspace?.color ?? nextFreeColor(state.workspaces));
 const others = computed(() => state.workspaces.filter((w) => w.id !== props.workspace?.id));
 const moveTo = ref<number | undefined>(others.value[0]?.id);
 const reposDefault = ref('');
@@ -24,9 +25,7 @@ const dialog = ref<HTMLElement>();
 const placeholders = computed(() => defaultFolders(reposDefault.value, name.value));
 const title = computed(
   () =>
-    ({ create: 'New workspace', rename: 'Rename workspace', delete: 'Delete workspace' })[
-      props.mode
-    ],
+    ({ create: 'New workspace', rename: 'Edit workspace', delete: 'Delete workspace' })[props.mode],
 );
 
 function onKey(e: KeyboardEvent) {
@@ -58,11 +57,17 @@ async function submit() {
       await api.createWorkspace(
         name.value.trim(),
         label.value.trim(),
+        color.value,
         repos.value.trim() || undefined,
         worktrees.value.trim() || undefined,
       );
     else if (props.mode === 'rename' && w)
-      await api.updateWorkspace({ ...w, name: name.value.trim(), label: label.value.trim() });
+      await api.updateWorkspace({
+        ...w,
+        name: name.value.trim(),
+        label: label.value.trim(),
+        color: color.value,
+      });
     else if (props.mode === 'delete' && w && moveTo.value !== undefined) {
       const wasActive = state.activeWorkspace === w.id;
       const selected = state.selectedTaskId;
@@ -113,6 +118,18 @@ async function submit() {
           >Label
           <input v-model="label" type="text" maxlength="2" placeholder="e.g. W" />
         </label>
+        <fieldset class="colors">
+          <legend>Color</legend>
+          <label
+            v-for="c in ['', ...WORKSPACE_COLORS]"
+            :key="c"
+            class="swatch"
+            :title="c || 'none'"
+          >
+            <input v-model="color" type="radio" name="color" :value="c" :aria-label="c || 'none'" />
+            <span :style="{ background: colorVar(c) }" :class="{ none: !c }" />
+          </label>
+        </fieldset>
         <template v-if="mode === 'create'">
           <label
             >Repositories folder
@@ -136,7 +153,7 @@ async function submit() {
             (mode === 'delete' && moveTo === undefined)
           "
         >
-          {{ mode === 'create' ? 'Create' : mode === 'rename' ? 'Rename' : 'Delete'
+          {{ mode === 'create' ? 'Create' : mode === 'rename' ? 'Save' : 'Delete'
           }}<Kbd v-if="!busy" action="confirm" />
         </button>
       </div>
@@ -147,5 +164,39 @@ async function submit() {
 <style scoped>
 button.danger {
   color: var(--danger);
+}
+.colors {
+  display: flex;
+  gap: 6px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.colors legend {
+  padding: 0 0 4px;
+}
+.swatch input {
+  position: absolute;
+  opacity: 0;
+}
+.swatch span {
+  display: block;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+.swatch span.none {
+  border-color: var(--border);
+  background: linear-gradient(135deg, transparent 45%, var(--muted) 45% 55%, transparent 55%);
+}
+.swatch input:checked + span {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+.swatch input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 </style>

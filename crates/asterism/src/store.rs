@@ -99,10 +99,11 @@ const MIGRATIONS: &[&str] = &[
      INSERT INTO workspaces (name, label, position) VALUES ('Default', 'D', 0);
      ALTER TABLE projects ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT 0;
      UPDATE projects SET workspace_id = (SELECT id FROM workspaces LIMIT 1);",
+    "ALTER TABLE workspaces ADD COLUMN color TEXT NOT NULL DEFAULT '';",
 ];
 
 const PROJECT_COLUMNS: &str = "id, name, path, created_at, default_base, workspace_id";
-const WORKSPACE_COLUMNS: &str = "id, name, label, position, repos, worktrees";
+const WORKSPACE_COLUMNS: &str = "id, name, label, position, repos, worktrees, color";
 const TASK_COLUMNS: &str =
     "id, project_id, title, slug, branch, base_branch, worktree_path, prompt, archived, created_at, last_activity_at, issue_source, issue_key, issue_url";
 const SESSION_COLUMNS: &str = "id, task_id, kind, status, agent_ref";
@@ -227,11 +228,12 @@ impl Store {
         label: &str,
         repos: &str,
         worktrees: &str,
+        color: &str,
     ) -> rusqlite::Result<Workspace> {
         self.conn.execute(
-            "INSERT INTO workspaces (name, label, position, repos, worktrees)
-             VALUES (?1, ?2, (SELECT COALESCE(MAX(position), -1) + 1 FROM workspaces), ?3, ?4)",
-            params![name, label, repos, worktrees],
+            "INSERT INTO workspaces (name, label, position, repos, worktrees, color)
+             VALUES (?1, ?2, (SELECT COALESCE(MAX(position), -1) + 1 FROM workspaces), ?3, ?4, ?5)",
+            params![name, label, repos, worktrees, color],
         )?;
         self.conn.query_row(
             &format!("SELECT {WORKSPACE_COLUMNS} FROM workspaces WHERE id = last_insert_rowid()"),
@@ -242,8 +244,9 @@ impl Store {
 
     pub fn update_workspace(&self, w: &Workspace) -> rusqlite::Result<()> {
         self.conn.execute(
-            "UPDATE workspaces SET name = ?2, label = ?3, repos = ?4, worktrees = ?5 WHERE id = ?1",
-            params![w.id, w.name, w.label, w.repos, w.worktrees],
+            "UPDATE workspaces SET name = ?2, label = ?3, repos = ?4, worktrees = ?5, color = ?6
+             WHERE id = ?1",
+            params![w.id, w.name, w.label, w.repos, w.worktrees, w.color],
         )?;
         Ok(())
     }
@@ -801,6 +804,7 @@ fn workspace_row(row: &Row) -> rusqlite::Result<Workspace> {
         position: row.get(3)?,
         repos: row.get(4)?,
         worktrees: row.get(5)?,
+        color: row.get(6)?,
     })
 }
 
@@ -1044,7 +1048,7 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let first = store.workspaces().unwrap()[0].id;
         let work = store
-            .add_workspace("Work", "W", "/w/repos", "/w/wt")
+            .add_workspace("Work", "W", "/w/repos", "/w/wt", "")
             .unwrap();
         assert_eq!(work.position, 1);
         let p = store.add_project("repo", "/src/repo").unwrap();
@@ -1068,7 +1072,7 @@ mod tests {
     fn deleting_a_workspace_moves_its_projects() {
         let store = Store::open_in_memory().unwrap();
         let first = store.workspaces().unwrap()[0].id;
-        let work = store.add_workspace("Work", "W", "", "").unwrap();
+        let work = store.add_workspace("Work", "W", "", "", "").unwrap();
         let p = store.add_project_in("repo", "/src/repo", work.id).unwrap();
         assert_eq!(store.delete_workspace(work.id, first).unwrap(), vec![p.id]);
         assert_eq!(store.project(p.id).unwrap().unwrap().workspace_id, first);
@@ -1078,12 +1082,13 @@ mod tests {
     #[test]
     fn workspace_update_roundtrips() {
         let store = Store::open_in_memory().unwrap();
-        let work = store.add_workspace("Work", "W", "", "").unwrap();
+        let work = store.add_workspace("Work", "W", "", "", "").unwrap();
         let updated = Workspace {
             name: "Job".into(),
             label: "J".into(),
             repos: "/j/r".into(),
             worktrees: "/j/w".into(),
+            color: "teal".into(),
             ..work
         };
         store.update_workspace(&updated).unwrap();

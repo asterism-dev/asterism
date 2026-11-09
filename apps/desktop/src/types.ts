@@ -37,6 +37,7 @@ export interface Workspace {
   position: number;
   repos: string;
   worktrees: string;
+  color: string;
 }
 export interface ProjectBranches {
   branches: string[];

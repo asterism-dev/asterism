@@ -4,7 +4,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import StatusIndicator from '../components/StatusIndicator.vue';
 import { groupProjects, loadSortMode } from '../projects';
 import { state, switchWorkspace, taskStatus, waitingSessions } from '../store';
-import { loadMoreOpen, saveMoreOpen, waitingByWorkspace } from '../workspaces';
+import { colorVar, loadMoreOpen, saveMoreOpen, waitingByWorkspace } from '../workspaces';
 import { go, route } from './useRoute';
 
 const query = ref('');
@@ -39,6 +39,7 @@ const selected = computed(() => (route.value.name === 'task' ? route.value.taskI
         :aria-pressed="state.activeWorkspace === w.id"
         @click="switchWorkspace(state, w.id)"
       >
+        <span v-if="w.color" class="dot" :style="{ background: colorVar(w.color) }" />
         {{ w.name }}
         <span v-if="state.activeWorkspace !== w.id && waitingCounts[w.id]" class="badge">
           {{ waitingCounts[w.id] }}<span class="sr-only"> waiting</span>
@@ -149,6 +150,13 @@ h2 {
   font-size: 13px;
   text-transform: uppercase;
   opacity: 0.7;
+}
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
 }
 .more {
   width: 100%;

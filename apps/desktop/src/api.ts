@@ -154,8 +154,13 @@ export const api = {
   addProject: (path: string, workspaceId?: number) =>
     call<Project>('project.add', { path, workspace_id: workspaceId ?? null }),
   workspaces: () => call<Workspace[]>('workspace.list'),
-  createWorkspace: (name: string, label: string, repos?: string, worktrees?: string) =>
-    call<Workspace>('workspace.create', { name, label, repos, worktrees }),
+  createWorkspace: (
+    name: string,
+    label: string,
+    color: string,
+    repos?: string,
+    worktrees?: string,
+  ) => call<Workspace>('workspace.create', { name, label, color, repos, worktrees }),
   updateWorkspace: (w: Workspace) =>
     call<Workspace>('workspace.update', {
       workspace_id: w.id,
@@ -163,6 +168,7 @@ export const api = {
       label: w.label,
       repos: w.repos,
       worktrees: w.worktrees,
+      color: w.color,
     }),
   deleteWorkspace: (id: number, moveTo: number) =>
     call<null>('workspace.delete', { workspace_id: id, move_to: moveTo }),
