@@ -52,6 +52,7 @@ import type {
   TaskDeleteResult,
   TaskFileResult,
   TaskSourceInfo,
+  Workspace,
   Worktree,
   WorktreeSize,
 } from './types';
@@ -150,7 +151,31 @@ export const api = {
   appPid: () => command<number>('app_pid'),
   quit: (stopDaemon: boolean) => command<void>('quit', { stopDaemon }),
   projects: () => call<Project[]>('project.list'),
-  addProject: (path: string) => call<Project>('project.add', { path }),
+  addProject: (path: string, workspaceId?: number) =>
+    call<Project>('project.add', { path, workspace_id: workspaceId ?? null }),
+  workspaces: () => call<Workspace[]>('workspace.list'),
+  createWorkspace: (
+    name: string,
+    label: string,
+    color: string,
+    repos?: string,
+    worktrees?: string,
+  ) => call<Workspace>('workspace.create', { name, label, color, repos, worktrees }),
+  updateWorkspace: (w: Workspace) =>
+    call<Workspace>('workspace.update', {
+      workspace_id: w.id,
+      name: w.name,
+      label: w.label,
+      repos: w.repos,
+      worktrees: w.worktrees,
+      color: w.color,
+    }),
+  deleteWorkspace: (id: number, moveTo: number) =>
+    call<null>('workspace.delete', { workspace_id: id, move_to: moveTo }),
+  moveProject: (projectId: number, workspaceId: number) =>
+    call<Project>('project.move', { project_id: projectId, workspace_id: workspaceId }),
+  cloneCopy: (projectId: number, workspaceId: number) =>
+    call<Project>('project.clone_copy', { project_id: projectId, workspace_id: workspaceId }),
   removeProject: (projectId: number) => call<null>('project.remove', { project_id: projectId }),
   tasks: () => call<Task[]>('task.list', { include_archived: false }),
   allTasks: () => call<Task[]>('task.list', { include_archived: true }),
@@ -287,8 +312,12 @@ export const api = {
     call<null>('remote.device_remove', { device_id: deviceId }),
   forgeStatus: (forge: string) => call<ForgeStatus>('forge.status', { forge }),
   forgeRepos: (forge: string, owner: string) => call<ForgeRepo[]>('forge.repos', { forge, owner }),
-  cloneProject: (source: string, forge?: string) =>
-    call<Project>('project.clone', { source, forge }),
-  createProject: (name: string, remote: RemoteTarget | null) =>
-    call<ProjectCreateResult>('project.create', { name, remote }),
+  cloneProject: (source: string, forge?: string, workspaceId?: number) =>
+    call<Project>('project.clone', { source, forge, workspace_id: workspaceId ?? null }),
+  createProject: (name: string, remote: RemoteTarget | null, workspaceId?: number) =>
+    call<ProjectCreateResult>('project.create', {
+      name,
+      remote,
+      workspace_id: workspaceId ?? null,
+    }),
 };

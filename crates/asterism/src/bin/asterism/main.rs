@@ -464,6 +464,7 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
                     method::PROJECT_ADD,
                     ProjectAddParams {
                         path: path.display().to_string(),
+                        workspace_id: None,
                     },
                 )
                 .await?;
@@ -1210,6 +1211,7 @@ async fn resolve_project(client: &Client, project: Option<String>) -> Result<i64
             method::PROJECT_ADD,
             ProjectAddParams {
                 path: cwd.display().to_string(),
+                workspace_id: None,
             },
         )
         .await?;

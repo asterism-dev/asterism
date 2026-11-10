@@ -6,6 +6,7 @@ import { state, toast } from '../store';
 import Kbd from './Kbd.vue';
 import type { ForgeInfo, ForgeStatus, Visibility } from '../types';
 
+const props = defineProps<{ workspaceId: number | null }>();
 const emit = defineEmits<{ close: []; busy: [boolean] }>();
 
 const name = ref('');
@@ -15,7 +16,10 @@ const forge = ref('');
 const status = ref<ForgeStatus | null>(null);
 const owner = ref('');
 const visibility = ref<Visibility>('private');
-const reposRoot = ref('');
+const defaultRepos = ref('');
+const reposRoot = computed(
+  () => state.workspaces.find((w) => w.id === props.workspaceId)?.repos || defaultRepos.value,
+);
 const error = ref<string | null>(null);
 const busy = ref(false);
 const input = ref<HTMLInputElement>();
@@ -43,7 +47,7 @@ onMounted(async () => {
   try {
     const [list, config] = await Promise.all([api.forges(), api.nodeConfig()]);
     forges.value = list;
-    reposRoot.value = config.config.paths.repos;
+    defaultRepos.value = config.config.paths.repos;
     forge.value = list[0]?.id ?? '';
   } catch (e) {
     error.value = errorMessage(e);
@@ -77,7 +81,7 @@ async function create() {
     const remote = onRemote.value
       ? { forge: forge.value, owner: owner.value, visibility: visibility.value }
       : null;
-    const result = await api.createProject(name.value, remote);
+    const result = await api.createProject(name.value, remote, props.workspaceId ?? undefined);
     delete state.collapsed[result.project.id];
     if (result.remote_error)
       toast(`Created locally; ${forgeName.value} failed: ${result.remote_error}`);

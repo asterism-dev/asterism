@@ -2,7 +2,7 @@ use std::path::Path;
 
 use asterism_proto::types::{
     DiffSide, IssueRef, NotificationEntry, Project, Session, SessionKind, SessionStatus, Task,
-    NOTIFICATION_KIND_WAITING,
+    Workspace, NOTIFICATION_KIND_WAITING,
 };
 use rusqlite::types::Type;
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -88,9 +88,22 @@ const MIGRATIONS: &[&str] = &[
      );
      CREATE INDEX notifications_session ON notifications(session_id);
      CREATE INDEX notifications_task ON notifications(task_id);",
+    "CREATE TABLE workspaces (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        label TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        repos TEXT NOT NULL DEFAULT '',
+        worktrees TEXT NOT NULL DEFAULT ''
+     );
+     INSERT INTO workspaces (name, label, position) VALUES ('Default', 'D', 0);
+     ALTER TABLE projects ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT 0;
+     UPDATE projects SET workspace_id = (SELECT id FROM workspaces LIMIT 1);",
+    "ALTER TABLE workspaces ADD COLUMN color TEXT NOT NULL DEFAULT '';",
 ];
 
-const PROJECT_COLUMNS: &str = "id, name, path, created_at, default_base";
+const PROJECT_COLUMNS: &str = "id, name, path, created_at, default_base, workspace_id";
+const WORKSPACE_COLUMNS: &str = "id, name, label, position, repos, worktrees, color";
 const TASK_COLUMNS: &str =
     "id, project_id, title, slug, branch, base_branch, worktree_path, prompt, archived, created_at, last_activity_at, issue_source, issue_key, issue_url";
 const SESSION_COLUMNS: &str = "id, task_id, kind, status, agent_ref";
@@ -157,19 +170,114 @@ impl Store {
             tx.pragma_update(None, "user_version", i + 1)?;
         }
         tx.commit()?;
+        conn.execute(
+            "UPDATE projects SET workspace_id = (SELECT id FROM workspaces ORDER BY position, id LIMIT 1)
+             WHERE workspace_id NOT IN (SELECT id FROM workspaces)",
+            [],
+        )?;
         Ok(Self { conn })
     }
 
     pub fn add_project(&self, name: &str, path: &str) -> rusqlite::Result<Project> {
+        let first: i64 = self.conn.query_row(
+            "SELECT id FROM workspaces ORDER BY position, id LIMIT 1",
+            [],
+            |row| row.get(0),
+        )?;
+        self.add_project_in(name, path, first)
+    }
+
+    pub fn add_project_in(
+        &self,
+        name: &str,
+        path: &str,
+        workspace_id: i64,
+    ) -> rusqlite::Result<Project> {
         self.conn.execute(
-            "INSERT OR IGNORE INTO projects (name, path, created_at) VALUES (?1, ?2, unixepoch())",
-            params![name, path],
+            "INSERT OR IGNORE INTO projects (name, path, created_at, workspace_id) VALUES (?1, ?2, unixepoch(), ?3)",
+            params![name, path, workspace_id],
         )?;
         self.conn.query_row(
             &format!("SELECT {PROJECT_COLUMNS} FROM projects WHERE path = ?1"),
             [path],
             project_row,
         )
+    }
+
+    pub fn workspaces(&self) -> rusqlite::Result<Vec<Workspace>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {WORKSPACE_COLUMNS} FROM workspaces ORDER BY position, id"
+        ))?;
+        let rows = stmt.query_map([], workspace_row)?;
+        rows.collect()
+    }
+
+    pub fn workspace(&self, id: i64) -> rusqlite::Result<Option<Workspace>> {
+        self.conn
+            .query_row(
+                &format!("SELECT {WORKSPACE_COLUMNS} FROM workspaces WHERE id = ?1"),
+                [id],
+                workspace_row,
+            )
+            .optional()
+    }
+
+    pub fn add_workspace(
+        &self,
+        name: &str,
+        label: &str,
+        repos: &str,
+        worktrees: &str,
+        color: &str,
+    ) -> rusqlite::Result<Workspace> {
+        self.conn.execute(
+            "INSERT INTO workspaces (name, label, position, repos, worktrees, color)
+             VALUES (?1, ?2, (SELECT COALESCE(MAX(position), -1) + 1 FROM workspaces), ?3, ?4, ?5)",
+            params![name, label, repos, worktrees, color],
+        )?;
+        self.conn.query_row(
+            &format!("SELECT {WORKSPACE_COLUMNS} FROM workspaces WHERE id = last_insert_rowid()"),
+            [],
+            workspace_row,
+        )
+    }
+
+    pub fn update_workspace(&self, w: &Workspace) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE workspaces SET name = ?2, label = ?3, repos = ?4, worktrees = ?5, color = ?6
+             WHERE id = ?1",
+            params![w.id, w.name, w.label, w.repos, w.worktrees, w.color],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_workspace(&self, id: i64, move_to: i64) -> rusqlite::Result<Vec<i64>> {
+        let tx = self.conn.unchecked_transaction()?;
+        let moved = {
+            let mut stmt =
+                tx.prepare("SELECT id FROM projects WHERE workspace_id = ?1 ORDER BY id")?;
+            let rows = stmt.query_map([id], |row| row.get(0))?;
+            rows.collect::<rusqlite::Result<Vec<i64>>>()?
+        };
+        tx.execute(
+            "UPDATE projects SET workspace_id = ?2 WHERE workspace_id = ?1",
+            params![id, move_to],
+        )?;
+        tx.execute("DELETE FROM workspaces WHERE id = ?1", [id])?;
+        tx.commit()?;
+        Ok(moved)
+    }
+
+    pub fn set_project_workspace(
+        &self,
+        project_id: i64,
+        workspace_id: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE projects SET workspace_id = ?2 WHERE id = ?1",
+            params![project_id, workspace_id],
+        )?;
+        Ok(())
     }
 
     pub fn projects(&self) -> rusqlite::Result<Vec<Project>> {
@@ -684,6 +792,19 @@ fn project_row(row: &Row) -> rusqlite::Result<Project> {
         path: row.get(2)?,
         created_at: row.get(3)?,
         default_base: row.get(4)?,
+        workspace_id: row.get(5)?,
+    })
+}
+
+fn workspace_row(row: &Row) -> rusqlite::Result<Workspace> {
+    Ok(Workspace {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        label: row.get(2)?,
+        position: row.get(3)?,
+        repos: row.get(4)?,
+        worktrees: row.get(5)?,
+        color: row.get(6)?,
     })
 }
 
@@ -878,6 +999,103 @@ mod tests {
         };
         store.set_task_issue(1, &issue).unwrap();
         assert_eq!(store.task(1).unwrap().unwrap().issue, Some(issue));
+    }
+
+    #[test]
+    fn migration_puts_existing_projects_into_default_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.sqlite");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            let before = MIGRATIONS
+                .iter()
+                .position(|m| m.contains("CREATE TABLE workspaces"))
+                .unwrap();
+            for m in &MIGRATIONS[..before] {
+                conn.execute_batch(m).unwrap();
+            }
+            conn.pragma_update(None, "user_version", before).unwrap();
+            conn.execute("INSERT INTO projects (name, path) VALUES ('p', '/p')", [])
+                .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        let ws = store.workspaces().unwrap();
+        assert_eq!(ws.len(), 1);
+        assert_eq!(
+            (ws[0].name.as_str(), ws[0].label.as_str()),
+            ("Default", "D")
+        );
+        assert_eq!((ws[0].repos.as_str(), ws[0].worktrees.as_str()), ("", ""));
+        assert_eq!(store.project(1).unwrap().unwrap().workspace_id, ws[0].id);
+    }
+
+    #[test]
+    fn open_repoints_orphaned_projects_to_the_first_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.sqlite");
+        let first = Store::open(&path).unwrap().workspaces().unwrap()[0].id;
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute(
+                "INSERT INTO projects (name, path, workspace_id) VALUES ('p', '/p', 0)",
+                [],
+            )
+            .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.project(1).unwrap().unwrap().workspace_id, first);
+    }
+
+    #[test]
+    fn projects_land_in_a_workspace_and_can_move() {
+        let store = Store::open_in_memory().unwrap();
+        let first = store.workspaces().unwrap()[0].id;
+        let work = store
+            .add_workspace("Work", "W", "/w/repos", "/w/wt", "")
+            .unwrap();
+        assert_eq!(work.position, 1);
+        let p = store.add_project("repo", "/src/repo").unwrap();
+        assert_eq!(p.workspace_id, first);
+        let q = store
+            .add_project_in("other", "/src/other", work.id)
+            .unwrap();
+        assert_eq!(q.workspace_id, work.id);
+        assert_eq!(
+            store
+                .add_project_in("repo", "/src/repo", work.id)
+                .unwrap()
+                .workspace_id,
+            first
+        );
+        store.set_project_workspace(p.id, work.id).unwrap();
+        assert_eq!(store.project(p.id).unwrap().unwrap().workspace_id, work.id);
+    }
+
+    #[test]
+    fn deleting_a_workspace_moves_its_projects() {
+        let store = Store::open_in_memory().unwrap();
+        let first = store.workspaces().unwrap()[0].id;
+        let work = store.add_workspace("Work", "W", "", "", "").unwrap();
+        let p = store.add_project_in("repo", "/src/repo", work.id).unwrap();
+        assert_eq!(store.delete_workspace(work.id, first).unwrap(), vec![p.id]);
+        assert_eq!(store.project(p.id).unwrap().unwrap().workspace_id, first);
+        assert_eq!(store.workspace(work.id).unwrap(), None);
+    }
+
+    #[test]
+    fn workspace_update_roundtrips() {
+        let store = Store::open_in_memory().unwrap();
+        let work = store.add_workspace("Work", "W", "", "", "").unwrap();
+        let updated = Workspace {
+            name: "Job".into(),
+            label: "J".into(),
+            repos: "/j/r".into(),
+            worktrees: "/j/w".into(),
+            color: "teal".into(),
+            ..work
+        };
+        store.update_workspace(&updated).unwrap();
+        assert_eq!(store.workspace(updated.id).unwrap(), Some(updated));
     }
 
     #[test]

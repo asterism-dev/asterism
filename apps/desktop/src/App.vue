@@ -32,12 +32,17 @@ import {
   toast,
 } from './store';
 import { forwardEvent, initPluginFrames } from './pluginFrames';
+import { workspaceProjects } from './projects';
+import { colorVar } from './workspaces';
 import { matchAction, type GlobalActionId } from './shortcuts';
 import { leaveSettings } from './settingsGuard';
 import { startUpdater } from './updater';
 import type { NodeEvent, NodeStatus, Session } from './types';
 
 const unlisteners: UnlistenFn[] = [];
+const accent = computed(() =>
+  colorVar(state.workspaces.find((w) => w.id === state.activeWorkspace)?.color ?? ''),
+);
 const selectedTask = computed(() => state.tasks.find((t) => t.id === state.selectedTaskId) ?? null);
 const quitRunning = ref<number | null>(null);
 const columns = computed(() =>
@@ -71,7 +76,9 @@ function onStatus(status: NodeStatus) {
 
 const actions: Record<GlobalActionId, () => void> = {
   newTask: () => {
-    const projectId = selectedTask.value?.project_id ?? state.projects[0]?.id;
+    const projectId =
+      selectedTask.value?.project_id ??
+      workspaceProjects(state.projects, state.activeWorkspace)[0]?.id;
     if (projectId !== undefined) state.newTaskFor = projectId;
   },
   // A dialog that is already open may be mid-clone; switching its tab would orphan that work.
@@ -149,6 +156,7 @@ onUnmounted(() => {
 
 <template>
   <div class="app" @click="state.menu = null">
+    <div v-if="accent" class="workspace-accent" :style="{ background: accent }" />
     <div v-if="state.node.state === 'update_available'" class="banner">
       <template v-if="state.node.hello.daemon_version === state.node.bundled_version">
         Daemon is from another build ({{ state.node.hello.daemon_build || 'unknown' }} →

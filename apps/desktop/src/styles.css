@@ -18,6 +18,14 @@
   --idle: #8a8f98;
   --waiting: #f59e0b;
   --exited: #d0d2d8;
+  --ws-blue: #3b82f6;
+  --ws-green: #22a35a;
+  --ws-amber: #d99a06;
+  --ws-red: #dc4a4a;
+  --ws-purple: #8b5cf6;
+  --ws-pink: #e0559b;
+  --ws-teal: #14a3a3;
+  --ws-slate: #64748b;
   font:
     13px/1.4 -apple-system,
     BlinkMacSystemFont,
@@ -36,6 +44,14 @@
   --border: #2c2f3a;
   --select: #2a2d38;
   --exited: #3a3d48;
+  --ws-blue: #60a5fa;
+  --ws-green: #4ade80;
+  --ws-amber: #fbbf24;
+  --ws-red: #f87171;
+  --ws-purple: #a78bfa;
+  --ws-pink: #f472b6;
+  --ws-teal: #2dd4bf;
+  --ws-slate: #94a3b8;
   --hl-keyword: #c678dd;
   --hl-string: #98c379;
   --hl-comment: #7f848e;
@@ -143,6 +159,10 @@ select {
   display: flex;
   flex-direction: column;
   height: 100%;
+}
+.workspace-accent {
+  flex: none;
+  height: 3px;
 }
 .workbench {
   flex: 1;

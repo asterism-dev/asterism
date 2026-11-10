@@ -35,6 +35,11 @@ const placeholder = randomSlug();
 const suffix = randomSuffix();
 const agents = computed(() => state.agents.filter((a) => a.available));
 const projectId = ref(props.projectId);
+const projectOptions = computed(() =>
+  state.projects.filter(
+    (p) => p.id === props.projectId || p.workspace_id === state.activeWorkspace,
+  ),
+);
 const title = ref('');
 const prompt = ref('');
 const agent = ref(agents.value[0]?.name ?? '');
@@ -252,7 +257,7 @@ async function submit() {
         <h2>
           Create Task in
           <select v-model="projectId" class="project" aria-label="Project">
-            <option v-for="p in state.projects" :key="p.id" :value="p.id">{{ p.name }}</option>
+            <option v-for="p in projectOptions" :key="p.id" :value="p.id">{{ p.name }}</option>
           </select>
         </h2>
         <button type="button" class="icon" aria-label="Close" @click="emit('close')">

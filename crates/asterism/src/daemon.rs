@@ -996,11 +996,19 @@ impl Daemon {
     }
 
     pub fn add_project(&self, path: &str) -> Result<Project> {
+        self.add_project_in(path, None)
+    }
+
+    pub fn add_project_in(&self, path: &str, workspace_id: Option<i64>) -> Result<Project> {
         let root = git::toplevel(Path::new(path))?;
         let name = root
             .file_name()
             .map_or_else(|| "project".into(), |n| n.to_string_lossy().into_owned());
-        let project = self.store().add_project(&name, &root.to_string_lossy())?;
+        let project = {
+            let store = self.store();
+            let workspace = Self::resolve_workspace_in(&store, workspace_id)?;
+            store.add_project_in(&name, &root.to_string_lossy(), workspace.id)?
+        };
         self.emit(Event::ProjectChanged(project.clone()));
         Ok(project)
     }
@@ -1110,6 +1118,175 @@ impl Daemon {
         };
         self.emit(Event::ProjectChanged(project.clone()));
         Ok(project)
+    }
+
+    fn resolve_workspace(&self, id: Option<i64>) -> Result<Workspace> {
+        Self::resolve_workspace_in(&self.store(), id)
+    }
+
+    fn resolve_workspace_in(store: &Store, id: Option<i64>) -> Result<Workspace> {
+        match id {
+            Some(id) => store
+                .workspace(id)?
+                .ok_or_else(|| not_found("workspace", id)),
+            None => store
+                .workspaces()?
+                .into_iter()
+                .next()
+                .ok_or_else(|| Error::new(ErrorKind::Internal, "no workspaces")),
+        }
+    }
+
+    pub fn workspaces(&self) -> Result<Vec<Workspace>> {
+        Ok(self.store().workspaces()?)
+    }
+
+    pub fn workspace_dirs(&self, w: &Workspace) -> Result<(PathBuf, PathBuf)> {
+        let resolve = |value: &str, global: fn(&Paths) -> Result<PathBuf>| {
+            if value.is_empty() {
+                global(&self.paths)
+            } else {
+                node_settings::expand_home(value)
+            }
+        };
+        Ok((
+            resolve(&w.repos, node_settings::repos_dir)?,
+            resolve(&w.worktrees, node_settings::worktrees_dir)?,
+        ))
+    }
+
+    pub fn create_workspace(&self, p: WorkspaceCreateParams) -> Result<Workspace> {
+        let (name, label) = validated_workspace_text(&p.name, &p.label)?;
+        let slug = match slug_text(&name) {
+            s if s.is_empty() => "workspace".to_string(),
+            s => s,
+        };
+        let default_dir = |leaf: &str| self.paths.home.join(&slug).join(leaf).display().to_string();
+        let folder = |given: Option<String>, leaf: &str| match given.map(|g| g.trim().to_string()) {
+            Some(g) if !g.is_empty() => g,
+            _ => default_dir(leaf),
+        };
+        let repos = folder(p.repos, "repos");
+        let worktrees = folder(p.worktrees, "worktrees");
+        let workspace = {
+            let store = self.store();
+            let existing = store.workspaces()?;
+            let color = match p.color {
+                Some(c) => validated_color(&c)?,
+                None => next_free_color(&existing),
+            };
+            let candidate = Workspace {
+                id: 0,
+                name: name.clone(),
+                label: label.clone(),
+                position: 0,
+                repos: repos.clone(),
+                worktrees: worktrees.clone(),
+                color: color.clone(),
+            };
+            self.check_workspace_dirs(&existing, &candidate)?;
+            store.add_workspace(&name, &label, &repos, &worktrees, &color)?
+        };
+        self.emit(Event::WorkspaceChanged(workspace.clone()));
+        Ok(workspace)
+    }
+
+    pub fn update_workspace(&self, p: WorkspaceUpdateParams) -> Result<Workspace> {
+        let (name, label) = validated_workspace_text(&p.name, &p.label)?;
+        let workspace = {
+            let store = self.store();
+            let current = store
+                .workspace(p.workspace_id)?
+                .ok_or_else(|| not_found("workspace", p.workspace_id))?;
+            let color = match p.color {
+                Some(c) => validated_color(&c)?,
+                None => current.color,
+            };
+            let updated = Workspace {
+                id: p.workspace_id,
+                name,
+                label,
+                position: 0,
+                repos: p.repos.trim().to_string(),
+                worktrees: p.worktrees.trim().to_string(),
+                color,
+            };
+            self.check_workspace_dirs(&store.workspaces()?, &updated)?;
+            store.update_workspace(&updated)?;
+            store
+                .workspace(p.workspace_id)?
+                .ok_or_else(|| not_found("workspace", p.workspace_id))?
+        };
+        self.emit(Event::WorkspaceChanged(workspace.clone()));
+        Ok(workspace)
+    }
+
+    pub fn delete_workspace(&self, p: WorkspaceDeleteParams) -> Result<()> {
+        let projects = {
+            let store = self.store();
+            let all = store.workspaces()?;
+            if !all.iter().any(|w| w.id == p.workspace_id) {
+                return Err(not_found("workspace", p.workspace_id));
+            }
+            if all.len() == 1 {
+                return Err(invalid_params("the last workspace cannot be deleted"));
+            }
+            if p.move_to == p.workspace_id || !all.iter().any(|w| w.id == p.move_to) {
+                return Err(invalid_params("move_to must be another existing workspace"));
+            }
+            store
+                .delete_workspace(p.workspace_id, p.move_to)?
+                .into_iter()
+                .filter_map(|id| store.project(id).transpose())
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for project in projects {
+            self.emit(Event::ProjectChanged(project));
+        }
+        self.emit(Event::WorkspaceRemoved {
+            workspace_id: p.workspace_id,
+        });
+        Ok(())
+    }
+
+    pub fn move_project(&self, p: ProjectMoveParams) -> Result<Project> {
+        let project = {
+            let store = self.store();
+            if store.project(p.project_id)?.is_none() {
+                return Err(not_found("project", p.project_id));
+            }
+            if store.workspace(p.workspace_id)?.is_none() {
+                return Err(not_found("workspace", p.workspace_id));
+            }
+            store.set_project_workspace(p.project_id, p.workspace_id)?;
+            store
+                .project(p.project_id)?
+                .ok_or_else(|| not_found("project", p.project_id))?
+        };
+        self.emit(Event::ProjectChanged(project.clone()));
+        Ok(project)
+    }
+
+    fn check_workspace_dirs(&self, existing: &[Workspace], candidate: &Workspace) -> Result<()> {
+        let (repos, worktrees) = self.workspace_dirs(candidate)?;
+        if repos == worktrees {
+            return Err(invalid_params(
+                "repositories and worktrees folders must differ",
+            ));
+        }
+        for other in existing.iter().filter(|w| w.id != candidate.id) {
+            let (other_repos, other_worktrees) = self.workspace_dirs(other)?;
+            let clash = [&repos, &worktrees]
+                .iter()
+                .any(|d| **d == other_repos || **d == other_worktrees);
+            if clash {
+                return Err(invalid_params(format!(
+                    "folders are already used by workspace {:?}",
+                    other.name
+                )));
+            }
+        }
+        Ok(())
     }
 
     pub fn node_config(&self) -> Result<NodeConfigInfo> {
@@ -1343,10 +1520,8 @@ impl Daemon {
         Ok(id)
     }
 
-    fn new_repo_dir(&self, owner: &str, name: &str) -> Result<PathBuf> {
-        let dir = node_settings::repos_dir(&self.paths)?
-            .join(owner)
-            .join(name);
+    fn new_repo_dir(&self, workspace: &Workspace, owner: &str, name: &str) -> Result<PathBuf> {
+        let dir = self.workspace_dirs(workspace)?.0.join(owner).join(name);
         if let Some(parent) = dir.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -1365,9 +1540,11 @@ impl Daemon {
         self: &Arc<Self>,
         source: &str,
         forge: Option<&str>,
+        workspace_id: Option<i64>,
     ) -> Result<Project> {
+        let workspace = self.resolve_workspace(workspace_id)?;
         let source = repo_source::parse_source(source)?;
-        let target = self.new_repo_dir(&source.owner, &source.repo)?;
+        let target = self.new_repo_dir(&workspace, &source.owner, &source.repo)?;
         let cloned = match &source.url {
             Some(url) => self.git_clone(url.clone(), target.clone()).await,
             None => {
@@ -1380,7 +1557,28 @@ impl Daemon {
             let _ = std::fs::remove_dir_all(&target);
             return Err(e);
         }
-        self.add_project(&target.to_string_lossy())
+        self.add_project_in(&target.to_string_lossy(), Some(workspace.id))
+    }
+
+    pub async fn clone_copy(self: &Arc<Self>, p: ProjectCloneCopyParams) -> Result<Project> {
+        let project = self
+            .store()
+            .project(p.project_id)?
+            .ok_or_else(|| not_found("project", p.project_id))?;
+        if project.workspace_id == p.workspace_id {
+            return Err(invalid_params(format!(
+                "{} is already in that workspace",
+                project.name
+            )));
+        }
+        let origin = git::remote_url(Path::new(&project.path), "origin").ok_or_else(|| {
+            invalid_params(format!(
+                "{} has no origin remote to clone from",
+                project.name
+            ))
+        })?;
+        self.clone_project(&origin, None, Some(p.workspace_id))
+            .await
     }
 
     async fn git_clone(&self, url: String, target: PathBuf) -> Result<()> {
@@ -1433,6 +1631,7 @@ impl Daemon {
         self: &Arc<Self>,
         params: &ProjectCreateParams,
     ) -> Result<ProjectCreateResult> {
+        let workspace = self.resolve_workspace(params.workspace_id)?;
         repo_source::check_name("repository name", &params.name)?;
         let owner = match &params.remote {
             Some(target) => {
@@ -1454,7 +1653,7 @@ impl Daemon {
             }
             None => LOCAL_OWNER.to_string(),
         };
-        let dir = self.new_repo_dir(&owner, &params.name)?;
+        let dir = self.new_repo_dir(&workspace, &owner, &params.name)?;
         let (init_dir, name, env) = (
             dir.clone(),
             params.name.clone(),
@@ -1468,7 +1667,7 @@ impl Daemon {
             let _ = std::fs::remove_dir_all(&dir);
             return Err(e);
         }
-        let project = self.add_project(&dir.to_string_lossy())?;
+        let project = self.add_project_in(&dir.to_string_lossy(), Some(workspace.id))?;
         let remote_error = match &params.remote {
             Some(target) => {
                 let create = CreateRemoteParams {
@@ -1739,7 +1938,13 @@ impl Daemon {
     fn worktree_root(&self, repo: &Path, project: &Project) -> Result<PathBuf> {
         let origin = git::remote_url(repo, "origin");
         let (owner, repo_name) = node_settings::layout_owner_repo(origin.as_deref(), &project.name);
-        Ok(node_settings::worktrees_dir(&self.paths)?
+        let workspace = self
+            .store()
+            .workspace(project.workspace_id)?
+            .ok_or_else(|| not_found("workspace", project.workspace_id))?;
+        Ok(self
+            .workspace_dirs(&workspace)?
+            .1
             .join(owner)
             .join(repo_name))
     }
@@ -2207,7 +2412,9 @@ impl Daemon {
     }
 
     fn tidy_worktree_parents(&self, project_id: i64, repo: &Path, worktree: &Path) {
-        if let Ok(Some(project)) = self.store().project(project_id) {
+        // Drop the store guard before worktree_root re-locks; an if-let scrutinee would hold it.
+        let project = self.store().project(project_id);
+        if let Ok(Some(project)) = project {
             if let Ok(root) = self.worktree_root(repo, &project) {
                 remove_empty_parents(worktree, &root);
             }
@@ -3167,6 +3374,39 @@ async fn write_blocking(pty: &Arc<Pty>, data: Vec<u8>) -> Result<()> {
         .await
         .map_err(|e| Error::new(ErrorKind::Internal, format!("pty write task failed: {e}")))??;
     Ok(())
+}
+
+fn invalid_params(message: impl Into<String>) -> Error {
+    Error::new(ErrorKind::InvalidParams, message)
+}
+
+fn validated_workspace_text(name: &str, label: &str) -> Result<(String, String)> {
+    let (name, label) = (name.trim(), label.trim());
+    if name.is_empty() {
+        return Err(invalid_params("workspace name must not be empty"));
+    }
+    if !(1..=2).contains(&label.chars().count()) {
+        return Err(invalid_params("workspace label must be 1-2 characters"));
+    }
+    Ok((name.to_string(), label.to_string()))
+}
+
+fn validated_color(color: &str) -> Result<String> {
+    let color = color.trim();
+    if color.is_empty() || WORKSPACE_COLORS.contains(&color) {
+        Ok(color.to_string())
+    } else {
+        Err(invalid_params(format!("unknown workspace color {color}")))
+    }
+}
+
+/// Cycles through the palette once every color is taken.
+fn next_free_color(existing: &[Workspace]) -> String {
+    WORKSPACE_COLORS
+        .iter()
+        .find(|c| !existing.iter().any(|w| w.color == **c))
+        .unwrap_or(&WORKSPACE_COLORS[existing.len() % WORKSPACE_COLORS.len()])
+        .to_string()
 }
 
 fn not_found(what: &str, id: i64) -> Error {

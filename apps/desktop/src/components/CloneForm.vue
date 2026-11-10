@@ -6,6 +6,7 @@ import { state, toast } from '../store';
 import Kbd from './Kbd.vue';
 import type { ForgeInfo, ForgeRepo, ForgeStatus } from '../types';
 
+const props = defineProps<{ workspaceId: number | null }>();
 const emit = defineEmits<{ close: []; busy: [boolean] }>();
 
 const source = ref('');
@@ -15,7 +16,10 @@ const status = ref<ForgeStatus | null>(null);
 const owner = ref('');
 const repos = ref<ForgeRepo[]>([]);
 const filter = ref('');
-const reposRoot = ref('');
+const defaultRepos = ref('');
+const reposRoot = computed(
+  () => state.workspaces.find((w) => w.id === props.workspaceId)?.repos || defaultRepos.value,
+);
 const error = ref<string | null>(null);
 const busy = ref(false);
 const input = ref<HTMLInputElement>();
@@ -73,7 +77,7 @@ onMounted(async () => {
   try {
     const [list, config] = await Promise.all([api.forges(), api.nodeConfig()]);
     forges.value = list;
-    reposRoot.value = config.config.paths.repos;
+    defaultRepos.value = config.config.paths.repos;
     forge.value = list[0]?.id ?? '';
   } catch (e) {
     error.value = errorMessage(e);
@@ -91,7 +95,11 @@ async function clone() {
   busy.value = true;
   error.value = null;
   try {
-    const project = await api.cloneProject(source.value.trim(), forge.value || undefined);
+    const project = await api.cloneProject(
+      source.value.trim(),
+      forge.value || undefined,
+      props.workspaceId ?? undefined,
+    );
     delete state.collapsed[project.id];
     toast(`Cloned ${parsed.value.owner}/${parsed.value.repo}`);
     emit('close');

@@ -83,6 +83,30 @@ export function filterTasks(project: Project, tasks: Task[], query: string): Tas
   return hits.length ? hits : null;
 }
 
+export type ProjectGroup = { project: Project; tasks: Task[] };
+
+export const workspaceProjects = (projects: Project[], workspaceId: number | null): Project[] =>
+  projects.filter((p) => p.workspace_id === workspaceId);
+
+export function groupProjects(
+  projects: Project[],
+  tasks: Task[],
+  workspaceId: number | null,
+  query: string,
+  mode: SortMode,
+): { active: ProjectGroup[]; idle: ProjectGroup[] } {
+  const searching = query.trim() !== '';
+  const active: ProjectGroup[] = [];
+  const idle: ProjectGroup[] = [];
+  for (const project of sortProjects(workspaceProjects(projects, workspaceId), tasks, mode)) {
+    const shown = filterTasks(project, tasks, query);
+    if (shown === null) continue;
+    if (shown.length || searching) active.push({ project, tasks: sortTasks(shown, mode) });
+    else idle.push({ project, tasks: [] });
+  }
+  return { active, idle };
+}
+
 const UNITS: [number, string][] = [
   [31_536_000, 'y'],
   [604_800, 'w'],

@@ -44,6 +44,26 @@ Right-click the project in the sidebar and choose **Remove project**. This remov
 
 CLI: `asterism project list`, `asterism project remove <ID>`.
 
+## Workspaces
+
+Workspaces group your projects, for example "Work" and "Personal". The narrow column at the left edge of the
+sidebar has one tile per workspace, showing its label. The sidebar lists only the projects of the active
+workspace.
+
+- **Create:** click **+** at the bottom of the column and enter a name, a one- or two-character label, a
+  color and, optionally, the folders for repositories and worktrees. Blank folders default to
+  `<home>/<name>/repos` and `<home>/<name>/worktrees`. The color tints the tile and a thin strip along the
+  top of the window, so you can tell at a glance which workspace you're in.
+- **Switch:** click a tile. Each workspace remembers its last open task, which comes back when you return.
+  The active workspace is stored per device.
+- **Waiting sessions:** an orange number on an inactive tile counts the sessions waiting for input in that
+  workspace. ++cmd+j++ jumps to the next waiting session, switching workspace if needed.
+- **Edit:** right-click a tile and choose **Edit…** to change the name, label or color.
+- **Delete:** right-click a tile and choose **Delete…**, then pick the workspace that receives its projects.
+  Nothing is removed from disk. The last remaining workspace cannot be deleted.
+
+Each workspace has its own folders for repositories and worktrees; change them in **Settings › Paths**.
+
 ## The sidebar
 
 The sidebar lists your projects with their tasks underneath. Click the chevron next to a project to collapse
@@ -66,6 +86,10 @@ The sort button next to **+** orders projects and tasks by **Alphabetical**, **A
 
 When sessions are waiting for input, a **N waiting** badge appears next to the computer name. Click it, or
 press ++cmd+j++, to jump to the next waiting session.
+
+Projects without tasks are folded into a **N more projects** row at the
+bottom of the list. Click it to show or hide them; the choice is remembered per workspace. While searching,
+matching projects always show.
 
 ### Context menus
 
