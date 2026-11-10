@@ -1,3 +1,9 @@
+## v0.20.0 (2026-11-10)
+
+### Feat
+
+- workspaces with per-workspace folders and a decluttered sidebar (#24)
+
 ## v0.19.0 (2026-11-09)
 
 ### Feat
