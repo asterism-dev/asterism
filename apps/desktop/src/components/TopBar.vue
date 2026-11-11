@@ -5,6 +5,7 @@ import {
   Activity,
   ChevronDown,
   Ellipsis,
+  FolderTree,
   GitCompare,
   Gauge,
   LoaderCircle,
@@ -23,6 +24,7 @@ import {
   togglePane,
 } from '../dock/main';
 import { sidebar } from '../dock/sidebar';
+import { isTreeOpen, setTreeOpen } from '../fileTreeBar';
 import { withHint } from '../shortcuts';
 import { showMenu, state, toast } from '../store';
 import ActivityMenu from './ActivityMenu.vue';
@@ -133,6 +135,15 @@ function moreMenu(e: MouseEvent) {
     </div>
     <template v-if="state.projectPage === null">
       <OpenInButton v-if="task" :path="task.worktree_path" />
+      <button
+        v-if="task"
+        :aria-pressed="isTreeOpen(task.id)"
+        :class="{ active: isTreeOpen(task.id) }"
+        title="Toggle file tree"
+        @click="setTreeOpen(task.id, !isTreeOpen(task.id))"
+      >
+        <FolderTree />Files
+      </button>
       <button
         :disabled="!mainApi"
         :class="{ active: paneState('diff') === 'front' }"
