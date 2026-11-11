@@ -144,6 +144,9 @@ pub fn prepare(data_dir: &Path, exe: &Path, p: &PrepareParams) -> Result<Prepare
     if let Some(mcp) = &p.settings.mcp_config {
         argv.extend(["--mcp-config".to_string(), mcp.clone()]);
     }
+    if let Some(name) = &p.name {
+        argv.extend(["--name".to_string(), name.clone()]);
+    }
     argv.extend(p.settings.args.iter().cloned());
     match p.mode {
         LaunchMode::Start => {
@@ -186,6 +189,7 @@ mod tests {
             agent_ref: agent_ref.map(String::from),
             settings,
             cwd: "/w".into(),
+            name: None,
         }
     }
 
@@ -279,6 +283,32 @@ mod tests {
         )
         .unwrap();
         assert_eq!(plain.argv, ["claude", "--settings", &file]);
+        let named = prepare(
+            dir.path(),
+            Path::new(EXE),
+            &PrepareParams {
+                name: Some("TRA-1 fix".into()),
+                ..params(
+                    LaunchMode::Resume,
+                    None,
+                    Some("abc"),
+                    LaunchSettings::default(),
+                )
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            named.argv,
+            [
+                "claude",
+                "--settings",
+                &file,
+                "--name",
+                "TRA-1 fix",
+                "--resume",
+                "abc"
+            ]
+        );
         let written: Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(written, status_settings(Path::new(EXE)));

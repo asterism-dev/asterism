@@ -16,6 +16,7 @@ use serde_json::{Map, Value};
 struct State {
     data_dir: OnceLock<PathBuf>,
     trust_workspaces: AtomicBool,
+    name_sessions: AtomicBool,
 }
 
 impl State {
@@ -25,6 +26,11 @@ impl State {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         self.trust_workspaces.store(trust, Ordering::Relaxed);
+        let name = settings
+            .get("name_sessions")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        self.name_sessions.store(name, Ordering::Relaxed);
     }
 }
 
@@ -58,7 +64,10 @@ fn handle(state: &State, method_name: &str, raw: Value) -> Result<Value, RpcErro
             Ok(Value::Null)
         }
         method::AGENT_PREPARE => {
-            let p: PrepareParams = params(raw)?;
+            let mut p: PrepareParams = params(raw)?;
+            if !state.name_sessions.load(Ordering::Relaxed) {
+                p.name = None;
+            }
             // A failed trust write only means Claude asks itself, so the launch goes ahead.
             if state.trust_workspaces.load(Ordering::Relaxed) {
                 match claude_config() {

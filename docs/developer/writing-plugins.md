@@ -178,7 +178,7 @@ Parameter and result types are defined in `crates/asterism-plugin/src/protocol.r
 | `task_source.check` | `task_source` | `source`, `project_path` | `available`, optional `reason` |
 | `task_source.search` | `task_source` | `source`, `query`, `assigned_to_me`, `project_path` | list of `key`, `title`, `url`, `state`, `assignee`, `updated_at` |
 | `task_source.get` | `task_source` | `source`, `key`, `project_path` | `key`, `title`, `url`, `description`, `branch` |
-| `agent.prepare` | `agent` | `agent`, `mode` (`start`/`resume`), `prompt`, `agent_ref`, `settings` (`args`, `mcp_config`, `hooks`), `cwd` | `argv` (non-empty), optional `env` as `[name, value]` pairs |
+| `agent.prepare` | `agent` | `agent`, `mode` (`start`/`resume`), `prompt`, `agent_ref`, `settings` (`args`, `mcp_config`, `hooks`), `cwd`, optional `name` (session display name from the task) | `argv` (non-empty), optional `env` as `[name, value]` pairs |
 
 `visibility` is `public`, `private` or `internal`. In `forge.pull_requests`, `state` is `open`, `draft`, `merged` or `closed`; `review` is `approved`, `changes_requested`, `review_required` or `none`; `checks` is `{"state": ..., "failing": [...]}` with state `pending`, `success`, `failure` or `none`. Leave branches without a pull request out of the result. `task_source.get` may return a `branch` to use for the task; when it is `null`, Asterism derives one.
 

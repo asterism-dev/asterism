@@ -17,12 +17,14 @@ Asterism ships with three plugins, marked **built-in**:
 
 | Plugin | Provides | Needs | Settings |
 |---|---|---|---|
-| **claude** | Agent **Claude Code**, with status hooks so Asterism knows when it is working or waiting | The `claude` CLI | **Trust task worktrees** |
+| **claude** | Agent **Claude Code**, with status hooks so Asterism knows when it is working or waiting | The `claude` CLI | **Trust task worktrees**, **Name sessions after the task** |
 | **github** | Forge **GitHub** (github.com, with pull requests) and task source **GitHub Issues** | The `gh` CLI, logged in with `gh auth login` | — |
 | **linear** | Task source **Linear** | A Linear API key | **API key** (required) |
 
 - **Trust task worktrees** skips Claude's folder trust prompt in new task worktrees. The repository's Claude
   settings, hooks and MCP servers then load without asking. Off by default.
+- **Name sessions after the task** starts Claude with the task title as session name (prefixed with the issue
+  key if the title lacks it), shown in `/resume` and the terminal title. On by default.
 - **API key** is a personal API key from Linear → Settings → Security & access. Until it is set, the Linear
   plugin shows **needs setup**.
 

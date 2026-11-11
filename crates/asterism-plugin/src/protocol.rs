@@ -114,6 +114,9 @@ pub struct PrepareParams {
     pub settings: LaunchSettings,
     /// Absolute path of the worktree the agent runs in.
     pub cwd: String,
+    /// Display name for the agent session, derived from the task and its issue.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
