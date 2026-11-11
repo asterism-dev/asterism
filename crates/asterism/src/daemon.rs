@@ -1,6 +1,6 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
@@ -38,6 +38,7 @@ use crate::session::{Pty, Snapshot, SpawnSpec, SCROLLBACK_LINES};
 use crate::store::Store;
 use crate::{git, hibernate, lock, node_settings, repo_source, status};
 
+mod activity;
 mod review;
 mod worktree_conflict;
 
@@ -185,6 +186,8 @@ pub struct Daemon {
     /// Subagents per session, kept after exit until the session is removed.
     subagents: Mutex<HashMap<i64, SessionSubagents>>,
     review_cache: Mutex<review::ReviewCache>,
+    activities: Mutex<VecDeque<Activity>>,
+    next_activity_id: AtomicI64,
     pub(crate) remote: crate::remote::Hub,
 }
 
@@ -242,6 +245,8 @@ impl Daemon {
                 waking: tokio::sync::Mutex::new(()),
                 subagents: Mutex::new(HashMap::new()),
                 review_cache: Mutex::new(review::ReviewCache::default()),
+                activities: Mutex::new(VecDeque::new()),
+                next_activity_id: AtomicI64::new(1),
                 remote: crate::remote::Hub::new(),
             }
         }))

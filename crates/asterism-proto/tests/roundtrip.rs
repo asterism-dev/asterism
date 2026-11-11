@@ -55,6 +55,22 @@ fn events_roundtrip_through_notifications() {
         },
         Event::TaskChanged(sample_task()),
         Event::ProjectRemoved { project_id: 4 },
+        Event::ActivityChanged(Activity {
+            id: 1,
+            kind: ActivityKind::Clone,
+            title: "Clone".into(),
+            token: Some("t".into()),
+            project_id: None,
+            task_id: None,
+            started_at: 5,
+            finished_at: None,
+            status: ActivityStatus::Running,
+            steps: vec![ActivityStep {
+                label: "a".into(),
+                status: ActivityStatus::Pending,
+                detail: None,
+            }],
+        }),
     ];
     for event in events {
         assert_eq!(

@@ -24,6 +24,7 @@ pub mod method {
     pub const TASK_CREATE: &str = "task.create";
     pub const TASK_ARCHIVE: &str = "task.archive";
     pub const TASK_DIFF: &str = "task.diff";
+    pub const ACTIVITY_LIST: &str = "activity.list";
     pub const REVIEW_GET: &str = "review.get";
     pub const REVIEW_COMMENT: &str = "review.comment";
     pub const REVIEW_REPLY: &str = "review.reply";
@@ -1621,6 +1622,44 @@ pub struct AgentConfigSetParams {
     pub config: AgentConfig,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityKind {
+    Clone,
+    CreateTask,
+}
+
+/// `Pending` is only used on steps.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityStatus {
+    Pending,
+    Running,
+    Done,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActivityStep {
+    pub label: String,
+    pub status: ActivityStatus,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Activity {
+    pub id: i64,
+    pub kind: ActivityKind,
+    pub title: String,
+    pub token: Option<String>,
+    pub project_id: Option<i64>,
+    pub task_id: Option<i64>,
+    pub started_at: i64,
+    pub finished_at: Option<i64>,
+    pub status: ActivityStatus,
+    pub steps: Vec<ActivityStep>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "method", content = "params")]
 pub enum Event {
@@ -1666,6 +1705,8 @@ pub enum Event {
     NotificationChanged(NotificationEntry),
     #[serde(rename = "notification.removed")]
     NotificationRemoved { id: i64 },
+    #[serde(rename = "activity.changed")]
+    ActivityChanged(Activity),
 }
 
 impl Event {
