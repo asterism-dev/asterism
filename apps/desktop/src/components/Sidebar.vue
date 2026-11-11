@@ -21,7 +21,6 @@ import {
   state,
   taskStatus,
   toast,
-  waitingNotifications,
 } from '../store';
 import {
   groupProjects,
@@ -51,7 +50,6 @@ const nodeName = computed(() =>
   'hello' in state.node ? state.node.hello.hostname : 'This computer',
 );
 const badgeCount = computed(() => notificationBadgeCount(state));
-const onlyWaiting = computed(() => badgeCount.value === waitingNotifications(state).length);
 const offlineLabel = computed(() => {
   switch (state.node.state) {
     case 'connecting':
@@ -216,23 +214,15 @@ function taskMenu(e: MouseEvent, t: Task) {
             offlineLabel
           }}</span>
           <button
-            v-if="badgeCount"
-            class="badge"
-            :aria-pressed="state.notificationsOpen"
-            @click="state.notificationsOpen = !state.notificationsOpen"
-          >
-            <template v-if="onlyWaiting">{{ badgeCount }} waiting</template>
-            <template v-else><Bell class="bell" /> {{ badgeCount }}</template>
-          </button>
-          <button
             class="add"
             :class="{ active: state.notificationsOpen }"
             title="Notifications"
-            aria-label="Notifications"
+            :aria-label="badgeCount ? `Notifications (${badgeCount})` : 'Notifications'"
             :aria-pressed="state.notificationsOpen"
             @click="state.notificationsOpen = !state.notificationsOpen"
           >
             <Bell />
+            <span v-if="badgeCount" class="bell-count">{{ badgeCount }}</span>
           </button>
           <button
             class="add"
@@ -312,27 +302,34 @@ function taskMenu(e: MouseEvent, t: Task) {
                   v-for="t in item.tasks"
                   :key="t.id"
                   class="row task-row"
-                  :class="{ selected: state.selectedTaskId === t.id }"
+                  :class="{
+                    selected: state.selectedTaskId === t.id,
+                    hibernated: taskStatus(state, t.id) === 'hibernated',
+                  }"
                   @click="openTask(t)"
                   @contextmenu="taskMenu($event, t)"
                 >
-                  <span class="name">{{ t.title }}</span>
-                  <a
-                    v-if="t.issue"
-                    class="issue-key muted"
-                    :href="t.issue.url"
-                    :title="t.issue.url"
-                    @click.prevent.stop="openIssue(t.issue.url)"
-                    >{{ t.issue.key }}</a
-                  >
-                  <PrBadge v-if="state.prs[t.id]" :pr="state.prs[t.id]!" />
-                  <span
-                    class="age muted"
-                    :title="`Created ${formatDate(t.created_at)} · Last activity ${formatDate(t.last_activity_at)}`"
-                  >
-                    {{ relativeTime(t.last_activity_at, now) }}
-                  </span>
-                  <StatusIndicator :status="taskStatus(state, t.id)" />
+                  <div class="line">
+                    <span class="name">{{ t.title }}</span>
+                    <StatusIndicator :status="taskStatus(state, t.id)" />
+                    <span
+                      class="age muted"
+                      :title="`Created ${formatDate(t.created_at)} · Last activity ${formatDate(t.last_activity_at)}`"
+                    >
+                      {{ relativeTime(t.last_activity_at, now) }}
+                    </span>
+                  </div>
+                  <div v-if="t.issue || state.prs[t.id]" class="line meta">
+                    <a
+                      v-if="t.issue"
+                      class="issue-key muted"
+                      :href="t.issue.url"
+                      :title="t.issue.url"
+                      @click.prevent.stop="openIssue(t.issue.url)"
+                      >{{ t.issue.key }}</a
+                    >
+                    <PrBadge v-if="state.prs[t.id]" :pr="state.prs[t.id]!" />
+                  </div>
                 </div>
               </template>
             </div>
@@ -411,7 +408,7 @@ function taskMenu(e: MouseEvent, t: Task) {
 }
 .issue-key {
   flex: none;
-  font-size: 12px;
+  font-size: 11.5px;
   text-decoration: none;
 }
 .row .name {
@@ -449,6 +446,9 @@ function taskMenu(e: MouseEvent, t: Task) {
   font-weight: 600;
 }
 .task-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
   padding-left: 30px;
   cursor: default;
 }
@@ -467,18 +467,26 @@ function taskMenu(e: MouseEvent, t: Task) {
 .row:hover .hover-action {
   visibility: visible;
 }
-.badge {
-  background: var(--waiting);
-  color: #1d1f27;
-  border: 0;
-  padding: 0 8px;
-  border-radius: 10px;
-  font-size: 12px;
+.line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
-.badge .bell {
-  width: 12px;
-  height: 12px;
-  vertical-align: -2px;
+.meta {
+  font-size: 11.5px;
+}
+.task-row.hibernated .name {
+  color: var(--muted);
+}
+.bell-count {
+  position: absolute;
+  top: -4px;
+  right: -2px;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 600;
+  color: var(--waiting);
 }
 .add.active {
   color: var(--accent);
@@ -487,6 +495,7 @@ function taskMenu(e: MouseEvent, t: Task) {
   margin-left: 6px;
 }
 .add {
+  position: relative;
   padding: 0 7px;
 }
 .age {

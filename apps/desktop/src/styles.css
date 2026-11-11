@@ -94,6 +94,14 @@ button {
   stroke-width: 1.75;
   flex: none;
 }
+.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 .dv-tab .lucide,
 .pane-tab .lucide {
   width: 14px;
@@ -177,6 +185,11 @@ body.resizing {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+}
+.main-row {
+  flex: 1;
+  display: flex;
   min-height: 0;
 }
 .pane {

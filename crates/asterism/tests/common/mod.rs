@@ -30,14 +30,19 @@ pub fn init_repo(dir: &Path) {
 }
 
 /// Polls `f` for up to 5 seconds.
-pub async fn eventually(mut f: impl FnMut() -> bool) -> bool {
-    for _ in 0..100 {
+pub async fn eventually(f: impl FnMut() -> bool) -> bool {
+    eventually_within(Duration::from_secs(5), f).await
+}
+
+pub async fn eventually_within(limit: Duration, mut f: impl FnMut() -> bool) -> bool {
+    let deadline = tokio::time::Instant::now() + limit;
+    while tokio::time::Instant::now() < deadline {
         if f() {
             return true;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    false
+    f()
 }
 
 use std::process::Output;

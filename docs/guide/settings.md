@@ -1,6 +1,6 @@
 # Settings
 
-Open Settings with the **Settings** button at the bottom of the sidebar, the gear in the top bar, or by
+Open Settings with the **Settings** button at the bottom of the sidebar, or by
 right-clicking the computer name and choosing **Settings…**. **← Back** returns to your tasks. If you leave a
 section with unsaved changes, Asterism asks whether to discard them.
 

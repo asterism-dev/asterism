@@ -1,6 +1,6 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
@@ -38,6 +38,7 @@ use crate::session::{Pty, Snapshot, SpawnSpec, SCROLLBACK_LINES};
 use crate::store::Store;
 use crate::{git, hibernate, lock, node_settings, repo_source, status};
 
+mod activity;
 mod review;
 mod worktree_conflict;
 
@@ -185,6 +186,8 @@ pub struct Daemon {
     /// Subagents per session, kept after exit until the session is removed.
     subagents: Mutex<HashMap<i64, SessionSubagents>>,
     review_cache: Mutex<review::ReviewCache>,
+    activities: Mutex<VecDeque<Activity>>,
+    next_activity_id: AtomicI64,
     pub(crate) remote: crate::remote::Hub,
 }
 
@@ -242,6 +245,8 @@ impl Daemon {
                 waking: tokio::sync::Mutex::new(()),
                 subagents: Mutex::new(HashMap::new()),
                 review_cache: Mutex::new(review::ReviewCache::default()),
+                activities: Mutex::new(VecDeque::new()),
+                next_activity_id: AtomicI64::new(1),
                 remote: crate::remote::Hub::new(),
             }
         }))
@@ -1541,23 +1546,49 @@ impl Daemon {
         source: &str,
         forge: Option<&str>,
         workspace_id: Option<i64>,
+        token: Option<String>,
     ) -> Result<Project> {
         let workspace = self.resolve_workspace(workspace_id)?;
         let source = repo_source::parse_source(source)?;
+        let forge = match &source.url {
+            Some(_) => String::new(),
+            None => self.resolve_forge(forge)?,
+        };
         let target = self.new_repo_dir(&workspace, &source.owner, &source.repo)?;
+        let activity = self.start_activity(
+            ActivityKind::Clone,
+            format!("Clone {}/{}", source.owner, source.repo),
+            token,
+            &["Clone repository", "Register project"],
+        );
+        let _guard = activity::ActivityGuard {
+            daemon: self,
+            id: activity,
+        };
         let cloned = match &source.url {
             Some(url) => self.git_clone(url.clone(), target.clone()).await,
             None => {
-                self.clone_shorthand(forge, &source.owner, &source.repo, &target)
+                self.clone_shorthand(&forge, &source.owner, &source.repo, &target)
                     .await
             }
         };
         if let Err(e) = cloned {
             // A half-cloned directory would block the next attempt.
             let _ = std::fs::remove_dir_all(&target);
+            self.fail_activity_step(activity, e.message.clone(), true);
             return Err(e);
         }
-        self.add_project_in(&target.to_string_lossy(), Some(workspace.id))
+        self.advance_activity(activity, None);
+        let project = match self.add_project_in(&target.to_string_lossy(), Some(workspace.id)) {
+            Ok(project) => project,
+            Err(e) => {
+                self.fail_activity_step(activity, e.message.clone(), true);
+                return Err(e);
+            }
+        };
+        self.set_activity_refs(activity, Some(project.id), None);
+        self.advance_activity(activity, None);
+        Ok(project)
     }
 
     pub async fn clone_copy(self: &Arc<Self>, p: ProjectCloneCopyParams) -> Result<Project> {
@@ -1577,7 +1608,7 @@ impl Daemon {
                 project.name
             ))
         })?;
-        self.clone_project(&origin, None, Some(p.workspace_id))
+        self.clone_project(&origin, None, Some(p.workspace_id), p.activity_token)
             .await
     }
 
@@ -1591,13 +1622,12 @@ impl Daemon {
     /// `owner/repo` goes to the default forge: its own clone when signed in, else anonymous HTTPS.
     async fn clone_shorthand(
         &self,
-        forge: Option<&str>,
+        forge: &str,
         owner: &str,
         repo: &str,
         target: &Path,
     ) -> Result<()> {
-        let forge = self.resolve_forge(forge)?;
-        if forge_clone_wanted(self.forge_status(&forge).await)? {
+        if forge_clone_wanted(self.forge_status(forge).await)? {
             let params = CloneParams {
                 owner: owner.to_string(),
                 repo: repo.to_string(),
@@ -1605,14 +1635,14 @@ impl Daemon {
                 git_env: git::clone_env(&self.options.git_env),
             };
             return self
-                .forge_call::<_, Value>(&forge, protocol::method::FORGE_CLONE, params, None)
+                .forge_call::<_, Value>(forge, protocol::method::FORGE_CLONE, params, None)
                 .await
                 .map(|_| ());
         }
         let host = self
             .plugin_set()
             .registry
-            .forge(&forge)
+            .forge(forge)
             .and_then(|(_, f)| f.hosts.first().cloned());
         let host = host.ok_or_else(|| {
             Error::new(
@@ -1822,91 +1852,129 @@ impl Daemon {
         let id = self
             .store()
             .insert_task(project.id, &title, params.prompt.as_deref(), &base)?;
-        let (slug, branch) = match explicit {
-            Some(b) => (b.to_string(), b.to_string()),
-            None => match (&params.issue, issue_name) {
-                (Some(_), Some(name)) => {
-                    let name = if name.is_empty() {
-                        id.to_string()
-                    } else {
-                        name
-                    };
-                    let branch =
-                        issue_branch.map_or_else(|| format!("asterism/{name}"), String::from);
-                    if git::branch_exists(&repo, &branch) || worktree_root.join(&name).exists() {
-                        (format!("{name}-{id}"), format!("{branch}-{id}"))
-                    } else {
-                        (name, branch)
-                    }
-                }
-                _ => {
-                    let slug = slugify(id, &params.title);
-                    let branch = format!("asterism/{slug}");
-                    (slug, branch)
-                }
-            },
-        };
-        let branch = reuse.clone().unwrap_or(branch);
-        let worktree = worktree_root.join(&slug);
-        let added = match (&reuse, checkout, local_checkout) {
-            (Some(_), _, _) => Ok(()),
-            (None, Some(b), Some(true)) => git::add_existing_worktree(&repo, &worktree, b)
-                .map_err(|e| checked_out_elsewhere(b, e)),
-            (None, Some(b), _) => git::add_tracking_worktree(&repo, &worktree, b, "origin")
-                .map_err(|e| checked_out_elsewhere(b, e)),
-            (None, None, _) => git::add_worktree(&repo, &branch, &worktree, &base),
-        };
-        if let Err(e) = added {
-            self.store().delete_task(id)?;
-            return Err(e);
-        }
-        self.store()
-            .set_task_location(id, &slug, &branch, &worktree.to_string_lossy())?;
-        let warning = if diverged.is_some() {
-            diverged
-        } else if params.push
+        let push_wanted = params.push
             && new_branch.is_some()
             && reuse.is_none()
-            && git::remote_url(&repo, "origin").is_some()
-        {
-            git::push_upstream(&worktree, "origin", &branch, &self.options.git_env)
-                .err()
-                .map(|e| format!("Couldn't push `{branch}` to origin: {}", e.message))
-        } else {
-            None
-        };
-        if derived_title && slug != title {
-            self.store().set_task_title(id, &slug)?;
+            && git::remote_url(&repo, "origin").is_some();
+        let mut steps = vec!["Create worktree"];
+        if push_wanted {
+            steps.push("Push branch");
         }
-        if let Some(issue) = &params.issue {
-            self.store().set_task_issue(
-                id,
-                &IssueRef {
-                    source: issue.source.clone(),
-                    key: issue.key.clone(),
-                    url: issue.url.clone(),
+        if params.agent.is_some() {
+            steps.push("Start agent");
+        }
+        let activity = self.start_activity(
+            ActivityKind::CreateTask,
+            title.clone(),
+            params.activity_token.clone(),
+            &steps,
+        );
+        let _guard = activity::ActivityGuard {
+            daemon: self,
+            id: activity,
+        };
+        self.set_activity_refs(activity, Some(project.id), Some(id));
+        let outcome = async {
+            let (slug, branch) = match explicit {
+                Some(b) => (b.to_string(), b.to_string()),
+                None => match (&params.issue, issue_name) {
+                    (Some(_), Some(name)) => {
+                        let name = if name.is_empty() {
+                            id.to_string()
+                        } else {
+                            name
+                        };
+                        let branch =
+                            issue_branch.map_or_else(|| format!("asterism/{name}"), String::from);
+                        if git::branch_exists(&repo, &branch) || worktree_root.join(&name).exists()
+                        {
+                            (format!("{name}-{id}"), format!("{branch}-{id}"))
+                        } else {
+                            (name, branch)
+                        }
+                    }
+                    _ => {
+                        let slug = slugify(id, &params.title);
+                        let branch = format!("asterism/{slug}");
+                        (slug, branch)
+                    }
                 },
-            )?;
-        }
-        let task = self.task(id)?;
-        self.emit(Event::TaskChanged(task.clone()));
+            };
+            let branch = reuse.clone().unwrap_or(branch);
+            let worktree = worktree_root.join(&slug);
+            let added = match (&reuse, checkout, local_checkout) {
+                (Some(_), _, _) => Ok(()),
+                (None, Some(b), Some(true)) => git::add_existing_worktree(&repo, &worktree, b)
+                    .map_err(|e| checked_out_elsewhere(b, e)),
+                (None, Some(b), _) => git::add_tracking_worktree(&repo, &worktree, b, "origin")
+                    .map_err(|e| checked_out_elsewhere(b, e)),
+                (None, None, _) => git::add_worktree(&repo, &branch, &worktree, &base),
+            };
+            if let Err(e) = added {
+                self.store().delete_task(id)?;
+                return Err(e);
+            }
+            self.advance_activity(activity, None);
+            self.store()
+                .set_task_location(id, &slug, &branch, &worktree.to_string_lossy())?;
+            let warning = if diverged.is_some() {
+                diverged
+            } else if push_wanted {
+                let pushed =
+                    git::push_upstream(&worktree, "origin", &branch, &self.options.git_env)
+                        .err()
+                        .map(|e| format!("Couldn't push `{branch}` to origin: {}", e.message));
+                match &pushed {
+                    Some(warning) => self.fail_activity_step(activity, warning.clone(), false),
+                    None => self.advance_activity(activity, None),
+                }
+                pushed
+            } else {
+                None
+            };
+            if derived_title && slug != title {
+                self.store().set_task_title(id, &slug)?;
+            }
+            if let Some(issue) = &params.issue {
+                self.store().set_task_issue(
+                    id,
+                    &IssueRef {
+                        source: issue.source.clone(),
+                        key: issue.key.clone(),
+                        url: issue.url.clone(),
+                    },
+                )?;
+            }
+            let task = self.task(id)?;
+            self.emit(Event::TaskChanged(task.clone()));
 
-        let session = match params.agent {
-            Some(name) => Some(
-                self.start_session(SessionStartParams {
-                    task_id: id,
-                    kind: SessionKind::Agent { name },
-                    prompt: params.prompt,
-                })
-                .await?,
-            ),
-            None => None,
-        };
-        Ok(TaskCreateResult {
-            task,
-            session,
-            warning,
-        })
+            let session = match params.agent {
+                Some(name) => {
+                    let session = self
+                        .start_session(SessionStartParams {
+                            task_id: id,
+                            kind: SessionKind::Agent { name },
+                            prompt: params.prompt,
+                        })
+                        .await?;
+                    Some(session)
+                }
+                None => None,
+            };
+            if session.is_some() {
+                self.advance_activity(activity, None);
+            }
+            Ok::<_, Error>(TaskCreateResult {
+                task,
+                session,
+                warning,
+            })
+        }
+        .await;
+        if let Err(e) = &outcome {
+            self.fail_activity_step(activity, e.message.clone(), true);
+        }
+        outcome
     }
 
     pub fn task(&self, id: i64) -> Result<Task> {
@@ -2439,6 +2507,20 @@ impl Daemon {
         Ok(TaskDiffResult {
             patch: git::diff(Path::new(&task.worktree_path), &base)?,
         })
+    }
+
+    pub fn list_dir(&self, params: TaskListDirParams) -> Result<Vec<DirEntry>> {
+        let task = self.task(params.task_id)?;
+        let worktree = Path::new(&task.worktree_path);
+        let base = self.effective_base(&self.project_path(task.project_id)?, &task);
+        let changed = git::changed_paths(worktree, &base).unwrap_or_default();
+        files::list_dir(worktree, &params.path, &changed)
+    }
+
+    pub fn diff_stat(&self, task_id: i64) -> Result<DiffStat> {
+        let task = self.task(task_id)?;
+        let base = self.effective_base(&self.project_path(task.project_id)?, &task);
+        git::diff_stat(Path::new(&task.worktree_path), &base)
     }
 
     /// The task's base, or the project's default once that base is gone (e.g. a pruned remote branch).

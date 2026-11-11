@@ -77,7 +77,7 @@ onUnmounted(() => {
 
 <template>
   <section class="activity-view">
-    <h2 class="activity-title">Activity Monitor</h2>
+    <h2 class="activity-title">Resources</h2>
     <div class="activity-body">
       <p v-if="error" class="error">{{ error }}</p>
       <p v-else-if="!stats" class="muted">Measuring…</p>

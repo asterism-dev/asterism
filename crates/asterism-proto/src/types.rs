@@ -24,6 +24,7 @@ pub mod method {
     pub const TASK_CREATE: &str = "task.create";
     pub const TASK_ARCHIVE: &str = "task.archive";
     pub const TASK_DIFF: &str = "task.diff";
+    pub const ACTIVITY_LIST: &str = "activity.list";
     pub const REVIEW_GET: &str = "review.get";
     pub const REVIEW_COMMENT: &str = "review.comment";
     pub const REVIEW_REPLY: &str = "review.reply";
@@ -38,6 +39,8 @@ pub mod method {
     pub const REVIEW_CHECK_LOG: &str = "review.check_log";
     pub const REVIEW_CHECK_RERUN: &str = "review.check_rerun";
     pub const TASK_FILE: &str = "task.file";
+    pub const TASK_LIST_DIR: &str = "task.list_dir";
+    pub const TASK_DIFF_STAT: &str = "task.diff_stat";
     pub const TASK_RESTORE: &str = "task.restore";
     pub const TASK_DELETE_CHECK: &str = "task.delete_check";
     pub const TASK_DELETE: &str = "task.delete";
@@ -224,6 +227,8 @@ pub struct ProjectMoveParams {
 pub struct ProjectCloneCopyParams {
     pub project_id: i64,
     pub workspace_id: i64,
+    #[serde(default)]
+    pub activity_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -769,6 +774,8 @@ pub struct ProjectCloneParams {
     pub forge: Option<String>,
     #[serde(default)]
     pub workspace_id: Option<i64>,
+    #[serde(default)]
+    pub activity_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -848,6 +855,8 @@ pub struct TaskCreateParams {
     pub push: bool,
     #[serde(default)]
     pub on_conflict: Option<OnConflict>,
+    #[serde(default)]
+    pub activity_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1414,6 +1423,36 @@ pub struct TaskFileResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskListDirParams {
+    pub task_id: i64,
+    /// Worktree-relative; empty for the root.
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DirEntryKind {
+    File,
+    Dir,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DirEntry {
+    pub name: String,
+    /// Worktree-relative, `/`-separated.
+    pub path: String,
+    pub kind: DirEntryKind,
+    pub ignored: bool,
+    pub changed: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DiffStat {
+    pub added: u64,
+    pub removed: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SessionKind {
     Agent { name: String },
@@ -1621,6 +1660,44 @@ pub struct AgentConfigSetParams {
     pub config: AgentConfig,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityKind {
+    Clone,
+    CreateTask,
+}
+
+/// `Pending` is only used on steps.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityStatus {
+    Pending,
+    Running,
+    Done,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActivityStep {
+    pub label: String,
+    pub status: ActivityStatus,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Activity {
+    pub id: i64,
+    pub kind: ActivityKind,
+    pub title: String,
+    pub token: Option<String>,
+    pub project_id: Option<i64>,
+    pub task_id: Option<i64>,
+    pub started_at: i64,
+    pub finished_at: Option<i64>,
+    pub status: ActivityStatus,
+    pub steps: Vec<ActivityStep>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "method", content = "params")]
 pub enum Event {
@@ -1666,6 +1743,8 @@ pub enum Event {
     NotificationChanged(NotificationEntry),
     #[serde(rename = "notification.removed")]
     NotificationRemoved { id: i64 },
+    #[serde(rename = "activity.changed")]
+    ActivityChanged(Activity),
 }
 
 impl Event {

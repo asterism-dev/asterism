@@ -424,7 +424,12 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             let p = params::<ProjectCloneParams>(raw)?;
             to_value(
                 daemon
-                    .clone_project(&p.source, p.forge.as_deref(), p.workspace_id)
+                    .clone_project(
+                        &p.source,
+                        p.forge.as_deref(),
+                        p.workspace_id,
+                        p.activity_token,
+                    )
                     .await?,
             )
         }
@@ -490,6 +495,7 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             blocking(move || to_value(daemon.delete_task(p.task_id, p.delete_branch)?)).await
         }
         method::TASK_DIFF => to_value(daemon.diff(params::<TaskIdParams>(raw)?.task_id)?),
+        method::ACTIVITY_LIST => to_value(daemon.activities()),
         method::REVIEW_GET => to_value(daemon.review_get(&params(raw)?).await?),
         method::REVIEW_SET_VIEWED => {
             daemon.review_set_viewed(&params(raw)?).await?;
@@ -531,6 +537,16 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             let daemon = daemon.clone();
             let params = params::<TaskFileParams>(raw)?;
             blocking(move || to_value(daemon.file(params)?)).await
+        }
+        method::TASK_LIST_DIR => {
+            let daemon = daemon.clone();
+            let params = params::<TaskListDirParams>(raw)?;
+            blocking(move || to_value(daemon.list_dir(params)?)).await
+        }
+        method::TASK_DIFF_STAT => {
+            let daemon = daemon.clone();
+            let task_id = params::<TaskIdParams>(raw)?.task_id;
+            blocking(move || to_value(daemon.diff_stat(task_id)?)).await
         }
         method::SESSION_LIST => {
             to_value(daemon.sessions(params::<SessionListParams>(raw)?.task_id)?)

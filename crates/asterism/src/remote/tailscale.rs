@@ -183,11 +183,12 @@ mod tests {
         let bin = dir.path().join("tailscale");
         std::fs::write(
             &bin,
-            "#!/bin/sh\necho 'visit https://login.example' >&2\nexec sleep 5\n",
+            "#!/bin/sh\necho 'visit https://login.example' >&2\nexec sleep 30\n",
         )
         .unwrap();
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let err = run_with_timeout(&bin, &["serve".into()], Duration::from_millis(500))
+        // Generous so the script has written stderr even when the whole suite loads the machine.
+        let err = run_with_timeout(&bin, &["serve".into()], Duration::from_secs(3))
             .await
             .unwrap_err();
         assert!(err.contains("admin console"), "{err}");

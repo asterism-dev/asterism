@@ -8,7 +8,7 @@ tasks, and keep running after you close the window or quit the app if you choose
 
 - When you [create a task](projects-and-tasks.md#create-a-task), its first session starts automatically.
 - Click **+** (**New tab**) in a tab bar of the task's workspace and choose an agent, **Terminal**,
-  **Terminal below** or **Terminal right**. The same menu reopens **Review** or **Activity Monitor** if they are
+  **Terminal below** or **Terminal right**. The same menu reopens **Review** or **Resources** if they are
   closed.
 - In an empty workspace, click **New session**.
 - Right-click a task in the sidebar and choose **New *agent* session** or **New shell**.
@@ -41,8 +41,9 @@ Agents with Asterism hooks, such as Claude Code, report their status directly. F
 is derived from terminal activity.
 
 The sidebar only marks tasks with a session that is working or waiting for input. When a session starts
-waiting and you are not looking at it, Asterism sends a desktop notification. The **N waiting** badge in the
-sidebar and ++cmd+j++ jump to the next waiting session.
+waiting and you are not looking at it, Asterism sends a desktop notification. The bell in the
+sidebar counts waiting or unread notifications and opens the Notifications view; ++cmd+j++ jumps to the next
+waiting session.
 
 CLI: `asterism wait <SESSION> --until idle|waiting_input|exited [--timeout 10m]` blocks until a session reaches
 a status.
@@ -74,13 +75,22 @@ last.
 
 - Drag tabs to move them between groups or to split the view.
 - Right-click a tab for **Split right** and **Split down** (when its group has more than one tab).
-- The lock button in the top bar turns on free mode, which lets tabs float. Right-click a tab and choose
-  **Float** to detach it, or **Dock** to put a floating tab back.
-- The reset button (**Reset layout**) returns the task to the default layout.
+- **Let tabs float** in the **⋯** menu of the top bar turns on free mode (it becomes **Lock tabs**). Right-click a tab
+  and choose **Float** to detach it, or **Dock** to put a floating tab back.
+- **Reset layout…** in the **⋯** menu returns the task to the default layout.
 - **Hide projects** / **Show projects** at the top left, or ++cmd+b++, toggles the sidebar.
 
-The top bar also shows the project and branch of the selected task; click the branch to copy its name.
-**Reveal worktree** opens the worktree in Finder.
+Review, Resources and files open as tabs in the task's session group.
+
+The top bar shows the project and branch of the selected task, with its issue and PR chips (the issue chip opens the issue). Click the branch for a menu with **Copy branch name**. Its buttons are:
+
+- **Activity**: a popover with a log of running and recent operations such as cloning and task creation. They keep
+  running when you close their dialog.
+- **Open in**: a split button. The main button opens the worktree in the last app you used; the arrow picks another app.
+- **Files**: toggles the file tree bar on the right, which lists the worktree and marks changed files.
+- **Review**, with the number of added lines.
+- **Resources**.
+- **⋯**: **Let tabs float** / **Lock tabs** and **Reset layout…**.
 
 ## Review
 
@@ -139,7 +149,7 @@ A failed GitHub Actions job has **Re-run**, which turns into **Re-run requested*
 
 ### Files changed
 
-A file tree on the left lists the changed files with status icons (added, modified, deleted, renamed), the number of
+The Review pane has its own file tree on the left (separate from the **Files** bar), which lists the changed files with status icons (added, modified, deleted, renamed), the number of
 comments per file and **✓** for viewed files; type in **Filter files…** to narrow it, and click a file to jump to
 its diff. **Side by side** switches between unified and split view. Files with more than 1000 changed lines, and
 every file after the first 30, start collapsed; click one to expand it.
@@ -186,11 +196,11 @@ fails when the task has no pull request; `--log CHECK_ID` prints one check's log
 ## File tabs
 
 ++cmd++-clicking a file path in a terminal opens it in a file tab with syntax highlighting, jumping to the line
-if one was given. The tab updates when the file changes on disk.
+if one was given. Clicking a file in the **Files** bar opens it too. The tab updates when the file changes on disk.
 
-## Activity Monitor
+## Resources
 
-**Activity Monitor** (top bar) lists memory and CPU usage of the app, the daemon (`asterismd`) and every
+**Resources** (top bar) lists memory and CPU usage of the app, the daemon (`asterismd`) and every
 session, with a total. Agent sessions include their child processes, such as MCP servers. CPU is relative to
 one core. Click a session row to jump to it.
 

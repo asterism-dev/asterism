@@ -538,6 +538,7 @@ async fn project_and_path_methods_are_routed() {
                 workspace_id: None,
                 source: "nope".into(),
                 forge: None,
+                activity_token: None,
             },
         )
         .await

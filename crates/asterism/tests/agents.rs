@@ -123,6 +123,10 @@ async fn static_agents_start_from_their_template_with_configured_args() {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     assert!(text.contains("started hello"), "{text}");
+    let activity = &daemon.activities()[0];
+    let labels: Vec<_> = activity.steps.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(labels, ["Create worktree", "Start agent"]);
+    assert_eq!(activity.status, ActivityStatus::Done);
     daemon.kill_session(session.id).unwrap();
 
     let err = daemon

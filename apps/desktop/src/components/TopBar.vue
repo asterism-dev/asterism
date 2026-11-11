@@ -1,19 +1,20 @@
 <script setup lang="ts">
 import { ask } from '@tauri-apps/plugin-dialog';
-import { revealItemInDir } from '@tauri-apps/plugin-opener';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   Activity,
-  FolderOpen,
+  ChevronDown,
+  Ellipsis,
+  FolderTree,
   GitCompare,
-  Lock,
-  LockOpen,
+  Gauge,
+  LoaderCircle,
   PanelLeftClose,
   PanelLeftOpen,
-  RotateCcw,
-  Settings,
 } from '@lucide/vue';
-import { computed } from 'vue';
-import { errorMessage } from '../api';
+import { computed, ref, watch } from 'vue';
+import { anyRunning, formatDiffCount } from '../activity';
+import { api, errorMessage } from '../api';
 import {
   floatUnlocked,
   mainApi,
@@ -23,8 +24,12 @@ import {
   togglePane,
 } from '../dock/main';
 import { sidebar } from '../dock/sidebar';
+import { isTreeOpen, setTreeOpen } from '../fileTreeBar';
 import { withHint } from '../shortcuts';
-import { state, toast } from '../store';
+import { showMenu, state, taskStatus, toast } from '../store';
+import ActivityMenu from './ActivityMenu.vue';
+import OpenInButton from './OpenInButton.vue';
+import PrBadge from './PrBadge.vue';
 
 const task = computed(() => state.tasks.find((t) => t.id === state.selectedTaskId) ?? null);
 const pageProject = computed(() =>
@@ -35,6 +40,30 @@ const pageProject = computed(() =>
 const repo = computed(
   () => state.projects.find((p) => p.id === task.value?.project_id)?.name ?? '',
 );
+const activityOpen = ref(false);
+const running = computed(() => anyRunning(state.activities));
+const added = ref(0);
+
+watch(
+  [
+    () => task.value?.id,
+    () => (task.value ? state.reviewVersion[task.value.id] : undefined),
+    () => (task.value ? taskStatus(state, task.value.id) !== 'working' : undefined),
+  ],
+  ([id], [prevId]) => {
+    if (id !== prevId) added.value = 0;
+    if (id === undefined) return;
+    api
+      .diffStat(id)
+      .then((stat) => {
+        if (task.value?.id === id) added.value = stat.added;
+      })
+      .catch(() => {});
+  },
+  { immediate: true },
+);
+
+const report = (e: unknown) => toast(errorMessage(e));
 
 async function resetLayout() {
   const confirmed = await ask("Reset this task's layout to the default?", {
@@ -51,12 +80,27 @@ function copyBranch() {
     .then(() => toast('Branch copied'))
     .catch(() => {});
 }
+
+function branchMenu(e: MouseEvent) {
+  showMenu(e, [{ label: 'Copy branch name', action: copyBranch }]);
+}
+
+function moreMenu(e: MouseEvent) {
+  showMenu(e, [
+    {
+      label: floatUnlocked.value ? 'Lock tabs' : 'Let tabs float',
+      action: () => setFloatUnlocked(!floatUnlocked.value),
+    },
+    { label: 'Reset layout…', action: () => void resetLayout() },
+  ]);
+  // Opened at the window's right edge; keep the menu on screen.
+  if (state.menu) state.menu.x = Math.min(state.menu.x, window.innerWidth - 200);
+}
 </script>
 
 <template>
   <header class="top-bar">
     <button
-      class="icon"
       :aria-pressed="sidebar.open"
       :title="withHint(sidebar.open ? 'Hide projects' : 'Show projects', 'toggleSidebar')"
       @click="sidebar.open = !sidebar.open"
@@ -68,17 +112,41 @@ function copyBranch() {
       <template v-else-if="task">
         <span class="repo">{{ repo }}</span>
         <span class="muted">/</span>
-        <button class="branch" title="Copy branch name" @click="copyBranch">
-          {{ task.branch }}
+        <button class="branch" :title="task.branch" @click="branchMenu">
+          <span class="branch-name">{{ task.branch }}</span
+          ><ChevronDown />
         </button>
+        <a
+          v-if="task.issue"
+          class="chip issue"
+          :href="task.issue.url"
+          :title="task.issue.url"
+          @click.prevent="openUrl(task.issue.url).catch(report)"
+          >{{ task.issue.key }}</a
+        >
+        <PrBadge v-if="state.prs[task.id]" class="chip" :pr="state.prs[task.id]!" />
       </template>
     </div>
+    <div class="anchor">
+      <button
+        :class="{ active: activityOpen }"
+        title="Activity"
+        @click.stop="activityOpen = !activityOpen"
+      >
+        <LoaderCircle v-if="running" class="spin" /><Activity v-else />Activity
+      </button>
+      <ActivityMenu v-if="activityOpen" @close="activityOpen = false" />
+    </div>
     <template v-if="state.projectPage === null">
+      <OpenInButton v-if="task" :path="task.worktree_path" />
       <button
         v-if="task"
-        @click="revealItemInDir(task.worktree_path).catch((e) => toast(errorMessage(e)))"
+        :aria-pressed="isTreeOpen(task.id)"
+        :class="{ active: isTreeOpen(task.id) }"
+        title="Toggle file tree"
+        @click="setTreeOpen(task.id, !isTreeOpen(task.id))"
       >
-        <FolderOpen />Reveal worktree
+        <FolderTree />Files
       </button>
       <button
         :disabled="!mainApi"
@@ -86,46 +154,22 @@ function copyBranch() {
         :title="withHint('Toggle review', 'toggleDiff')"
         @click="togglePane('diff')"
       >
-        <GitCompare />Review
+        <GitCompare />Review<span v-if="formatDiffCount(added)" class="added">{{
+          formatDiffCount(added)
+        }}</span>
       </button>
       <button
         :disabled="!mainApi"
         :class="{ active: paneState('activity') === 'front' }"
         @click="togglePane('activity')"
       >
-        <Activity />Activity Monitor
+        <Gauge />Resources
       </button>
-      <button
-        class="icon"
-        :disabled="!mainApi"
-        :aria-pressed="floatUnlocked"
-        :title="
-          floatUnlocked
-            ? 'Free mode on: tabs can float (click to lock)'
-            : 'Free mode off (click to let tabs float)'
-        "
-        @click="setFloatUnlocked(!floatUnlocked)"
-      >
-        <LockOpen v-if="floatUnlocked" /><Lock v-else />
-      </button>
-      <button
-        class="icon"
-        :disabled="!mainApi"
-        title="Reset layout"
-        aria-label="Reset layout"
-        @click="resetLayout"
-      >
-        <RotateCcw />
+      <span class="separator" />
+      <button :disabled="!mainApi" title="Layout" aria-label="Layout" @click="moreMenu">
+        <Ellipsis />
       </button>
     </template>
-    <button
-      class="icon"
-      :title="withHint('Settings', 'settings')"
-      aria-label="Settings"
-      @click="state.settingsOpen = true"
-    >
-      <Settings />
-    </button>
   </header>
 </template>
 
@@ -133,11 +177,24 @@ function copyBranch() {
 .top-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
   min-height: 40px;
+}
+button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 3px 8px;
+}
+button:hover:not(:disabled) {
+  background: var(--select);
+}
+button.active {
+  background: var(--select);
+  color: var(--text);
 }
 .location {
   flex: 1;
@@ -145,6 +202,7 @@ function copyBranch() {
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-left: 4px;
   overflow: hidden;
   white-space: nowrap;
 }
@@ -152,29 +210,42 @@ function copyBranch() {
   font-weight: 600;
 }
 .branch {
-  border: 0;
-  background: transparent;
+  min-width: 0;
+  gap: 2px;
   padding: 2px 4px;
   font-family: ui-monospace, Menlo, monospace;
   font-size: 12px;
-  color: var(--muted);
+}
+.branch-name {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.branch:hover {
-  color: var(--text);
+.branch .lucide {
+  width: 14px;
+  height: 14px;
 }
-.icon {
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  padding: 2px 6px;
-}
-.icon[aria-pressed='true'] {
-  color: var(--text);
-}
-button.active {
+.chip {
+  flex: none;
+  font-size: 12px;
+  padding: 1px 6px;
+  border-radius: 6px;
   background: var(--select);
-  border-color: var(--accent);
+  text-decoration: none;
+}
+.issue {
+  color: var(--muted);
+}
+.anchor {
+  position: relative;
+}
+.added {
+  color: var(--ws-green);
+  font-size: 12px;
+}
+.separator {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--border);
 }
 </style>

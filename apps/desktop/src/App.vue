@@ -7,6 +7,7 @@ import {
 } from '@tauri-apps/plugin-notification';
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { api, errorMessage } from './api';
+import FileTreeBar from './components/FileTreeBar.vue';
 import MainDock from './components/MainDock.vue';
 import PaneHandle from './components/PaneHandle.vue';
 import ProjectPage from './components/ProjectPage.vue';
@@ -15,6 +16,7 @@ import TopBar from './components/TopBar.vue';
 import { layoutEpoch, pruneLayouts, togglePane } from './dock/main';
 import { SIDEBAR, clampWidth } from './dock/model';
 import { sidebar } from './dock/sidebar';
+import { isTreeOpen } from './fileTreeBar';
 import AddProjectDialog from './components/AddProjectDialog.vue';
 import ContextMenu from './components/ContextMenu.vue';
 import NewTaskDialog from './components/NewTaskDialog.vue';
@@ -186,11 +188,10 @@ onUnmounted(() => {
       <main v-show="!state.settingsOpen" class="main">
         <TopBar />
         <ProjectPage v-if="state.projectPage !== null" :project-id="state.projectPage" />
-        <MainDock
-          v-else-if="selectedTask"
-          :key="`${selectedTask.id}-${layoutEpoch}`"
-          :task="selectedTask"
-        />
+        <div v-else-if="selectedTask" class="main-row">
+          <MainDock :key="`${selectedTask.id}-${layoutEpoch}`" :task="selectedTask" />
+          <FileTreeBar v-if="isTreeOpen(selectedTask.id)" :task-id="selectedTask.id" />
+        </div>
         <p v-else class="empty">Select a task, or create one with + Task.</p>
       </main>
     </div>

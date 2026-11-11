@@ -1,7 +1,9 @@
 import { reactive } from 'vue';
+import { upsertActivity } from './activity';
 import { api } from './api';
 import { updateCount } from './pluginsView';
 import type {
+  Activity,
   AgentInfo,
   NodeEvent,
   NodeStatus,
@@ -65,6 +67,7 @@ export interface State {
   reviewVersion: Record<number, number>;
   notifications: NotificationEntry[];
   notificationsOpen: boolean;
+  activities: Activity[];
 }
 
 export function initialState(): State {
@@ -98,6 +101,7 @@ export function initialState(): State {
     reviewVersion: {},
     notifications: [],
     notificationsOpen: false,
+    activities: [],
   };
 }
 
@@ -322,6 +326,9 @@ export function applyEvent(s: State, event: NodeEvent): Session | null {
     case 'notification.changed':
       upsert(s.notifications, event.params);
       return null;
+    case 'activity.changed':
+      s.activities = upsertActivity(s.activities, event.params);
+      return null;
     case 'notification.removed':
       s.notifications = s.notifications.filter((n) => n.id !== event.params.id);
       return null;
@@ -362,15 +369,18 @@ export async function refreshPluginUpdates() {
 }
 
 export async function refresh() {
-  const [projects, workspaces, tasks, sessions, agents, notifications] = await Promise.all([
-    api.projects(),
-    api.workspaces(),
-    api.tasks(),
-    api.sessions(),
-    api.agents(),
-    api.notifications(),
-  ]);
+  const [projects, workspaces, tasks, sessions, agents, notifications, activities] =
+    await Promise.all([
+      api.projects(),
+      api.workspaces(),
+      api.tasks(),
+      api.sessions(),
+      api.agents(),
+      api.notifications(),
+      api.activities(),
+    ]);
   state.notifications = notifications;
+  state.activities = activities;
   state.agents = agents;
   state.projects = projects;
   state.workspaces = workspaces;

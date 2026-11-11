@@ -1,4 +1,4 @@
-import type { DockviewApi, DockviewGroupPanel } from 'dockview-vue';
+import type { AddPanelOptions, DockviewApi, DockviewGroupPanel } from 'dockview-vue';
 import { ref, shallowRef } from 'vue';
 import { api, errorMessage } from '../api';
 import { toast } from '../store';
@@ -10,6 +10,7 @@ import {
   fileTaskOf,
   floatKey,
   keptSizes,
+  placementPosition,
   pluginPanelId,
   sessionIdOf,
   staleKeys,
@@ -24,7 +25,7 @@ import { keys, read, remove, write } from './storage';
 
 export type { Placement };
 
-const TITLES: Record<ToolPane, string> = { diff: 'Review', activity: 'Activity Monitor' };
+const TITLES: Record<ToolPane, string> = { diff: 'Review', activity: 'Resources' };
 
 // A session's placement is chosen before the daemon returns its id, so it waits here until its panel is added.
 const placements = new Map<number, Placement>();
@@ -48,7 +49,15 @@ export function takePlacement(sessionId: number): Placement | undefined {
 const gridGroups = (api: DockviewApi) => api.groups.filter((g) => g.api.location.type === 'grid');
 const hasSession = (g: DockviewGroupPanel) => g.panels.some((p) => sessionIdOf(p.id) !== null);
 
-/** Adds a tool pane into `group`, else Activity behind Diff, else right of the sessions. */
+/** Adds a panel as a tab in the session group, never as a new column. */
+function addToMain(api: DockviewApi, panel: Omit<AddPanelOptions, 'position' | 'floating'>) {
+  const groups = gridGroups(api).map((g) => ({ id: g.id, hasSession: hasSession(g) }));
+  const found = placementPosition(undefined, groups, null);
+  const position = found && { ...found, direction: 'within' as const };
+  api.addPanel({ ...panel, ...(position && { position }) });
+}
+
+/** Adds a tool pane into `group`, else as a tab in the session group. */
 export function addTool(
   api: DockviewApi,
   pane: ToolPane,
@@ -61,23 +70,12 @@ export function addTool(
     title: TITLES[pane],
     inactive: options.background,
   };
-  const diff = api.getPanel('diff');
   if (options.group)
     api.addPanel({ ...base, position: { referenceGroup: options.group, direction: 'within' } });
-  else if (pane === 'activity' && diff)
-    api.addPanel({ ...base, position: { referencePanel: diff, direction: 'within' } });
-  else {
-    const grid = gridGroups(api);
-    const anchor = grid.find(hasSession) ?? grid[0];
-    api.addPanel({
-      ...base,
-      initialWidth: 420,
-      ...(anchor && { position: { referenceGroup: anchor, direction: 'right' } }),
-    });
-  }
+  else addToMain(api, base);
 }
 
-/** Adds a plugin panel into `group`, else right of the sessions; an open one is brought to the front. */
+/** Adds a plugin panel into `group`, else as a tab in the session group; an open one is brought to the front. */
 export function addPluginPanel(
   api: DockviewApi,
   plugin: string,
@@ -96,15 +94,7 @@ export function addPluginPanel(
   };
   if (options.group)
     api.addPanel({ ...base, position: { referenceGroup: options.group, direction: 'within' } });
-  else {
-    const grid = gridGroups(api);
-    const anchor = grid.find(hasSession) ?? grid[0];
-    api.addPanel({
-      ...base,
-      initialWidth: 420,
-      ...(anchor && { position: { referenceGroup: anchor, direction: 'right' } }),
-    });
-  }
+  else addToMain(api, base);
 }
 
 /** Opens a file pane for `path`, or brings an open one to the front at `line`; unreadable files only toast. */
@@ -138,13 +128,7 @@ export async function openFile(taskId: number, path: string, line?: number) {
     dock.addPanel({ ...base, position: { referenceGroup: sibling.group.id, direction: 'within' } });
     return;
   }
-  const grid = gridGroups(dock);
-  const anchor = grid.find(hasSession) ?? grid[0];
-  dock.addPanel({
-    ...base,
-    initialWidth: 560,
-    ...(anchor && { position: { referenceGroup: anchor, direction: 'right' } }),
-  });
+  addToMain(dock, base);
 }
 
 /** Moves every floating panel back into the grid, as tabs of its first group. */

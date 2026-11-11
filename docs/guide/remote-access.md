@@ -6,13 +6,15 @@ Remote access is off by default.
 
 ## Requirements
 
-[Tailscale](https://tailscale.com) on the Mac and on the phone or tablet, both signed in to the same tailnet. Asterism does not use a relay and is never exposed to the public internet.
+The phone or tablet must reach the Mac over the network adapter you pick: the local Wi-Fi or Ethernet, a VPN, or [Tailscale](https://tailscale.com). Asterism does not use a relay; it is reachable only where that adapter is.
+
+Tailscale is recommended but optional. It reaches the Mac from anywhere without opening router ports, encrypts the traffic, and is required for [HTTPS with Tailscale serve](#https-with-tailscale-serve). Over any other adapter the connection is plain HTTP, so use it only on networks you trust.
 
 ## Enable it
 
 1. Open **Settings → Remote access**.
 2. Tick **Enable remote access**.
-3. Pick the **Interface** to listen on. The Tailscale address is preselected; **Custom address…** lets you enter any other.
+3. Pick the **Interface** to listen on. Every network adapter of the Mac is listed and the Tailscale address is preselected when there is one; **Custom address…** lets you enter any other.
 4. Set the **Port** (default 7420) and click **Save**.
 
 The status line shows the address Asterism listens on, or the reason it cannot. If the interface is missing or the port is taken, the daemon retries every 30 s, so starting Tailscale after Asterism recovers on its own.
@@ -71,4 +73,4 @@ Not in this version:
 - Every device has its own token. Only its SHA-256 hash is stored; the token itself exists only in the QR code and on the device.
 - A remote device cannot stop the daemon, change the remote access settings or manage devices. Those stay with the desktop app.
 - Choosing `0.0.0.0` listens on every network interface of the Mac, not only Tailscale, and Settings warns about it. Prefer the Tailscale interface.
-- Without Tailscale serve the connection is plain HTTP. Inside the tailnet WireGuard encrypts the traffic, but the browser does not treat the page as a secure context. Turn on [HTTPS with Tailscale serve](#https-with-tailscale-serve) for that.
+- Without Tailscale serve the connection is plain HTTP. Inside the tailnet WireGuard encrypts the traffic; on Wi-Fi or Ethernet anyone on that network can read it, including the device token. In both cases the browser does not treat the page as a secure context. Turn on [HTTPS with Tailscale serve](#https-with-tailscale-serve) for that.
