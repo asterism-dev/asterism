@@ -3,7 +3,7 @@ mod common;
 use std::time::Duration;
 
 use asterism_core::session::{Pty, SpawnSpec, SCROLLBACK_LINES, TAIL_BYTES};
-use common::eventually;
+use common::{eventually, eventually_within};
 
 fn spec(cwd: &std::path::Path, argv: &[&str]) -> SpawnSpec {
     SpawnSpec {
@@ -89,7 +89,8 @@ fn empty_argv_is_rejected() {
 async fn replayed(argv: &[&str], ready: &str) -> (std::sync::Arc<Pty>, vt100::Parser, usize) {
     let dir = tempfile::tempdir().unwrap();
     let pty = Pty::spawn(spec(dir.path(), argv)).unwrap();
-    assert!(eventually(|| pty.text().contains(ready)).await);
+    // Debug builds parse megabytes of output slowly, more so while other tests run.
+    assert!(eventually_within(Duration::from_secs(30), || pty.text().contains(ready)).await);
     let (snapshot, _) = pty.attach();
     let mut parser = vt100::Parser::new(snapshot.rows, snapshot.cols, SCROLLBACK_LINES);
     parser.process(&snapshot.screen);
