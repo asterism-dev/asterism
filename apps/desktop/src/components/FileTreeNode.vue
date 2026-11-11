@@ -71,6 +71,7 @@ watch(
 .node {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 4px;
   width: 100%;
   border: 0;
