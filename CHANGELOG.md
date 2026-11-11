@@ -1,3 +1,9 @@
+## v0.20.1 (2026-11-11)
+
+### Fix
+
+- keep sessions awake while the agent runs a shell (#25)
+
 ## v0.20.0 (2026-11-10)
 
 ### Feat
