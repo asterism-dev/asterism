@@ -262,6 +262,27 @@ const entry = (id: number, over: Partial<NotificationEntry> = {}): NotificationE
   ...over,
 });
 
+describe('activities', () => {
+  it('activity.changed upserts into state.activities', () => {
+    const s = initialState();
+    const a = {
+      id: 1,
+      kind: 'clone' as const,
+      title: 't',
+      token: null,
+      project_id: null,
+      task_id: null,
+      started_at: 1,
+      finished_at: null,
+      status: 'running' as const,
+      steps: [],
+    };
+    applyEvent(s, { method: 'activity.changed', params: a });
+    applyEvent(s, { method: 'activity.changed', params: { ...a, status: 'done' } });
+    expect(s.activities).toEqual([{ ...a, status: 'done' }]);
+  });
+});
+
 describe('notifications', () => {
   it('notification events upsert and remove', () => {
     const s = initialState();

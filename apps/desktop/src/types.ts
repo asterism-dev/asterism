@@ -181,7 +181,38 @@ export type NodeEvent =
   | { method: 'subagent.started'; params: { session_id: number; subagent: Subagent } }
   | { method: 'subagent.updated'; params: { session_id: number; subagent: Subagent } }
   | { method: 'notification.changed'; params: NotificationEntry }
-  | { method: 'notification.removed'; params: { id: number } };
+  | { method: 'notification.removed'; params: { id: number } }
+  | { method: 'activity.changed'; params: Activity };
+
+export type ActivityStatus = 'pending' | 'running' | 'done' | 'failed';
+export interface ActivityStep {
+  label: string;
+  status: ActivityStatus;
+  detail: string | null;
+}
+export interface Activity {
+  id: number;
+  kind: 'clone' | 'create_task';
+  title: string;
+  token: string | null;
+  project_id: number | null;
+  task_id: number | null;
+  started_at: number;
+  finished_at: number | null;
+  status: ActivityStatus;
+  steps: ActivityStep[];
+}
+export interface DirEntry {
+  name: string;
+  path: string;
+  kind: 'file' | 'dir';
+  ignored: boolean;
+  changed: boolean;
+}
+export interface DiffStat {
+  added: number;
+  removed: number;
+}
 
 export interface NotificationEntry {
   id: number;
@@ -261,6 +292,7 @@ export type TaskCreateRequest = {
   checkout: string | null;
   push: boolean;
   on_conflict: ConflictChoice | null;
+  activity_token?: string;
 };
 export interface TaskFileResult {
   path: string;

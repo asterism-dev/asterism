@@ -47,6 +47,9 @@ import type {
   Subagent,
   Task,
   TaskCreateRequest,
+  Activity,
+  DirEntry,
+  DiffStat,
   TaskCreateResult,
   TaskDeleteCheck,
   TaskDeleteResult,
@@ -174,8 +177,12 @@ export const api = {
     call<null>('workspace.delete', { workspace_id: id, move_to: moveTo }),
   moveProject: (projectId: number, workspaceId: number) =>
     call<Project>('project.move', { project_id: projectId, workspace_id: workspaceId }),
-  cloneCopy: (projectId: number, workspaceId: number) =>
-    call<Project>('project.clone_copy', { project_id: projectId, workspace_id: workspaceId }),
+  cloneCopy: (projectId: number, workspaceId: number, activityToken?: string) =>
+    call<Project>('project.clone_copy', {
+      project_id: projectId,
+      workspace_id: workspaceId,
+      activity_token: activityToken,
+    }),
   removeProject: (projectId: number) => call<null>('project.remove', { project_id: projectId }),
   tasks: () => call<Task[]>('task.list', { include_archived: false }),
   allTasks: () => call<Task[]>('task.list', { include_archived: true }),
@@ -219,6 +226,10 @@ export const api = {
     call<void>('project.worktree_prune', { project_id: projectId }),
   file: (taskId: number, path: string, knownMtime: number | null = null) =>
     call<TaskFileResult>('task.file', { task_id: taskId, path, known_mtime: knownMtime }),
+  listDir: (taskId: number, path: string) =>
+    call<DirEntry[]>('task.list_dir', { task_id: taskId, path }),
+  diffStat: (taskId: number) => call<DiffStat>('task.diff_stat', { task_id: taskId }),
+  activities: () => call<Activity[]>('activity.list'),
   sessions: () => call<Session[]>('session.list'),
   startSession: (taskId: number, kind: SessionKind, prompt?: string) =>
     call<Session>('session.start', { task_id: taskId, kind, prompt: prompt ?? null }),
@@ -312,8 +323,13 @@ export const api = {
     call<null>('remote.device_remove', { device_id: deviceId }),
   forgeStatus: (forge: string) => call<ForgeStatus>('forge.status', { forge }),
   forgeRepos: (forge: string, owner: string) => call<ForgeRepo[]>('forge.repos', { forge, owner }),
-  cloneProject: (source: string, forge?: string, workspaceId?: number) =>
-    call<Project>('project.clone', { source, forge, workspace_id: workspaceId ?? null }),
+  cloneProject: (source: string, forge?: string, workspaceId?: number, activityToken?: string) =>
+    call<Project>('project.clone', {
+      source,
+      forge,
+      workspace_id: workspaceId ?? null,
+      activity_token: activityToken,
+    }),
   createProject: (name: string, remote: RemoteTarget | null, workspaceId?: number) =>
     call<ProjectCreateResult>('project.create', {
       name,

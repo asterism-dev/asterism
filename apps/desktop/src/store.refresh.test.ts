@@ -12,6 +12,7 @@ vi.mock('./api', () => ({
     sessions: async () => [],
     agents: async () => [],
     notifications: async () => [],
+    activities: async () => [],
     prList: async () => [],
     plugins: async () => [],
   },
