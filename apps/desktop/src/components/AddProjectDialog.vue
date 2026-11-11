@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { open } from '@tauri-apps/plugin-dialog';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { activityFor } from '../activity';
 import { api, errorMessage } from '../api';
 import type { Project } from '../types';
 import { matchAction } from '../shortcuts';
 import { state, type ProjectDialogTab } from '../store';
+import ActivitySteps from './ActivitySteps.vue';
 import CloneForm from './CloneForm.vue';
 import CreateRepoForm from './CreateRepoForm.vue';
 import Kbd from './Kbd.vue';
@@ -24,9 +26,12 @@ const existingIn = computed(
 );
 const chosenName = computed(() => state.workspaces.find((w) => w.id === workspaceId.value)?.name);
 const busy = ref(false);
+const token = ref('');
+const activity = computed(() => activityFor(state.activities, token.value));
 const error = ref<string | null>(null);
 const chooseButton = ref<HTMLButtonElement>();
 const dialog = ref<HTMLElement>();
+let closed = false;
 
 // On window, like NewTaskDialog: WebKit doesn't focus clicked buttons, so focus often sits on body.
 function onKey(e: KeyboardEvent) {
@@ -42,10 +47,13 @@ onMounted(() => {
   chooseButton.value?.focus();
   window.addEventListener('keydown', onKey);
 });
-onUnmounted(() => window.removeEventListener('keydown', onKey));
+onUnmounted(() => {
+  closed = true;
+  window.removeEventListener('keydown', onKey);
+});
 
 function close() {
-  if (!busy.value) state.projectDialog = null;
+  state.projectDialog = null;
 }
 
 function select(tab: ProjectDialogTab) {
@@ -60,12 +68,16 @@ async function resolveExisting(action: 'move' | 'clone') {
   busy.value = true;
   error.value = null;
   try {
-    const run = action === 'move' ? api.moveProject : api.cloneCopy;
-    const project = await run(existing.value.id, workspaceId.value);
+    token.value = crypto.randomUUID();
+    const project =
+      action === 'move'
+        ? await api.moveProject(existing.value.id, workspaceId.value)
+        : await api.cloneCopy(existing.value.id, workspaceId.value, token.value);
+    if (closed) return;
     delete state.collapsed[project.id];
     state.projectDialog = null;
   } catch (e) {
-    error.value = errorMessage(e);
+    if (!closed) error.value = errorMessage(e);
   } finally {
     busy.value = false;
   }
@@ -116,6 +128,7 @@ async function chooseFolder() {
       </div>
       <div v-if="state.projectDialog === 'folder' && existing" class="add-form">
         <p>{{ existing.name }} is already in {{ existingIn }}.</p>
+        <ActivitySteps v-if="activity && (busy || error)" :steps="activity.steps" />
         <p v-if="error" class="error">{{ error }}</p>
         <div class="actions">
           <button type="button" :disabled="busy" @click="close">Cancel</button>

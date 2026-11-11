@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { X } from '@lucide/vue';
+import { activityFor } from '../activity';
 import { api, errorMessage, RpcError } from '../api';
 import { baseChoice } from '../baseBranch';
 import { leaveSettings } from '../settingsGuard';
@@ -16,6 +17,7 @@ import {
 } from '../taskForm';
 import { issueToCreate } from '../taskSources';
 import type { IssueDetails, PrHit, ProjectBranches, TaskIssue, TaskSourceInfo } from '../types';
+import ActivitySteps from './ActivitySteps.vue';
 import BasedOnPicker from './BasedOnPicker.vue';
 import Kbd from './Kbd.vue';
 import WorkspaceSettings from './WorkspaceSettings.vue';
@@ -58,6 +60,9 @@ const checkout = ref('');
 const push = ref(true);
 const error = ref<string | null>(null);
 const busy = ref(false);
+const token = ref('');
+const activity = computed(() => activityFor(state.activities, token.value));
+let closed = false;
 const titleInput = ref<HTMLInputElement>();
 const picker = ref<InstanceType<typeof BasedOnPicker>>();
 
@@ -201,7 +206,10 @@ onMounted(() => {
   titleInput.value?.focus();
   window.addEventListener('keydown', onKey);
 });
-onUnmounted(() => window.removeEventListener('keydown', onKey));
+onUnmounted(() => {
+  closed = true;
+  window.removeEventListener('keydown', onKey);
+});
 
 async function submit() {
   if (busy.value || loadingBranches.value || !canCreate.value) return;
@@ -211,11 +219,12 @@ async function submit() {
     return;
   }
   busy.value = true;
+  token.value = crypto.randomUUID();
   const sent = conflict.value ? onConflict.value : null;
   try {
     if (!(await leaveSettings())) return;
-    const created = await api.createTask(
-      createRequest({
+    const created = await api.createTask({
+      ...createRequest({
         projectId: projectId.value,
         title: title.value,
         placeholder,
@@ -229,7 +238,9 @@ async function submit() {
         issue: kind.value === 'issue' ? issue.value : null,
         onConflict: sent,
       }),
-    );
+      activity_token: token.value,
+    });
+    if (closed) return;
     addTask(state, created.task);
     state.projectPage = null;
     state.selectedTaskId = created.task.id;
@@ -238,6 +249,7 @@ async function submit() {
     if (created.warning) toast(created.warning);
     emit('close');
   } catch (e) {
+    if (closed) return;
     error.value = errorMessage(e);
     // The conflict appeared after the branches loaded; reload so the notice replaces the error.
     if (e instanceof RpcError && reloadsOnError(e.kind, sent)) {
@@ -357,6 +369,7 @@ async function submit() {
         :conflict="conflict"
         @deleted="loadBranches"
       />
+      <ActivitySteps v-if="activity && (busy || error)" :steps="activity.steps" />
       <p v-if="error" class="error">{{ error }}</p>
       <footer class="actions">
         <button

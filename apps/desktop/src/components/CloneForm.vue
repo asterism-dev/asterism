@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
+import { activityFor } from '../activity';
 import { sourceOwnerRepo, targetPath } from '../projects';
 import { state, toast } from '../store';
+import ActivitySteps from './ActivitySteps.vue';
 import Kbd from './Kbd.vue';
 import type { ForgeInfo, ForgeRepo, ForgeStatus } from '../types';
 
@@ -23,6 +25,10 @@ const reposRoot = computed(
 const error = ref<string | null>(null);
 const busy = ref(false);
 const input = ref<HTMLInputElement>();
+const token = ref('');
+const activity = computed(() => activityFor(state.activities, token.value));
+let closed = false;
+onUnmounted(() => (closed = true));
 
 const owners = computed(() =>
   status.value?.account ? [status.value.account, ...status.value.owners] : [],
@@ -94,20 +100,24 @@ async function clone() {
   }
   busy.value = true;
   error.value = null;
+  const { owner: o, repo: r } = parsed.value;
+  token.value = crypto.randomUUID();
   try {
     const project = await api.cloneProject(
       source.value.trim(),
       forge.value || undefined,
       props.workspaceId ?? undefined,
+      token.value,
     );
+    if (closed) return;
     delete state.collapsed[project.id];
-    toast(`Cloned ${parsed.value.owner}/${parsed.value.repo}`);
+    toast(`Cloned ${o}/${r}`);
     emit('close');
   } catch (e) {
-    error.value = errorMessage(e);
+    if (!closed) error.value = errorMessage(e);
   } finally {
     busy.value = false;
-    if (error.value) {
+    if (error.value && !closed) {
       await nextTick();
       input.value?.focus();
     }
@@ -160,6 +170,7 @@ watch(busy, (b) => emit('busy', b));
     <p v-else-if="status" class="muted">
       {{ status.error ?? `${forgeName} is not available` }} — you can still clone by URL.
     </p>
+    <ActivitySteps v-if="activity && (busy || error)" :steps="activity.steps" />
     <p v-if="error" class="error">{{ error }}</p>
     <div class="actions">
       <button type="button" :disabled="busy" @click="emit('close')">Cancel</button>

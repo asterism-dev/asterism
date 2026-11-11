@@ -17,3 +17,7 @@ export function formatDiffCount(n: number): string {
 export function anyRunning(list: Activity[]): boolean {
   return list.some((a) => a.status === 'running');
 }
+
+export function activityFor(list: Activity[], token: string): Activity | undefined {
+  return list.find((a) => a.token === token);
+}

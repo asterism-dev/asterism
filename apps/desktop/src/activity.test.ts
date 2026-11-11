@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { anyRunning, formatDiffCount, upsertActivity } from './activity';
+import { activityFor, anyRunning, formatDiffCount, upsertActivity } from './activity';
 import type { Activity } from './types';
 
 const act = (id: number, over: Partial<Activity> = {}): Activity => ({
@@ -47,5 +47,15 @@ describe('anyRunning', () => {
   it('detects running activities', () => {
     expect(anyRunning([act(1, { status: 'done' })])).toBe(false);
     expect(anyRunning([act(1, { status: 'done' }), act(2)])).toBe(true);
+  });
+});
+
+describe('activityFor', () => {
+  it('matches by token', () => {
+    const list = [act(2, { token: 'b' }), act(1, { token: 'a' })];
+    expect(activityFor(list, 'a')?.id).toBe(1);
+  });
+  it('is undefined when absent', () => {
+    expect(activityFor([act(1)], 'a')).toBeUndefined();
   });
 });
