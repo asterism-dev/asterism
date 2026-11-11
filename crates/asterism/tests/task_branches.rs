@@ -130,16 +130,15 @@ async fn create_task_reports_steps() {
 #[tokio::test]
 async fn conflict_creates_no_activity() {
     let env = setup();
-    let err = env
-        .daemon
-        .create_task(TaskCreateParams {
-            checkout: Some("main".into()),
-            ..params(&env, "dup")
-        })
-        .await
-        .unwrap_err();
+    let wanted = TaskCreateParams {
+        branch: Some("asterism/dup".into()),
+        ..params(&env, "dup")
+    };
+    env.daemon.create_task(wanted.clone()).await.unwrap();
+    assert_eq!(env.daemon.activities().len(), 1);
+    let err = env.daemon.create_task(wanted).await.unwrap_err();
     assert_eq!(err.kind, ErrorKind::BranchExists);
-    assert!(env.daemon.activities().is_empty());
+    assert_eq!(env.daemon.activities().len(), 1);
 }
 
 #[tokio::test]
@@ -183,6 +182,34 @@ async fn a_failed_push_is_only_a_warning() {
         env.repo.path(),
         "asterism/offline-ab12c"
     ));
+}
+
+#[tokio::test]
+async fn a_failed_push_marks_only_its_step_failed() {
+    let env = setup();
+    run_git(
+        env.repo.path(),
+        &["remote", "set-url", "origin", "/nonexistent/origin.git"],
+    );
+    let created = env
+        .daemon
+        .create_task(TaskCreateParams {
+            branch: Some("asterism/offline-ab12c".into()),
+            push: true,
+            ..params(&env, "offline")
+        })
+        .await
+        .unwrap();
+    let activity = &env.daemon.activities()[0];
+    let labels: Vec<_> = activity.steps.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(labels, ["Create worktree", "Push branch"]);
+    assert_eq!(activity.status, ActivityStatus::Done);
+    assert_eq!(activity.steps[0].status, ActivityStatus::Done);
+    assert_eq!(activity.steps[1].status, ActivityStatus::Failed);
+    assert_eq!(
+        activity.steps[1].detail.as_deref(),
+        created.warning.as_deref()
+    );
 }
 
 #[tokio::test]

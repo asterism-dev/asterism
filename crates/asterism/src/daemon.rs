@@ -1863,105 +1863,107 @@ impl Daemon {
             &steps,
         );
         self.set_activity_refs(activity, Some(project.id), Some(id));
-        let (slug, branch) = match explicit {
-            Some(b) => (b.to_string(), b.to_string()),
-            None => match (&params.issue, issue_name) {
-                (Some(_), Some(name)) => {
-                    let name = if name.is_empty() {
-                        id.to_string()
-                    } else {
-                        name
-                    };
-                    let branch =
-                        issue_branch.map_or_else(|| format!("asterism/{name}"), String::from);
-                    if git::branch_exists(&repo, &branch) || worktree_root.join(&name).exists() {
-                        (format!("{name}-{id}"), format!("{branch}-{id}"))
-                    } else {
-                        (name, branch)
+        let outcome = async {
+            let (slug, branch) = match explicit {
+                Some(b) => (b.to_string(), b.to_string()),
+                None => match (&params.issue, issue_name) {
+                    (Some(_), Some(name)) => {
+                        let name = if name.is_empty() {
+                            id.to_string()
+                        } else {
+                            name
+                        };
+                        let branch =
+                            issue_branch.map_or_else(|| format!("asterism/{name}"), String::from);
+                        if git::branch_exists(&repo, &branch) || worktree_root.join(&name).exists()
+                        {
+                            (format!("{name}-{id}"), format!("{branch}-{id}"))
+                        } else {
+                            (name, branch)
+                        }
                     }
-                }
-                _ => {
-                    let slug = slugify(id, &params.title);
-                    let branch = format!("asterism/{slug}");
-                    (slug, branch)
-                }
-            },
-        };
-        let branch = reuse.clone().unwrap_or(branch);
-        let worktree = worktree_root.join(&slug);
-        let added = match (&reuse, checkout, local_checkout) {
-            (Some(_), _, _) => Ok(()),
-            (None, Some(b), Some(true)) => git::add_existing_worktree(&repo, &worktree, b)
-                .map_err(|e| checked_out_elsewhere(b, e)),
-            (None, Some(b), _) => git::add_tracking_worktree(&repo, &worktree, b, "origin")
-                .map_err(|e| checked_out_elsewhere(b, e)),
-            (None, None, _) => git::add_worktree(&repo, &branch, &worktree, &base),
-        };
-        if let Err(e) = added {
-            self.store().delete_task(id)?;
-            self.fail_activity_step(activity, e.message.clone(), true);
-            return Err(e);
-        }
-        self.advance_activity(activity, None);
-        self.store()
-            .set_task_location(id, &slug, &branch, &worktree.to_string_lossy())?;
-        let warning = if diverged.is_some() {
-            diverged
-        } else if push_wanted {
-            let pushed = git::push_upstream(&worktree, "origin", &branch, &self.options.git_env)
-                .err()
-                .map(|e| format!("Couldn't push `{branch}` to origin: {}", e.message));
-            match &pushed {
-                Some(warning) => self.fail_activity_step(activity, warning.clone(), false),
-                None => self.advance_activity(activity, None),
-            }
-            pushed
-        } else {
-            None
-        };
-        if derived_title && slug != title {
-            self.store().set_task_title(id, &slug)?;
-        }
-        if let Some(issue) = &params.issue {
-            self.store().set_task_issue(
-                id,
-                &IssueRef {
-                    source: issue.source.clone(),
-                    key: issue.key.clone(),
-                    url: issue.url.clone(),
+                    _ => {
+                        let slug = slugify(id, &params.title);
+                        let branch = format!("asterism/{slug}");
+                        (slug, branch)
+                    }
                 },
-            )?;
-        }
-        let task = self.task(id)?;
-        self.emit(Event::TaskChanged(task.clone()));
-
-        let session = match params.agent {
-            Some(name) => {
-                let started = self
-                    .start_session(SessionStartParams {
-                        task_id: id,
-                        kind: SessionKind::Agent { name },
-                        prompt: params.prompt,
-                    })
-                    .await;
-                match started {
-                    Ok(session) => Some(session),
-                    Err(e) => {
-                        self.fail_activity_step(activity, e.message.clone(), true);
-                        return Err(e);
-                    }
-                }
+            };
+            let branch = reuse.clone().unwrap_or(branch);
+            let worktree = worktree_root.join(&slug);
+            let added = match (&reuse, checkout, local_checkout) {
+                (Some(_), _, _) => Ok(()),
+                (None, Some(b), Some(true)) => git::add_existing_worktree(&repo, &worktree, b)
+                    .map_err(|e| checked_out_elsewhere(b, e)),
+                (None, Some(b), _) => git::add_tracking_worktree(&repo, &worktree, b, "origin")
+                    .map_err(|e| checked_out_elsewhere(b, e)),
+                (None, None, _) => git::add_worktree(&repo, &branch, &worktree, &base),
+            };
+            if let Err(e) = added {
+                self.store().delete_task(id)?;
+                return Err(e);
             }
-            None => None,
-        };
-        if session.is_some() {
             self.advance_activity(activity, None);
+            self.store()
+                .set_task_location(id, &slug, &branch, &worktree.to_string_lossy())?;
+            let warning = if diverged.is_some() {
+                diverged
+            } else if push_wanted {
+                let pushed =
+                    git::push_upstream(&worktree, "origin", &branch, &self.options.git_env)
+                        .err()
+                        .map(|e| format!("Couldn't push `{branch}` to origin: {}", e.message));
+                match &pushed {
+                    Some(warning) => self.fail_activity_step(activity, warning.clone(), false),
+                    None => self.advance_activity(activity, None),
+                }
+                pushed
+            } else {
+                None
+            };
+            if derived_title && slug != title {
+                self.store().set_task_title(id, &slug)?;
+            }
+            if let Some(issue) = &params.issue {
+                self.store().set_task_issue(
+                    id,
+                    &IssueRef {
+                        source: issue.source.clone(),
+                        key: issue.key.clone(),
+                        url: issue.url.clone(),
+                    },
+                )?;
+            }
+            let task = self.task(id)?;
+            self.emit(Event::TaskChanged(task.clone()));
+
+            let session = match params.agent {
+                Some(name) => {
+                    let session = self
+                        .start_session(SessionStartParams {
+                            task_id: id,
+                            kind: SessionKind::Agent { name },
+                            prompt: params.prompt,
+                        })
+                        .await?;
+                    Some(session)
+                }
+                None => None,
+            };
+            if session.is_some() {
+                self.advance_activity(activity, None);
+            }
+            Ok::<_, Error>(TaskCreateResult {
+                task,
+                session,
+                warning,
+            })
         }
-        Ok(TaskCreateResult {
-            task,
-            session,
-            warning,
-        })
+        .await;
+        if let Err(e) = &outcome {
+            self.fail_activity_step(activity, e.message.clone(), true);
+        }
+        outcome
     }
 
     pub fn task(&self, id: i64) -> Result<Task> {
