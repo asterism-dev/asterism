@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { ask } from '@tauri-apps/plugin-dialog';
-import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   Activity,
   ChevronDown,
   Ellipsis,
-  FolderOpen,
   GitCompare,
   Gauge,
   LoaderCircle,
@@ -27,6 +26,7 @@ import { sidebar } from '../dock/sidebar';
 import { withHint } from '../shortcuts';
 import { showMenu, state, toast } from '../store';
 import ActivityMenu from './ActivityMenu.vue';
+import OpenInButton from './OpenInButton.vue';
 import PrBadge from './PrBadge.vue';
 
 const task = computed(() => state.tasks.find((t) => t.id === state.selectedTaskId) ?? null);
@@ -132,9 +132,7 @@ function moreMenu(e: MouseEvent) {
       <ActivityMenu v-if="activityOpen" @close="activityOpen = false" />
     </div>
     <template v-if="state.projectPage === null">
-      <button v-if="task" @click="revealItemInDir(task.worktree_path).catch(report)">
-        <FolderOpen />Reveal
-      </button>
+      <OpenInButton v-if="task" :path="task.worktree_path" />
       <button
         :disabled="!mainApi"
         :class="{ active: paneState('diff') === 'front' }"

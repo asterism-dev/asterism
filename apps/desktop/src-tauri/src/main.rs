@@ -85,6 +85,63 @@ async fn quit(
     Ok(())
 }
 
+const OPEN_IN_APPS: &[&str] = &[
+    "Finder",
+    "Terminal",
+    "iTerm",
+    "Ghostty",
+    "Zed",
+    "Visual Studio Code",
+    "Cursor",
+    "Xcode",
+    "IntelliJ IDEA",
+    "PyCharm",
+    "WebStorm",
+    "GoLand",
+    "RustRover",
+];
+
+#[tauri::command]
+fn installed_apps(candidates: Vec<String>) -> Vec<String> {
+    let mut dirs: Vec<std::path::PathBuf> = [
+        "/Applications",
+        "/System/Applications",
+        "/System/Applications/Utilities",
+        "/System/Library/CoreServices",
+    ]
+    .iter()
+    .map(Into::into)
+    .collect();
+    if let Some(home) = std::env::var_os("HOME") {
+        dirs.push(std::path::Path::new(&home).join("Applications"));
+    }
+    candidates
+        .into_iter()
+        .filter(|name| {
+            OPEN_IN_APPS.contains(&name.as_str())
+                && dirs.iter().any(|d| d.join(format!("{name}.app")).exists())
+        })
+        .collect()
+}
+
+#[tauri::command]
+fn open_in(app: String, path: String) -> Result<(), String> {
+    if !OPEN_IN_APPS.contains(&app.as_str()) {
+        return Err(format!("Unsupported app: {app}"));
+    }
+    let status = std::process::Command::new("open")
+        .arg("-a")
+        .arg(&app)
+        .arg(&path)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("Could not open {path} in {app}"))
+    }
+}
+
 #[tauri::command]
 fn app_pid() -> u32 {
     std::process::id()
@@ -210,7 +267,9 @@ fn main() {
             session_detach,
             restart_daemon,
             quit,
-            app_pid
+            app_pid,
+            installed_apps,
+            open_in
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {
