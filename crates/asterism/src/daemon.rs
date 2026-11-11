@@ -2498,6 +2498,20 @@ impl Daemon {
         })
     }
 
+    pub fn list_dir(&self, params: TaskListDirParams) -> Result<Vec<DirEntry>> {
+        let task = self.task(params.task_id)?;
+        let worktree = Path::new(&task.worktree_path);
+        let base = self.effective_base(&self.project_path(task.project_id)?, &task);
+        let changed = git::changed_paths(worktree, &base).unwrap_or_default();
+        files::list_dir(worktree, &params.path, &changed)
+    }
+
+    pub fn diff_stat(&self, task_id: i64) -> Result<DiffStat> {
+        let task = self.task(task_id)?;
+        let base = self.effective_base(&self.project_path(task.project_id)?, &task);
+        git::diff_stat(Path::new(&task.worktree_path), &base)
+    }
+
     /// The task's base, or the project's default once that base is gone (e.g. a pruned remote branch).
     fn effective_base(&self, repo: &Path, task: &Task) -> String {
         if git::resolves(repo, &task.base_branch) {

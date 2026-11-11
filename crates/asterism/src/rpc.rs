@@ -538,6 +538,16 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             let params = params::<TaskFileParams>(raw)?;
             blocking(move || to_value(daemon.file(params)?)).await
         }
+        method::TASK_LIST_DIR => {
+            let daemon = daemon.clone();
+            let params = params::<TaskListDirParams>(raw)?;
+            blocking(move || to_value(daemon.list_dir(params)?)).await
+        }
+        method::TASK_DIFF_STAT => {
+            let daemon = daemon.clone();
+            let task_id = params::<TaskIdParams>(raw)?.task_id;
+            blocking(move || to_value(daemon.diff_stat(task_id)?)).await
+        }
         method::SESSION_LIST => {
             to_value(daemon.sessions(params::<SessionListParams>(raw)?.task_id)?)
         }

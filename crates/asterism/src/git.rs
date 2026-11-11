@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use asterism_proto::rpc::ErrorKind;
-use asterism_proto::types::ReviewCommit;
+use asterism_proto::types::{DiffStat, ReviewCommit};
 
 use crate::error::{Error, Result};
 
@@ -296,6 +296,52 @@ pub fn diff(worktree: &Path, base: &str) -> Result<String> {
         patch.push_str(&String::from_utf8_lossy(&out.stdout));
     }
     Ok(patch)
+}
+
+fn untracked(worktree: &Path) -> Result<Vec<String>> {
+    let out = git(
+        worktree,
+        &["ls-files", "-z", "--others", "--exclude-standard"],
+    )?;
+    Ok(out
+        .split('\0')
+        .filter(|f| !f.is_empty())
+        .map(String::from)
+        .collect())
+}
+
+/// Files changed since the merge-base with `base`, plus untracked ones: the set `diff` shows.
+pub fn changed_paths(worktree: &Path, base: &str) -> Result<Vec<String>> {
+    let merge_base = git(worktree, &["merge-base", base, "HEAD"])?;
+    let tracked = git(worktree, &["diff", "--name-only", "-z", merge_base.trim()])?;
+    let mut paths: Vec<String> = tracked
+        .split('\0')
+        .filter(|f| !f.is_empty())
+        .map(String::from)
+        .collect();
+    paths.extend(untracked(worktree)?);
+    Ok(paths)
+}
+
+/// Added/removed line totals of what `diff` shows; binary files count 0.
+pub fn diff_stat(worktree: &Path, base: &str) -> Result<DiffStat> {
+    let merge_base = git(worktree, &["merge-base", base, "HEAD"])?;
+    let numstat = git(worktree, &["diff", "--numstat", merge_base.trim()])?;
+    let mut stat = DiffStat::default();
+    for line in numstat.lines() {
+        let mut cols = line.split('\t');
+        stat.added += cols.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+        stat.removed += cols.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+    }
+    for file in untracked(worktree)? {
+        if let Ok(bytes) = std::fs::read(worktree.join(file)) {
+            if !bytes.contains(&0) {
+                stat.added += bytes.iter().filter(|&&b| b == b'\n').count() as u64
+                    + u64::from(bytes.last().is_some_and(|&b| b != b'\n'));
+            }
+        }
+    }
+    Ok(stat)
 }
 
 /// The changes of `head` since it forked from `base` (`base...head`).

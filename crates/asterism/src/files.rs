@@ -1,10 +1,11 @@
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::UNIX_EPOCH;
 
 use asterism_proto::rpc::ErrorKind;
-use asterism_proto::types::TaskFileResult;
+use asterism_proto::types::{DirEntry, DirEntryKind, TaskFileResult};
 
 use crate::error::{Error, Result};
 
@@ -56,6 +57,93 @@ pub fn read(
         mtime,
         content: Some(content),
     })
+}
+
+/// Lists one directory of the worktree, flagging gitignored and changed entries.
+pub fn list_dir(worktree: &Path, rel: &str, changed: &[String]) -> Result<Vec<DirEntry>> {
+    if Path::new(rel).is_absolute() {
+        return Err(invalid(format!("{rel} is not a worktree-relative path")));
+    }
+    let root = fs::canonicalize(worktree).map_err(|e| io_error(rel, e))?;
+    let dir = fs::canonicalize(root.join(rel)).map_err(|e| io_error(rel, e))?;
+    if !dir.starts_with(&root) {
+        return Err(invalid(format!("{rel} is outside the worktree")));
+    }
+    let prefix = dir
+        .strip_prefix(&root)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default();
+    let mut entries = Vec::new();
+    for item in fs::read_dir(&dir).map_err(|e| io_error(rel, e))? {
+        let item = item.map_err(|e| io_error(rel, e))?;
+        let name = item.file_name().to_string_lossy().into_owned();
+        if name == ".git" {
+            continue;
+        }
+        let is_dir = fs::metadata(item.path()).is_ok_and(|m| m.is_dir());
+        let path = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        let dir_prefix = format!("{path}/");
+        entries.push(DirEntry {
+            changed: changed
+                .iter()
+                .any(|c| *c == path || c.starts_with(&dir_prefix)),
+            kind: if is_dir {
+                DirEntryKind::Dir
+            } else {
+                DirEntryKind::File
+            },
+            ignored: false,
+            name,
+            path,
+        });
+    }
+    let ignored = ignored_paths(&root, &entries);
+    for entry in &mut entries {
+        entry.ignored = ignored.contains(&entry.path);
+    }
+    entries.sort_by_cached_key(|e| (e.kind == DirEntryKind::File, e.name.to_lowercase()));
+    Ok(entries)
+}
+
+/// Asks git which of `entries` are ignored; any failure (e.g. not a repo) means none are.
+fn ignored_paths(root: &Path, entries: &[DirEntry]) -> std::collections::HashSet<String> {
+    let mut input = Vec::new();
+    for e in entries {
+        input.extend_from_slice(e.path.as_bytes());
+        input.push(0);
+    }
+    let child = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["check-ignore", "--stdin", "-z"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn();
+    let Ok(mut child) = child else {
+        return Default::default();
+    };
+    // Written from a thread so a large listing cannot deadlock against the stdout pipe.
+    let writer = child
+        .stdin
+        .take()
+        .map(|mut stdin| std::thread::spawn(move || stdin.write_all(&input)));
+    let out = child.wait_with_output();
+    if let Some(writer) = writer {
+        let _ = writer.join();
+    }
+    out.map(|o| {
+        String::from_utf8_lossy(&o.stdout)
+            .split('\0')
+            .filter(|p| !p.is_empty())
+            .map(String::from)
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 fn resolve(worktree: &Path, home: Option<&Path>, path: &str) -> Result<PathBuf> {

@@ -39,6 +39,8 @@ pub mod method {
     pub const REVIEW_CHECK_LOG: &str = "review.check_log";
     pub const REVIEW_CHECK_RERUN: &str = "review.check_rerun";
     pub const TASK_FILE: &str = "task.file";
+    pub const TASK_LIST_DIR: &str = "task.list_dir";
+    pub const TASK_DIFF_STAT: &str = "task.diff_stat";
     pub const TASK_RESTORE: &str = "task.restore";
     pub const TASK_DELETE_CHECK: &str = "task.delete_check";
     pub const TASK_DELETE: &str = "task.delete";
@@ -1418,6 +1420,36 @@ pub struct TaskFileResult {
     /// Modification time in milliseconds since the epoch.
     pub mtime: i64,
     pub content: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskListDirParams {
+    pub task_id: i64,
+    /// Worktree-relative; empty for the root.
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DirEntryKind {
+    File,
+    Dir,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DirEntry {
+    pub name: String,
+    /// Worktree-relative, `/`-separated.
+    pub path: String,
+    pub kind: DirEntryKind,
+    pub ignored: bool,
+    pub changed: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DiffStat {
+    pub added: u64,
+    pub removed: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
