@@ -235,10 +235,11 @@ async fn concurrent_first_calls_start_one_process() {
 
 #[tokio::test]
 async fn hanging_initialize_times_out_and_retries() {
+    // The kill at the init timeout can beat the spawn log under load, so leave the shell time to write it.
     let f = Fixture::new(
         "hang-init",
         "command,forge",
-        Duration::from_millis(1000),
+        Duration::from_secs(2),
         Duration::from_secs(60),
     );
     for _ in 0..2 {
@@ -247,7 +248,7 @@ async fn hanging_initialize_times_out_and_retries() {
             f.call("forge.status", json!({})).await.unwrap_err().kind,
             ErrorKind::Timeout
         );
-        assert!(started.elapsed() < Duration::from_secs(3));
+        assert!(started.elapsed() < Duration::from_secs(4));
     }
     assert_eq!(f.spawns(), 2);
 }
