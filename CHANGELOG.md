@@ -1,3 +1,9 @@
+## v0.21.0 (2026-11-11)
+
+### Feat
+
+- coherent desktop shell with file tree and activity feedback (#26)
+
 ## v0.20.1 (2026-11-11)
 
 ### Fix
