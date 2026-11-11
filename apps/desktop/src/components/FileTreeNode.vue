@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ChevronDown, ChevronRight, File, Folder } from '@lucide/vue';
-import { ref, watch } from 'vue';
+import { ChevronDown, ChevronRight, Folder, FolderOpen } from '@lucide/vue';
+import { computed, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
 import { openFile } from '../dock/main';
+import { fileIcon } from '../fileIcons';
 import type { DirEntry } from '../types';
 
 const props = defineProps<{ taskId: number; entry: DirEntry; depth: number; reload: number }>();
+const icon = computed(() => fileIcon(props.entry.name));
 
 const expanded = ref(false);
 const children = ref<DirEntry[]>([]);
@@ -46,9 +48,13 @@ watch(
     @click="click"
   >
     <template v-if="entry.kind === 'dir'">
-      <ChevronDown v-if="expanded" /><ChevronRight v-else /><Folder />
+      <ChevronDown v-if="expanded" /><ChevronRight v-else /><FolderOpen v-if="expanded" /><Folder
+        v-else
+      />
     </template>
-    <template v-else><span class="spacer" /><File /></template>
+    <template v-else
+      ><span class="spacer" /><component :is="icon.icon" :style="{ color: icon.color }"
+    /></template>
     <span class="name">{{ entry.name }}</span>
     <span v-if="entry.kind === 'dir' && entry.changed" class="dot" />
   </button>
