@@ -3025,7 +3025,10 @@ impl Daemon {
                 stored.agent_ref.is_some(),
                 self.hibernate_after(&config, &stored.session.kind),
             );
-            if candidate && !self.has_running_subagents(id) {
+            if candidate
+                && !self.has_running_subagents(id)
+                && !session.pty.pid().is_some_and(proc_stats::runs_shell)
+            {
                 // ponytail: a client attaching between this check and the kill sees its stream end; the next attach wakes the session.
                 session.hibernating.store(true, Ordering::Relaxed);
                 let _ = session.pty.kill();
@@ -3098,7 +3101,12 @@ impl Daemon {
                 let Ok(Some(detected)) = serde_json::from_value::<Option<Detected>>(reply) else {
                     continue;
                 };
-                if detected.idle {
+                // The agent is a child of the shell; only shells below it mean background work.
+                if detected.idle
+                    && !proc_stats::children(pid)
+                        .into_iter()
+                        .any(proc_stats::runs_shell)
+                {
                     {
                         let store = self.store();
                         store.set_session_kind(id, &kind)?;

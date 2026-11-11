@@ -236,8 +236,8 @@ async fn archived_task_does_not_wake() {
     );
 }
 
-/// A shell session running a process named `name`, quiet long enough to hibernate.
-async fn quiet_shell(name: &str) -> Fixture {
+/// A shell session running a process named `name` that does `work`, quiet long enough to hibernate.
+async fn quiet_shell(name: &str, work: &str) -> Fixture {
     let (home, repo, daemon, project) = setup();
     let task = daemon
         .create_task(TaskCreateParams {
@@ -260,7 +260,7 @@ async fn quiet_shell(name: &str) -> Fixture {
     daemon
         .send(SessionSendParams {
             session_id: session,
-            text: format!("sh -c 'echo $0-ok; sleep 30' {name}"),
+            text: format!("sh -c 'echo $0-ok; {work}' {name}"),
             submit: true,
         })
         .await
@@ -278,7 +278,7 @@ async fn quiet_shell(name: &str) -> Fixture {
 
 #[tokio::test]
 async fn idle_agent_in_a_shell_hibernates_as_an_agent_session() {
-    let f = quiet_shell("fake-agent").await;
+    let f = quiet_shell("fake-agent", "sleep 30").await;
     f.daemon.hibernate_shells().await.unwrap();
     wait_status(&f.daemon, f.session, SessionStatus::Hibernated).await;
     assert_eq!(
@@ -295,7 +295,19 @@ async fn idle_agent_in_a_shell_hibernates_as_an_agent_session() {
 
 #[tokio::test]
 async fn shell_without_an_agent_keeps_running() {
-    let f = quiet_shell("plain").await;
+    let f = quiet_shell("plain", "sleep 30").await;
+    f.daemon.hibernate_shells().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(running(&f.daemon), 1);
+    assert_eq!(
+        f.daemon.session(f.session).unwrap().kind,
+        SessionKind::Shell
+    );
+}
+
+#[tokio::test]
+async fn idle_agent_running_a_shell_keeps_running() {
+    let f = quiet_shell("fake-agent", "sh -c \"sleep 30; :\"").await;
     f.daemon.hibernate_shells().await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(running(&f.daemon), 1);
