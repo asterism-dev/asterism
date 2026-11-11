@@ -18,7 +18,8 @@ Click **+** (**Add project**) next to the computer name at the top of the sideba
 === "Clone repository"
 
     Enter a repository as `owner/repo`, an `https://…` URL or a `git@…` address and click **Clone**. The line
-    below the field shows where it will be cloned: `<repositories folder>/<owner>/<repo>`.
+    below the field shows where it will be cloned: `<repositories folder>/<owner>/<repo>`. While it runs, the dialog shows live progress steps; you can close it and
+    follow the clone in the top bar's **Activity** popover.
 
     If a forge plugin such as GitHub is set up and logged in, **Browse** lists the repositories of your
     account and organizations; **Filter repositories** narrows the list and clicking one fills in the field.
@@ -71,9 +72,9 @@ or expand it.
 
 Each task row shows:
 
-- the task title,
-- the linked issue key, if the task was created from an issue (click it to open the issue),
-- a pull request badge, if the task's branch has a pull request (see [below](#pull-request-status)),
+- the task title; hibernated (sleeping) tasks show a dimmed title and a sleep icon,
+- on a second line under the title: the linked issue key, if the task was created from an issue (click it to open the issue),
+- on that line too: a pull request badge, if the task's branch has a pull request (see [below](#pull-request-status)),
 - the time since the last activity (hover for the creation time),
 - a status indicator when one of its sessions is working or waiting for input (see
   [Sessions](sessions.md#session-status)).
@@ -84,8 +85,8 @@ task matches by title or branch. Press ++esc++ in the field to clear it, or ++cm
 The sort button next to **+** orders projects and tasks by **Alphabetical**, **Activity** or **Last added**
 (the default).
 
-When sessions are waiting for input, a bell with the count appears next to the computer name. Click it, or
-press ++cmd+j++, to jump to the next waiting session.
+When sessions are waiting for input, a bell with the count appears next to the computer name. Click it to open the Notifications view, or
+press ++cmd+j++ to jump to the next waiting session.
 
 Projects without tasks are folded into a **N more projects** row at the
 bottom of the list. Click it to show or hide them; the choice is remembered per workspace. While searching,

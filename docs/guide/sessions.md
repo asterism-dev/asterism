@@ -42,7 +42,8 @@ is derived from terminal activity.
 
 The sidebar only marks tasks with a session that is working or waiting for input. When a session starts
 waiting and you are not looking at it, Asterism sends a desktop notification. The bell in the
-sidebar shows how many sessions are waiting, and it and ++cmd+j++ jump to the next waiting session.
+sidebar counts waiting or unread notifications and opens the Notifications view; ++cmd+j++ jumps to the next
+waiting session.
 
 CLI: `asterism wait <SESSION> --until idle|waiting_input|exited [--timeout 10m]` blocks until a session reaches
 a status.
@@ -81,15 +82,13 @@ last.
 
 Review, Resources and files open as tabs in the task's session group.
 
-The top bar shows the project and branch of the selected task, with its issue and PR chips; click the branch to
-copy its name. Its buttons are:
+The top bar shows the project and branch of the selected task, with its issue and PR chips (the issue chip opens the issue). Click the branch for a menu with **Copy branch name**. Its buttons are:
 
 - **Activity**: a popover with a log of running and recent operations such as cloning and task creation. They keep
   running when you close their dialog.
-- **Open in**: opens the worktree in an app you choose; the button
-  remembers the last app.
+- **Open in**: a split button. The main button opens the worktree in the last app you used; the arrow picks another app.
 - **Files**: toggles the file tree bar on the right, which lists the worktree and marks changed files.
-- **Review**, with the number of changed lines.
+- **Review**, with the number of added lines.
 - **Resources**.
 - **⋯**: **Let tabs float** / **Lock tabs** and **Reset layout…**.
 
@@ -150,7 +149,7 @@ A failed GitHub Actions job has **Re-run**, which turns into **Re-run requested*
 
 ### Files changed
 
-A file tree on the left lists the changed files with status icons (added, modified, deleted, renamed), the number of
+The Review pane has its own file tree on the left (separate from the **Files** bar), which lists the changed files with status icons (added, modified, deleted, renamed), the number of
 comments per file and **✓** for viewed files; type in **Filter files…** to narrow it, and click a file to jump to
 its diff. **Side by side** switches between unified and split view. Files with more than 1000 changed lines, and
 every file after the first 30, start collapsed; click one to expand it.
