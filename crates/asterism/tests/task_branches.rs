@@ -117,6 +117,32 @@ async fn explicit_branches_name_the_branch_and_worktree() {
 }
 
 #[tokio::test]
+async fn create_task_reports_steps() {
+    let env = setup();
+    let created = env.daemon.create_task(params(&env, "steps")).await.unwrap();
+    let activity = &env.daemon.activities()[0];
+    assert_eq!(activity.status, ActivityStatus::Done);
+    assert_eq!(activity.task_id, Some(created.task.id));
+    let labels: Vec<_> = activity.steps.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(labels, ["Create worktree"]);
+}
+
+#[tokio::test]
+async fn conflict_creates_no_activity() {
+    let env = setup();
+    let err = env
+        .daemon
+        .create_task(TaskCreateParams {
+            checkout: Some("main".into()),
+            ..params(&env, "dup")
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::BranchExists);
+    assert!(env.daemon.activities().is_empty());
+}
+
+#[tokio::test]
 async fn invalid_explicit_branches_leave_no_task() {
     let env = setup();
     for bad in ["bad..name", "-x", "a@{1}"] {

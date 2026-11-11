@@ -225,6 +225,8 @@ pub struct ProjectMoveParams {
 pub struct ProjectCloneCopyParams {
     pub project_id: i64,
     pub workspace_id: i64,
+    #[serde(default)]
+    pub activity_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -770,6 +772,8 @@ pub struct ProjectCloneParams {
     pub forge: Option<String>,
     #[serde(default)]
     pub workspace_id: Option<i64>,
+    #[serde(default)]
+    pub activity_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -849,6 +853,8 @@ pub struct TaskCreateParams {
     pub push: bool,
     #[serde(default)]
     pub on_conflict: Option<OnConflict>,
+    #[serde(default)]
+    pub activity_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -424,7 +424,12 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             let p = params::<ProjectCloneParams>(raw)?;
             to_value(
                 daemon
-                    .clone_project(&p.source, p.forge.as_deref(), p.workspace_id)
+                    .clone_project(
+                        &p.source,
+                        p.forge.as_deref(),
+                        p.workspace_id,
+                        p.activity_token,
+                    )
                     .await?,
             )
         }

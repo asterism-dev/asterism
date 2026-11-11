@@ -1546,10 +1546,17 @@ impl Daemon {
         source: &str,
         forge: Option<&str>,
         workspace_id: Option<i64>,
+        token: Option<String>,
     ) -> Result<Project> {
         let workspace = self.resolve_workspace(workspace_id)?;
         let source = repo_source::parse_source(source)?;
         let target = self.new_repo_dir(&workspace, &source.owner, &source.repo)?;
+        let activity = self.start_activity(
+            ActivityKind::Clone,
+            format!("Clone {}/{}", source.owner, source.repo),
+            token,
+            &["Clone repository", "Register project"],
+        );
         let cloned = match &source.url {
             Some(url) => self.git_clone(url.clone(), target.clone()).await,
             None => {
@@ -1560,9 +1567,20 @@ impl Daemon {
         if let Err(e) = cloned {
             // A half-cloned directory would block the next attempt.
             let _ = std::fs::remove_dir_all(&target);
+            self.fail_activity_step(activity, e.message.clone(), true);
             return Err(e);
         }
-        self.add_project_in(&target.to_string_lossy(), Some(workspace.id))
+        self.advance_activity(activity, None);
+        let project = match self.add_project_in(&target.to_string_lossy(), Some(workspace.id)) {
+            Ok(project) => project,
+            Err(e) => {
+                self.fail_activity_step(activity, e.message.clone(), true);
+                return Err(e);
+            }
+        };
+        self.set_activity_refs(activity, Some(project.id), None);
+        self.advance_activity(activity, None);
+        Ok(project)
     }
 
     pub async fn clone_copy(self: &Arc<Self>, p: ProjectCloneCopyParams) -> Result<Project> {
@@ -1582,7 +1600,7 @@ impl Daemon {
                 project.name
             ))
         })?;
-        self.clone_project(&origin, None, Some(p.workspace_id))
+        self.clone_project(&origin, None, Some(p.workspace_id), p.activity_token)
             .await
     }
 
@@ -1827,6 +1845,24 @@ impl Daemon {
         let id = self
             .store()
             .insert_task(project.id, &title, params.prompt.as_deref(), &base)?;
+        let push_wanted = params.push
+            && new_branch.is_some()
+            && reuse.is_none()
+            && git::remote_url(&repo, "origin").is_some();
+        let mut steps = vec!["Create worktree"];
+        if push_wanted {
+            steps.push("Push branch");
+        }
+        if params.agent.is_some() {
+            steps.push("Start agent");
+        }
+        let activity = self.start_activity(
+            ActivityKind::CreateTask,
+            title.clone(),
+            params.activity_token.clone(),
+            &steps,
+        );
+        self.set_activity_refs(activity, Some(project.id), Some(id));
         let (slug, branch) = match explicit {
             Some(b) => (b.to_string(), b.to_string()),
             None => match (&params.issue, issue_name) {
@@ -1863,20 +1899,23 @@ impl Daemon {
         };
         if let Err(e) = added {
             self.store().delete_task(id)?;
+            self.fail_activity_step(activity, e.message.clone(), true);
             return Err(e);
         }
+        self.advance_activity(activity, None);
         self.store()
             .set_task_location(id, &slug, &branch, &worktree.to_string_lossy())?;
         let warning = if diverged.is_some() {
             diverged
-        } else if params.push
-            && new_branch.is_some()
-            && reuse.is_none()
-            && git::remote_url(&repo, "origin").is_some()
-        {
-            git::push_upstream(&worktree, "origin", &branch, &self.options.git_env)
+        } else if push_wanted {
+            let pushed = git::push_upstream(&worktree, "origin", &branch, &self.options.git_env)
                 .err()
-                .map(|e| format!("Couldn't push `{branch}` to origin: {}", e.message))
+                .map(|e| format!("Couldn't push `{branch}` to origin: {}", e.message));
+            match &pushed {
+                Some(warning) => self.fail_activity_step(activity, warning.clone(), false),
+                None => self.advance_activity(activity, None),
+            }
+            pushed
         } else {
             None
         };
@@ -1897,16 +1936,27 @@ impl Daemon {
         self.emit(Event::TaskChanged(task.clone()));
 
         let session = match params.agent {
-            Some(name) => Some(
-                self.start_session(SessionStartParams {
-                    task_id: id,
-                    kind: SessionKind::Agent { name },
-                    prompt: params.prompt,
-                })
-                .await?,
-            ),
+            Some(name) => {
+                let started = self
+                    .start_session(SessionStartParams {
+                        task_id: id,
+                        kind: SessionKind::Agent { name },
+                        prompt: params.prompt,
+                    })
+                    .await;
+                match started {
+                    Ok(session) => Some(session),
+                    Err(e) => {
+                        self.fail_activity_step(activity, e.message.clone(), true);
+                        return Err(e);
+                    }
+                }
+            }
             None => None,
         };
+        if session.is_some() {
+            self.advance_activity(activity, None);
+        }
         Ok(TaskCreateResult {
             task,
             session,
