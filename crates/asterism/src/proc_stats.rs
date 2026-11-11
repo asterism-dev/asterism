@@ -18,6 +18,15 @@ pub fn tree(pid: u32) -> Vec<u32> {
     pids
 }
 
+const SHELLS: [&str; 4] = ["sh", "bash", "zsh", "fish"];
+
+/// Whether a shell runs below `pid`; agents run their tool commands, background ones included, in one.
+pub fn runs_shell(pid: u32) -> bool {
+    tree(pid)[1..]
+        .iter()
+        .any(|&p| name(p).is_some_and(|n| SHELLS.contains(&n.trim_start_matches('-'))))
+}
+
 /// Turns cumulative CPU times into a percentage of one core since the previous call.
 #[derive(Default)]
 pub struct CpuTracker {
@@ -57,7 +66,21 @@ impl CpuTracker {
 }
 
 #[cfg(target_os = "macos")]
-fn children(pid: u32) -> Vec<u32> {
+fn name(pid: u32) -> Option<String> {
+    let mut buf = [0u8; 256];
+    // SAFETY: the buffer is valid for its length and the call writes at most that many bytes.
+    let len = unsafe {
+        libc::proc_name(
+            pid as libc::c_int,
+            buf.as_mut_ptr().cast(),
+            buf.len() as u32,
+        )
+    };
+    (len > 0).then(|| String::from_utf8_lossy(&buf[..len as usize]).into_owned())
+}
+
+#[cfg(target_os = "macos")]
+pub fn children(pid: u32) -> Vec<u32> {
     let mut buf = vec![0 as libc::pid_t; 1024];
     let size = (buf.len() * std::mem::size_of::<libc::pid_t>()) as libc::c_int;
     // SAFETY: the buffer is valid for `size` bytes and the call writes at most that many.
@@ -121,7 +144,13 @@ fn stat_fields(pid: u32) -> Option<Vec<String>> {
 }
 
 #[cfg(target_os = "linux")]
-fn children(pid: u32) -> Vec<u32> {
+fn name(pid: u32) -> Option<String> {
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+    Some(comm.trim_end().to_owned())
+}
+
+#[cfg(target_os = "linux")]
+pub fn children(pid: u32) -> Vec<u32> {
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return Vec::new();
     };
@@ -172,6 +201,24 @@ mod tests {
         assert_eq!(pids[0], pid);
         assert!(pids.len() >= 2, "sleep should be a child of sh: {pids:?}");
         assert!(sample(std::process::id()).unwrap().memory_bytes > 0);
+    }
+
+    #[test]
+    fn runs_shell_sees_nested_shells_but_not_the_root() {
+        let spawn = |script: &str| Command::new("sh").args(["-c", script]).spawn().unwrap();
+        let mut plain = spawn("sleep 30; :");
+        let mut nested = spawn("sh -c 'sleep 30; :'; :");
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        while tree(nested.id()).len() < 3 && Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let (plain_shell, nested_shell) = (runs_shell(plain.id()), runs_shell(nested.id()));
+        for child in [&mut plain, &mut nested] {
+            child.kill().unwrap();
+            child.wait().unwrap();
+        }
+        assert!(!plain_shell);
+        assert!(nested_shell);
     }
 
     #[test]
