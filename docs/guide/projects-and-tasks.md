@@ -84,7 +84,7 @@ task matches by title or branch. Press ++esc++ in the field to clear it, or ++cm
 The sort button next to **+** orders projects and tasks by **Alphabetical**, **Activity** or **Last added**
 (the default).
 
-When sessions are waiting for input, a **N waiting** badge appears next to the computer name. Click it, or
+When sessions are waiting for input, a bell with the count appears next to the computer name. Click it, or
 press ++cmd+j++, to jump to the next waiting session.
 
 Projects without tasks are folded into a **N more projects** row at the
