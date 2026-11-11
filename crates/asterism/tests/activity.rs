@@ -64,3 +64,28 @@ fn changes_are_broadcast() {
     let id = start(&d, &["a"]);
     assert!(matches!(rx.try_recv(), Ok(Event::ActivityChanged(a)) if a.id == id));
 }
+
+#[test]
+fn advancing_a_finished_activity_changes_nothing() {
+    let (_home, d) = daemon();
+    let id = start(&d, &["a"]);
+    d.advance_activity(id, None);
+    let done = d.activities()[0].clone();
+    d.advance_activity(id, Some("late".into()));
+    d.fail_activity_step(id, "late".into(), true);
+    assert_eq!(d.activities()[0], done);
+}
+
+#[tokio::test]
+async fn dropped_clone_fails_its_activity() {
+    let (_home, d) = daemon();
+    let timed_out = tokio::time::timeout(
+        std::time::Duration::ZERO,
+        d.clone_project("https://127.0.0.1:1/o/r.git", None, None, None),
+    )
+    .await;
+    assert!(timed_out.is_err());
+    let a = &d.activities()[0];
+    assert_eq!(a.status, ActivityStatus::Failed);
+    assert_eq!(a.steps[0].detail.as_deref(), Some("Interrupted"));
+}

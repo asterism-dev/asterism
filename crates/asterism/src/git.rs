@@ -334,8 +334,12 @@ pub fn diff_stat(worktree: &Path, base: &str) -> Result<DiffStat> {
         stat.removed += cols.next().and_then(|n| n.parse().ok()).unwrap_or(0);
     }
     for file in untracked(worktree)? {
-        if let Ok(bytes) = std::fs::read(worktree.join(file)) {
-            if !bytes.contains(&0) {
+        let path = worktree.join(file);
+        if std::fs::metadata(&path).map_or(true, |m| m.len() > crate::files::MAX_BYTES) {
+            continue;
+        }
+        if let Ok(bytes) = std::fs::read(path) {
+            if !bytes[..bytes.len().min(crate::files::SNIFF_BYTES)].contains(&0) {
                 stat.added += bytes.iter().filter(|&&b| b == b'\n').count() as u64
                     + u64::from(bytes.last().is_some_and(|&b| b != b'\n'));
             }

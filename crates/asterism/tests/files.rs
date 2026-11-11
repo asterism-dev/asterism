@@ -72,6 +72,7 @@ fn diff_stat_counts_tracked_and_untracked() {
     run_git(root, &["commit", "-q", "-m", "two"]);
     fs::write(root.join("two.txt"), "c\nd\n").unwrap();
     fs::write(root.join("new.txt"), "1\n2\n3\n").unwrap();
+    fs::write(root.join("huge.txt"), "x\n".repeat(1024 * 1024 + 1)).unwrap();
     let stat = git::diff_stat(root, "main").unwrap();
     assert_eq!(
         stat,

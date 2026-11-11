@@ -454,6 +454,7 @@ async fn shorthand_with_an_unknown_explicit_forge_cleans_up() {
     assert_eq!(err.kind, ErrorKind::InvalidParams);
     assert!(err.message.contains("not an installed forge"));
     assert!(!env.home.path().join("h/repos/acme/demo").exists());
+    assert!(env.daemon.activities().is_empty());
 }
 
 #[tokio::test]

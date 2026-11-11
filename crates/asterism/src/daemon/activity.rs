@@ -54,6 +54,9 @@ impl Daemon {
     #[doc(hidden)]
     pub fn advance_activity(&self, id: i64, detail: Option<String>) {
         self.update_activity(id, |a| {
+            if a.status != ActivityStatus::Running {
+                return;
+            }
             if let Some(step) = current_step(a) {
                 step.status = ActivityStatus::Done;
                 step.detail = detail;
@@ -65,6 +68,9 @@ impl Daemon {
     #[doc(hidden)]
     pub fn fail_activity_step(&self, id: i64, error: String, fatal: bool) {
         self.update_activity(id, |a| {
+            if a.status != ActivityStatus::Running {
+                return;
+            }
             if let Some(step) = current_step(a) {
                 step.status = ActivityStatus::Failed;
                 step.detail = Some(error);
@@ -101,6 +107,20 @@ impl Daemon {
         if let Some(activity) = updated {
             self.emit(Event::ActivityChanged(activity));
         }
+    }
+}
+
+/// Fails a still-running activity when its future is dropped mid-flight; a no-op once finished.
+#[doc(hidden)]
+pub struct ActivityGuard<'a> {
+    pub daemon: &'a Daemon,
+    pub id: i64,
+}
+
+impl Drop for ActivityGuard<'_> {
+    fn drop(&mut self) {
+        self.daemon
+            .fail_activity_step(self.id, "Interrupted".into(), true);
     }
 }
 

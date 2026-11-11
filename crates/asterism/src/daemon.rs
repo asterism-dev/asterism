@@ -1550,6 +1550,10 @@ impl Daemon {
     ) -> Result<Project> {
         let workspace = self.resolve_workspace(workspace_id)?;
         let source = repo_source::parse_source(source)?;
+        let forge = match &source.url {
+            Some(_) => String::new(),
+            None => self.resolve_forge(forge)?,
+        };
         let target = self.new_repo_dir(&workspace, &source.owner, &source.repo)?;
         let activity = self.start_activity(
             ActivityKind::Clone,
@@ -1557,10 +1561,14 @@ impl Daemon {
             token,
             &["Clone repository", "Register project"],
         );
+        let _guard = activity::ActivityGuard {
+            daemon: self,
+            id: activity,
+        };
         let cloned = match &source.url {
             Some(url) => self.git_clone(url.clone(), target.clone()).await,
             None => {
-                self.clone_shorthand(forge, &source.owner, &source.repo, &target)
+                self.clone_shorthand(&forge, &source.owner, &source.repo, &target)
                     .await
             }
         };
@@ -1614,13 +1622,12 @@ impl Daemon {
     /// `owner/repo` goes to the default forge: its own clone when signed in, else anonymous HTTPS.
     async fn clone_shorthand(
         &self,
-        forge: Option<&str>,
+        forge: &str,
         owner: &str,
         repo: &str,
         target: &Path,
     ) -> Result<()> {
-        let forge = self.resolve_forge(forge)?;
-        if forge_clone_wanted(self.forge_status(&forge).await)? {
+        if forge_clone_wanted(self.forge_status(forge).await)? {
             let params = CloneParams {
                 owner: owner.to_string(),
                 repo: repo.to_string(),
@@ -1628,14 +1635,14 @@ impl Daemon {
                 git_env: git::clone_env(&self.options.git_env),
             };
             return self
-                .forge_call::<_, Value>(&forge, protocol::method::FORGE_CLONE, params, None)
+                .forge_call::<_, Value>(forge, protocol::method::FORGE_CLONE, params, None)
                 .await
                 .map(|_| ());
         }
         let host = self
             .plugin_set()
             .registry
-            .forge(&forge)
+            .forge(forge)
             .and_then(|(_, f)| f.hosts.first().cloned());
         let host = host.ok_or_else(|| {
             Error::new(
@@ -1862,6 +1869,10 @@ impl Daemon {
             params.activity_token.clone(),
             &steps,
         );
+        let _guard = activity::ActivityGuard {
+            daemon: self,
+            id: activity,
+        };
         self.set_activity_refs(activity, Some(project.id), Some(id));
         let outcome = async {
             let (slug, branch) = match explicit {

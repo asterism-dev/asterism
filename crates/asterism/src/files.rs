@@ -9,8 +9,8 @@ use asterism_proto::types::{DirEntry, DirEntryKind, TaskFileResult};
 
 use crate::error::{Error, Result};
 
-const MAX_BYTES: u64 = 2 * 1024 * 1024;
-const SNIFF_BYTES: usize = 8 * 1024;
+pub(crate) const MAX_BYTES: u64 = 2 * 1024 * 1024;
+pub(crate) const SNIFF_BYTES: usize = 8 * 1024;
 
 /// Reads a text file for display; relative paths resolve against `worktree`, `~/` against `home`.
 pub fn read(
