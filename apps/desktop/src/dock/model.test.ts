@@ -123,4 +123,15 @@ describe('layout model', () => {
     });
     expect(parseSidebar('garbage')).toEqual({ width: SIDEBAR.initial, open: true });
   });
+
+  it('places unrequested panes within the session group', () => {
+    const groups = [
+      { id: 'g1', hasSession: false },
+      { id: 'g2', hasSession: true },
+    ];
+    expect(placementPosition(undefined, groups, null)).toEqual({
+      referenceGroup: 'g2',
+      direction: 'within',
+    });
+  });
 });

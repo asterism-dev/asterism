@@ -93,7 +93,7 @@ function copyBranch() {
         :class="{ active: paneState('activity') === 'front' }"
         @click="togglePane('activity')"
       >
-        <Activity />Activity Monitor
+        <Activity />Resources
       </button>
       <button
         class="icon"
