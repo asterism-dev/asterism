@@ -52,7 +52,8 @@ const hasSession = (g: DockviewGroupPanel) => g.panels.some((p) => sessionIdOf(p
 /** Adds a panel as a tab in the session group, never as a new column. */
 function addToMain(api: DockviewApi, panel: Omit<AddPanelOptions, 'position' | 'floating'>) {
   const groups = gridGroups(api).map((g) => ({ id: g.id, hasSession: hasSession(g) }));
-  const position = placementPosition(undefined, groups, null);
+  const found = placementPosition(undefined, groups, null);
+  const position = found && { ...found, direction: 'within' as const };
   api.addPanel({ ...panel, ...(position && { position }) });
 }
 

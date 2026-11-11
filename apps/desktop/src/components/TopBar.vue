@@ -26,7 +26,7 @@ import {
 import { sidebar } from '../dock/sidebar';
 import { isTreeOpen, setTreeOpen } from '../fileTreeBar';
 import { withHint } from '../shortcuts';
-import { showMenu, state, toast } from '../store';
+import { showMenu, state, taskStatus, toast } from '../store';
 import ActivityMenu from './ActivityMenu.vue';
 import OpenInButton from './OpenInButton.vue';
 import PrBadge from './PrBadge.vue';
@@ -45,9 +45,13 @@ const running = computed(() => anyRunning(state.activities));
 const added = ref(0);
 
 watch(
-  [() => task.value?.id, () => (task.value ? state.reviewVersion[task.value.id] : undefined)],
-  ([id]) => {
-    added.value = 0;
+  [
+    () => task.value?.id,
+    () => (task.value ? state.reviewVersion[task.value.id] : undefined),
+    () => (task.value ? taskStatus(state, task.value.id) !== 'working' : undefined),
+  ],
+  ([id], [prevId]) => {
+    if (id !== prevId) added.value = 0;
     if (id === undefined) return;
     api
       .diffStat(id)

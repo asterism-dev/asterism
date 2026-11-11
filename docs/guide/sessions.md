@@ -196,7 +196,7 @@ fails when the task has no pull request; `--log CHECK_ID` prints one check's log
 ## File tabs
 
 ++cmd++-clicking a file path in a terminal opens it in a file tab with syntax highlighting, jumping to the line
-if one was given. The tab updates when the file changes on disk.
+if one was given. Clicking a file in the **Files** bar opens it too. The tab updates when the file changes on disk.
 
 ## Resources
 

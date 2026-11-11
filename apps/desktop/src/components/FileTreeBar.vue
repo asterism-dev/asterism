@@ -2,7 +2,7 @@
 import { ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
 import { TREE_WIDTH, setTreeWidth, treeWidth } from '../fileTreeBar';
-import { state } from '../store';
+import { state, taskStatus } from '../store';
 import type { DirEntry } from '../types';
 import FileTreeNode from './FileTreeNode.vue';
 import PaneHandle from './PaneHandle.vue';
@@ -14,7 +14,11 @@ const error = ref('');
 const reload = ref(0);
 
 watch(
-  [() => props.taskId, () => state.reviewVersion[props.taskId]],
+  [
+    () => props.taskId,
+    () => state.reviewVersion[props.taskId],
+    () => taskStatus(state, props.taskId) !== 'working',
+  ],
   ([id], [prevId]) => {
     if (id !== prevId) root.value = [];
     reload.value++;
