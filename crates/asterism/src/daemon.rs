@@ -2590,6 +2590,7 @@ impl Daemon {
         prompt: Option<&str>,
         agent_ref: Option<&str>,
         cwd: &Path,
+        session_name: Option<String>,
     ) -> Result<Option<(Vec<String>, Vec<(String, String)>)>> {
         let (plugin, decl) = self.agent_decl(name)?;
         let settings =
@@ -2612,6 +2613,7 @@ impl Daemon {
                     agent_ref: agent_ref.map(String::from),
                     settings,
                     cwd: cwd.display().to_string(),
+                    name: session_name,
                 };
                 let params = serde_json::to_value(params)
                     .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
@@ -2658,6 +2660,7 @@ impl Daemon {
                         params.prompt.as_deref(),
                         None,
                         Path::new(&task.worktree_path),
+                        Some(session_name(&task)),
                     )
                     .await?;
                 launched.ok_or_else(|| {
@@ -3230,6 +3233,7 @@ impl Daemon {
                     None,
                     agent_ref,
                     Path::new(&task.worktree_path),
+                    Some(session_name(task)),
                 )
                 .await
             }
@@ -3566,6 +3570,21 @@ pub fn slugify(id: i64, title: &str) -> String {
     }
 }
 
+/// Issue tasks usually carry the key in their title already, so it is only prefixed when missing.
+pub fn session_name(task: &Task) -> String {
+    match &task.issue {
+        Some(issue)
+            if !task
+                .title
+                .to_lowercase()
+                .contains(&issue.key.to_lowercase()) =>
+        {
+            format!("{} {}", issue.key, task.title)
+        }
+        _ => task.title.clone(),
+    }
+}
+
 /// `<key>-<title>` as a branch-safe slug; empty when neither has letters or digits.
 pub fn issue_name(key: &str, title: &str) -> String {
     let joined = [slug_text(key), slug_text(title)]
@@ -3608,6 +3627,24 @@ fn same_path(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_name_prefixes_a_missing_issue_key() {
+        let mut task: Task = serde_json::from_value(serde_json::json!({
+            "id": 1, "project_id": 1, "title": "fix parser", "slug": "s", "branch": "b",
+            "base_branch": "main", "worktree_path": "/w", "prompt": null, "archived": false,
+        }))
+        .unwrap();
+        assert_eq!(session_name(&task), "fix parser");
+        task.issue = Some(IssueRef {
+            source: "linear".into(),
+            key: "TRA-1".into(),
+            url: "u".into(),
+        });
+        assert_eq!(session_name(&task), "TRA-1 fix parser");
+        task.title = "tra-1-fix-parser".into();
+        assert_eq!(session_name(&task), "tra-1-fix-parser");
+    }
 
     #[test]
     fn plugin_env_strips_agent_variables_and_appends_extras_last() {

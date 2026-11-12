@@ -27,6 +27,7 @@ async fn claude_argv_comes_from_the_claude_plugin() {
             Some("fix it"),
             None,
             home.path(),
+            None,
         )
         .await
         .unwrap()
@@ -50,7 +51,7 @@ async fn claude_argv_comes_from_the_claude_plugin() {
     );
     assert_eq!(
         daemon
-            .agent_argv("claude", LaunchMode::Resume, None, None, home.path())
+            .agent_argv("claude", LaunchMode::Resume, None, None, home.path(), None)
             .await
             .unwrap(),
         None
@@ -146,7 +147,14 @@ async fn claude_resume_argv_ends_with_the_agent_ref() {
     let home = tempfile::tempdir().unwrap();
     let daemon = daemon(home.path());
     let (argv, _env) = daemon
-        .agent_argv("claude", LaunchMode::Resume, None, Some("abc"), home.path())
+        .agent_argv(
+            "claude",
+            LaunchMode::Resume,
+            None,
+            Some("abc"),
+            home.path(),
+            None,
+        )
         .await
         .unwrap()
         .unwrap();
