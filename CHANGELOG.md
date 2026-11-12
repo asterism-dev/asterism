@@ -1,3 +1,9 @@
+## v0.22.0 (2026-11-12)
+
+### Feat
+
+- name Claude sessions after their task and issue (#27)
+
 ## v0.21.0 (2026-11-11)
 
 ### Feat
