@@ -510,6 +510,35 @@ pub fn fetch_branch(repo: &Path, remote: &str, branch: &str, extra: &GitEnv) -> 
     .map(|_| ())
 }
 
+/// Fast-forwards the local branch behind `remote_ref` (`origin/main` → `main`); skips a missing, diverged or dirty-checked-out branch.
+pub fn fast_forward_local(repo: &Path, remote_ref: &str) -> Result<()> {
+    let Some((_, name)) = remote_ref.split_once('/') else {
+        return Ok(());
+    };
+    let local = format!("refs/heads/{name}");
+    let Ok(old) = git(repo, &["rev-parse", "--verify", "-q", &local]) else {
+        return Ok(());
+    };
+    let old = old.trim();
+    if resolves_to(repo, remote_ref, old)
+        || git(repo, &["merge-base", "--is-ancestor", old, remote_ref]).is_err()
+    {
+        return Ok(());
+    }
+    match worktrees(repo)?
+        .into_iter()
+        .find(|w| w.branch.as_deref() == Some(name))
+    {
+        Some(w) if is_dirty(Path::new(&w.path))? => Ok(()),
+        Some(w) => git(
+            Path::new(&w.path),
+            &["merge", "--ff-only", "-q", remote_ref],
+        )
+        .map(|_| ()),
+        None => git(repo, &["update-ref", &local, remote_ref, old]).map(|_| ()),
+    }
+}
+
 // ponytail: bounded only by clone_env's low-speed and SSH connect timeouts; add a hard deadline if pushes hang.
 /// Publishes a just-created branch; pre-push hooks are skipped because a fresh worktree lacks their dependencies.
 pub fn push_upstream(worktree: &Path, remote: &str, branch: &str, extra: &GitEnv) -> Result<()> {
