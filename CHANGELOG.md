@@ -1,3 +1,9 @@
+## v0.24.0 (2026-11-13)
+
+### Feat
+
+- count background work as working session status (#29)
+
 ## v0.23.0 (2026-11-13)
 
 ### Feat
