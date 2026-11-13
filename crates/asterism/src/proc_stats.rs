@@ -18,13 +18,11 @@ pub fn tree(pid: u32) -> Vec<u32> {
     pids
 }
 
-const SHELLS: [&str; 4] = ["sh", "bash", "zsh", "fish"];
-
-/// Whether a shell runs below `pid`; agents run their tool commands, background ones included, in one.
-pub fn runs_shell(pid: u32) -> bool {
+/// Whether a process below `pid` has `marker` in its command line; agents tag their tool shells, background ones included.
+pub fn runs_marked(pid: u32, marker: &str) -> bool {
     tree(pid)[1..]
         .iter()
-        .any(|&p| name(p).is_some_and(|n| SHELLS.contains(&n.trim_start_matches('-'))))
+        .any(|&p| cmdline(p).is_some_and(|c| c.contains(marker)))
 }
 
 /// Turns cumulative CPU times into a percentage of one core since the previous call.
@@ -66,20 +64,6 @@ impl CpuTracker {
 }
 
 #[cfg(target_os = "macos")]
-fn name(pid: u32) -> Option<String> {
-    let mut buf = [0u8; 256];
-    // SAFETY: the buffer is valid for its length and the call writes at most that many bytes.
-    let len = unsafe {
-        libc::proc_name(
-            pid as libc::c_int,
-            buf.as_mut_ptr().cast(),
-            buf.len() as u32,
-        )
-    };
-    (len > 0).then(|| String::from_utf8_lossy(&buf[..len as usize]).into_owned())
-}
-
-#[cfg(target_os = "macos")]
 pub fn children(pid: u32) -> Vec<u32> {
     let mut buf = vec![0 as libc::pid_t; 1024];
     let size = (buf.len() * std::mem::size_of::<libc::pid_t>()) as libc::c_int;
@@ -91,6 +75,51 @@ pub fn children(pid: u32) -> Vec<u32> {
         .filter(|&p| p > 0)
         .map(|p| p as u32)
         .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn cmdline(pid: u32) -> Option<String> {
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as libc::c_int];
+    let mut size: libc::size_t = 0;
+    // SAFETY: a null buffer only asks the kernel for the needed size.
+    let ok = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if ok != 0 {
+        return None;
+    }
+    let mut buf = vec![0u8; size];
+    // SAFETY: the buffer is valid for `size` bytes and the call writes at most that many.
+    let ok = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            buf.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if ok != 0 || size < 4 {
+        return None;
+    }
+    // Layout: argc, executable path, NUL padding, then argc NUL-terminated args followed by the environment.
+    let argc = i32::from_ne_bytes(buf[..4].try_into().ok()?).max(0) as usize;
+    let args = buf[4..size]
+        .split(|&b| b == 0)
+        .filter(|part| !part.is_empty())
+        .skip(1)
+        .take(argc)
+        .map(String::from_utf8_lossy)
+        .collect::<Vec<_>>();
+    Some(args.join(" "))
 }
 
 // Declared here because libc deprecates its copy in favour of the mach2 crate.
@@ -144,9 +173,9 @@ fn stat_fields(pid: u32) -> Option<Vec<String>> {
 }
 
 #[cfg(target_os = "linux")]
-fn name(pid: u32) -> Option<String> {
-    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
-    Some(comm.trim_end().to_owned())
+fn cmdline(pid: u32) -> Option<String> {
+    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    Some(String::from_utf8_lossy(&raw).replace('\0', " "))
 }
 
 #[cfg(target_os = "linux")]
@@ -204,21 +233,26 @@ mod tests {
     }
 
     #[test]
-    fn runs_shell_sees_nested_shells_but_not_the_root() {
+    fn runs_marked_sees_tagged_descendants_but_not_the_root() {
         let spawn = |script: &str| Command::new("sh").args(["-c", script]).spawn().unwrap();
-        let mut plain = spawn("sleep 30; :");
-        let mut nested = spawn("sh -c 'sleep 30; :'; :");
+        let mut plain = spawn("sleep 30; : bg-marker");
+        let mut nested = spawn("sh -c 'sleep 30; : bg-marker'; :");
         let deadline = Instant::now() + std::time::Duration::from_secs(5);
         while tree(nested.id()).len() < 3 && Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        let (plain_shell, nested_shell) = (runs_shell(plain.id()), runs_shell(nested.id()));
+        let (plain_hit, nested_hit, other) = (
+            runs_marked(plain.id(), "bg-marker"),
+            runs_marked(nested.id(), "bg-marker"),
+            runs_marked(nested.id(), "not-there"),
+        );
         for child in [&mut plain, &mut nested] {
             child.kill().unwrap();
             child.wait().unwrap();
         }
-        assert!(!plain_shell);
-        assert!(nested_shell);
+        assert!(!plain_hit);
+        assert!(nested_hit);
+        assert!(!other);
     }
 
     #[test]

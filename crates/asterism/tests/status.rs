@@ -1,4 +1,4 @@
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,7 +17,7 @@ fn start(argv: &[&str], patterns: Vec<String>, hooks: bool) -> watch::Receiver<S
     } else {
         SessionStatus::Working
     };
-    start_in(argv, patterns, hooks, initial)
+    start_in(argv, patterns, hooks, initial, Arc::new(|| false))
 }
 
 fn start_in(
@@ -25,6 +25,7 @@ fn start_in(
     patterns: Vec<String>,
     hooks: bool,
     initial: SessionStatus,
+    busy: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> watch::Receiver<SessionStatus> {
     let pty = Pty::spawn(SpawnSpec {
         argv: argv.iter().map(|s| s.to_string()).collect(),
@@ -41,6 +42,7 @@ fn start_in(
         Arc::new(tx),
         Arc::new(AtomicBool::new(hooks)),
         Arc::new(std::sync::Mutex::new(tokio::time::Instant::now())),
+        busy,
     ));
     rx
 }
@@ -129,6 +131,7 @@ async fn hook_driven_work_ends_only_after_output_goes_quiet() {
         vec![],
         true,
         SessionStatus::Working,
+        Arc::new(|| false),
     );
     tokio::time::sleep(Duration::from_millis(2500)).await;
     assert_eq!(*rx.borrow(), SessionStatus::Working);
@@ -142,7 +145,25 @@ async fn silence_keeps_hook_driven_waiting_input() {
         vec![],
         true,
         SessionStatus::WaitingInput,
+        Arc::new(|| false),
     );
     tokio::time::sleep(Duration::from_millis(2800)).await;
     assert_eq!(*rx.borrow(), SessionStatus::WaitingInput);
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_work_keeps_hook_driven_sessions_working() {
+    let busy = Arc::new(AtomicBool::new(true));
+    let flag = busy.clone();
+    let mut rx = start_in(
+        &["sh", "-c", "echo hi; sleep 600"],
+        vec![],
+        true,
+        SessionStatus::Working,
+        Arc::new(move || flag.load(Ordering::Relaxed)),
+    );
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    assert_eq!(*rx.borrow(), SessionStatus::Working);
+    busy.store(false, Ordering::Relaxed);
+    reaches(&mut rx, SessionStatus::Idle).await;
 }

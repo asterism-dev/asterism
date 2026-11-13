@@ -2751,13 +2751,25 @@ impl Daemon {
             stopping: AtomicBool::new(false),
         });
         lock(&self.live).insert(id, live.clone());
-        let waiting_patterns: Arc<[String]> = match kind {
-            SessionKind::Agent { name } => self
-                .agent_decl(name)
-                .map(|(_, d)| d.waiting_patterns)
-                .unwrap_or_default()
-                .into(),
-            _ => Arc::from(Vec::new()),
+        let decl = match kind {
+            SessionKind::Agent { name } => self.agent_decl(name).ok().map(|(_, d)| d),
+            _ => None,
+        };
+        let waiting_patterns: Arc<[String]> = decl
+            .as_ref()
+            .map(|d| d.waiting_patterns.clone())
+            .unwrap_or_default()
+            .into();
+        let marker = decl.and_then(|d| d.background_marker);
+        let busy = {
+            let daemon = self.clone();
+            let pty = pty.clone();
+            move || {
+                daemon.has_running_subagents(id)
+                    || marker.as_deref().is_some_and(|m| {
+                        pty.pid().is_some_and(|pid| proc_stats::runs_marked(pid, m))
+                    })
+            }
         };
         tokio::spawn(status::track(
             pty.clone(),
@@ -2765,6 +2777,7 @@ impl Daemon {
             live.status.clone(),
             live.hooks_active.clone(),
             live.last_output.clone(),
+            Arc::new(busy),
         ));
 
         let daemon = self.clone();
@@ -3125,10 +3138,7 @@ impl Daemon {
                 stored.agent_ref.is_some(),
                 self.hibernate_after(&config, &stored.session.kind),
             );
-            if candidate
-                && !self.has_running_subagents(id)
-                && !session.pty.pid().is_some_and(proc_stats::runs_shell)
-            {
+            if candidate {
                 // ponytail: a client attaching between this check and the kill sees its stream end; the next attach wakes the session.
                 session.hibernating.store(true, Ordering::Relaxed);
                 let _ = session.pty.kill();
@@ -3154,12 +3164,18 @@ impl Daemon {
             .filter(|s| s.session.kind == SessionKind::Shell)
             .map(|s| s.session.id)
             .collect();
-        let agents: Vec<(String, String)> = {
+        let agents: Vec<(String, String, Option<String>)> = {
             let set = self.plugin_set();
             set.registry
                 .agents()
                 .filter(|(_, decl)| decl.settings.contains(&AgentSettingKind::Hibernate))
-                .map(|(plugin, decl)| (plugin.name.clone(), decl.id.clone()))
+                .map(|(plugin, decl)| {
+                    (
+                        plugin.name.clone(),
+                        decl.id.clone(),
+                        decl.background_marker.clone(),
+                    )
+                })
                 .collect()
         };
         for (id, session) in live {
@@ -3171,7 +3187,7 @@ impl Daemon {
             };
             let quiet_for = lock(&session.last_output).elapsed();
             let pids = proc_stats::tree(pid);
-            for (plugin, agent) in &agents {
+            for (plugin, agent, marker) in &agents {
                 let kind = SessionKind::Agent {
                     name: agent.clone(),
                 };
@@ -3201,11 +3217,10 @@ impl Daemon {
                 let Ok(Some(detected)) = serde_json::from_value::<Option<Detected>>(reply) else {
                     continue;
                 };
-                // The agent is a child of the shell; only shells below it mean background work.
                 if detected.idle
-                    && !proc_stats::children(pid)
-                        .into_iter()
-                        .any(proc_stats::runs_shell)
+                    && !marker
+                        .as_deref()
+                        .is_some_and(|m| proc_stats::runs_marked(pid, m))
                 {
                     {
                         let store = self.store();
@@ -3383,7 +3398,7 @@ impl Daemon {
         }
     }
 
-    // ponytail: hibernating would kill background subagents; one whose end is never reported keeps the session awake.
+    // ponytail: one whose end is never reported keeps the session working.
     fn has_running_subagents(&self, session_id: i64) -> bool {
         lock(&self.subagents)
             .get(&session_id)

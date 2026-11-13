@@ -56,6 +56,7 @@ mod tests {
             binary: "aider".into(),
             launch: LaunchKind::Static,
             waiting_patterns: vec![],
+            background_marker: None,
             settings: vec![],
             reserved_args: vec![],
             start: vec!["{binary}".into(), "{args...}".into()],

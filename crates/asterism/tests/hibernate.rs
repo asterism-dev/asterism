@@ -159,7 +159,7 @@ fn subagent(f: &Fixture, event: HookEvent) {
 }
 
 #[tokio::test]
-async fn session_with_a_running_subagent_is_not_hibernated() {
+async fn session_with_a_running_subagent_stays_working_and_awake() {
     let f = idle_session().await;
     subagent(&f, HookEvent::SubagentStart);
     wait_status(&f.daemon, f.session, SessionStatus::Working).await;
@@ -172,13 +172,23 @@ async fn session_with_a_running_subagent_is_not_hibernated() {
         })
         .await
         .unwrap();
-    wait_status(&f.daemon, f.session, SessionStatus::Idle).await;
+    tokio::time::sleep(asterism_core::status::IDLE_AFTER + Duration::from_millis(500)).await;
+    assert_eq!(
+        f.daemon.session(f.session).unwrap().status,
+        SessionStatus::Working
+    );
     f.daemon.hibernate_idle().unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(running(&f.daemon), 1);
 
     subagent(&f, HookEvent::SubagentStop);
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    let limit = asterism_core::status::BUSY_RECHECK + Duration::from_secs(2);
+    assert!(
+        common::eventually_within(limit, || {
+            f.daemon.session(f.session).unwrap().status == SessionStatus::Idle
+        })
+        .await
+    );
     f.daemon.hibernate_idle().unwrap();
     wait_status(&f.daemon, f.session, SessionStatus::Hibernated).await;
 }
@@ -335,7 +345,7 @@ async fn shell_without_an_agent_keeps_running() {
 
 #[tokio::test]
 async fn idle_agent_running_a_shell_keeps_running() {
-    let f = quiet_shell("fake-agent", "sh -c \"sleep 30; :\"").await;
+    let f = quiet_shell("fake-agent", "sh -c \"sleep 30; : bg-marker\"").await;
     f.daemon.hibernate_shells().await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(running(&f.daemon), 1);

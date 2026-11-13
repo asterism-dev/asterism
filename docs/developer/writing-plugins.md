@@ -63,6 +63,7 @@ A `[backend]` section is required when the plugin provides a forge, a command, a
 | `prompt` | array of strings | no | Appended to `start` when the session starts with a prompt. |
 | `resume` | array of strings | no | Template for resuming after a daemon restart. Without it, a static agent is not resumed. |
 | `waiting_patterns` | array of strings | no | Screen text that means the agent waits for the user; see [Architecture](architecture.md#session-lifecycle). |
+| `background_marker` | string | no | Text in the command line of the agent's tool shells, background ones included. While such a process runs below the agent, the session stays `working`. |
 | `settings` | array of `"args"`, `"mcp"`, `"hooks"` | no | Which agent settings sections the user can edit for this agent: extra arguments, MCP servers, hooks. |
 | `reserved_args` | array of strings | no | Arguments the user may not add. Entries ending in `=` match as prefixes. |
 
