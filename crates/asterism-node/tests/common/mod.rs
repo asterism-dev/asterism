@@ -9,15 +9,17 @@ use asterism_proto::paths::Paths;
 
 /// The daemon built by `cargo build`; these tests do not build it themselves.
 pub fn daemon_bin() -> PathBuf {
-    // Test binaries live in `<target>/debug/deps`, wherever cargo config puts the target dir.
+    // Test binaries sit in `<target>/debug/deps` or, since cargo 1.100, deeper under `debug/build`.
     let exe = std::env::current_exe().unwrap();
-    let bin = exe.parent().unwrap().parent().unwrap().join("asterismd");
-    assert!(
-        bin.exists(),
-        "{} missing — run `cargo build` before these tests",
-        bin.display()
-    );
-    bin
+    exe.ancestors()
+        .map(|dir| dir.join("asterismd"))
+        .find(|bin| bin.is_file())
+        .unwrap_or_else(|| {
+            panic!(
+                "asterismd not found above {} — run `cargo build` before these tests",
+                exe.display()
+            )
+        })
 }
 
 pub fn init_repo(dir: &Path) {
