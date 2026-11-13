@@ -59,6 +59,8 @@ struct LiveSession {
     last_output: Arc<Mutex<tokio::time::Instant>>,
     /// Set before a deliberate kill so the exit is recorded as `Hibernated`.
     hibernating: AtomicBool,
+    /// Set before a user-requested stop, so that kill is not mistaken for an outside one (e.g. OS shutdown).
+    stopping: AtomicBool,
 }
 
 /// Overridable external tools; tests inject an isolated git environment.
@@ -2286,6 +2288,7 @@ impl Daemon {
         let sessions = self.store().sessions(Some(task_id))?;
         for stored in sessions {
             if let Ok(live) = self.live(stored.session.id) {
+                live.stopping.store(true, Ordering::Relaxed);
                 let _ = live.pty.kill();
             } else if stored.session.status == SessionStatus::Hibernated {
                 self.store()
@@ -2745,6 +2748,7 @@ impl Daemon {
             hooks_active: Arc::new(AtomicBool::new(false)),
             last_output: Arc::new(Mutex::new(tokio::time::Instant::now())),
             hibernating: AtomicBool::new(false),
+            stopping: AtomicBool::new(false),
         });
         lock(&self.live).insert(id, live.clone());
         let waiting_patterns: Arc<[String]> = match kind {
@@ -2776,7 +2780,16 @@ impl Daemon {
                     let Some(live) = lock(&daemon.live).remove(&id) else {
                         break;
                     };
-                    if live.hibernating.load(Ordering::Relaxed) {
+                    // An agent signalled from outside (OS shutdown, logout) was not quit on purpose; keep it resumable.
+                    let killed_outside = !live.stopping.load(Ordering::Relaxed)
+                        && pty.killed_by_signal()
+                        && daemon
+                            .store()
+                            .session(id)
+                            .ok()
+                            .flatten()
+                            .is_some_and(|s| s.agent_ref.is_some());
+                    if live.hibernating.load(Ordering::Relaxed) || killed_outside {
                         status = SessionStatus::Hibernated;
                     }
                     daemon.end_subagents(id);
@@ -2957,7 +2970,9 @@ impl Daemon {
     }
 
     pub fn kill_session(&self, id: i64) -> Result<()> {
-        Ok(self.live(id)?.pty.kill()?)
+        let live = self.live(id)?;
+        live.stopping.store(true, Ordering::Relaxed);
+        Ok(live.pty.kill()?)
     }
 
     pub async fn send(self: &Arc<Self>, params: SessionSendParams) -> Result<()> {

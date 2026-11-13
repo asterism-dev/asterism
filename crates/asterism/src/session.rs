@@ -1,10 +1,13 @@
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
-use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{
+    native_pty_system, ChildKiller, CommandBuilder, ExitStatus, MasterPty, PtySize,
+};
 use tokio::sync::{broadcast, watch};
 
 use crate::lock;
@@ -75,11 +78,18 @@ pub struct Pty {
     term: Arc<Mutex<Term>>,
     output: broadcast::Sender<Vec<u8>>,
     exited: watch::Receiver<bool>,
+    killed_by_signal: Arc<AtomicBool>,
     pid: Option<u32>,
 }
 
 fn io_err(e: impl std::fmt::Display) -> io::Error {
     io::Error::other(e.to_string())
+}
+
+/// Covers processes that died from a signal and those that exited 128+N after handling SIGHUP or SIGTERM.
+fn ended_by_signal(status: &ExitStatus) -> bool {
+    // portable-pty 0.8 exposes the signal only through `Display`.
+    status.to_string().starts_with("Terminated by") || matches!(status.exit_code(), 129 | 143)
 }
 
 fn check_size(rows: u16, cols: u16) -> io::Result<()> {
@@ -134,6 +144,7 @@ impl Pty {
         }));
         let (output, _) = broadcast::channel(256);
         let (exited_tx, exited) = watch::channel(false);
+        let killed_by_signal = Arc::new(AtomicBool::new(false));
 
         let reader_term = term.clone();
         let reader_output = output.clone();
@@ -153,8 +164,11 @@ impl Pty {
             }
         });
         // Waiting separately from reading reports the exit even if a grandchild keeps the PTY open.
+        let waiter_killed = killed_by_signal.clone();
         std::thread::spawn(move || {
-            let _ = child.wait();
+            if child.wait().is_ok_and(|status| ended_by_signal(&status)) {
+                waiter_killed.store(true, Ordering::Relaxed);
+            }
             // Let the reader parse the final output first (bounded: a grandchild may keep the PTY open).
             let _ = drained.recv_timeout(DRAIN_GRACE);
             let _ = exited_tx.send(true);
@@ -167,6 +181,7 @@ impl Pty {
             term,
             output,
             exited,
+            killed_by_signal,
             pid,
         }))
     }
@@ -242,6 +257,11 @@ impl Pty {
         self.exited.clone()
     }
 
+    /// Only meaningful once `exited` turned true.
+    pub fn killed_by_signal(&self) -> bool {
+        self.killed_by_signal.load(Ordering::Relaxed)
+    }
+
     pub fn kill(&self) -> io::Result<()> {
         lock(&self.killer).kill()
     }
@@ -260,5 +280,20 @@ impl Pty {
             kill(pid.to_string());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signal_deaths_and_their_exit_codes_count_as_signalled() {
+        assert!(ended_by_signal(&ExitStatus::with_signal("Terminated: 15")));
+        assert!(ended_by_signal(&ExitStatus::with_exit_code(129)));
+        assert!(ended_by_signal(&ExitStatus::with_exit_code(143)));
+        assert!(!ended_by_signal(&ExitStatus::with_exit_code(0)));
+        assert!(!ended_by_signal(&ExitStatus::with_exit_code(1)));
+        assert!(!ended_by_signal(&ExitStatus::with_exit_code(130)));
     }
 }
