@@ -41,7 +41,9 @@ fn setup() -> (tempfile::TempDir, tempfile::TempDir, Arc<Daemon>, Project) {
     common::link_fixture(&paths);
     common::set_fixture_token(&paths);
     let daemon = open(home.path());
+    // The home path in the agent's argv lets tests signal exactly this test's process.
     let config = AgentConfig {
+        args: vec![home.path().display().to_string()],
         hibernate_after_min: Some(1),
         ..Default::default()
     };
@@ -234,6 +236,32 @@ async fn archived_task_does_not_wake() {
         f.daemon.session(f.session).unwrap().status,
         SessionStatus::Exited
     );
+}
+
+fn signal_agent(f: &Fixture, signal: &str) {
+    let marker = f.home.path().display().to_string();
+    let status = std::process::Command::new("pkill")
+        .args([&format!("-{signal}"), "-f", &marker])
+        .status()
+        .unwrap();
+    assert!(status.success(), "no agent process matched {marker}");
+}
+
+#[tokio::test]
+async fn agent_killed_from_outside_hibernates_and_wakes() {
+    let f = idle_session().await;
+    signal_agent(&f, "TERM");
+    wait_status(&f.daemon, f.session, SessionStatus::Hibernated).await;
+
+    f.daemon.attach(f.session).await.unwrap();
+    assert!(eventually(|| screen(&f.daemon, f.session).contains("resumed r1")).await);
+}
+
+#[tokio::test]
+async fn killed_session_stays_exited() {
+    let f = idle_session().await;
+    f.daemon.kill_session(f.session).unwrap();
+    wait_status(&f.daemon, f.session, SessionStatus::Exited).await;
 }
 
 /// A shell session running a process named `name` that does `work`, quiet long enough to hibernate.
