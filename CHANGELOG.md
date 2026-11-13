@@ -1,3 +1,9 @@
+## v0.22.1 (2026-11-13)
+
+### Fix
+
+- resume agent sessions killed by OS shutdown (#28)
+
 ## v0.22.0 (2026-11-12)
 
 ### Feat
