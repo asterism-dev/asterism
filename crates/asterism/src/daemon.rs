@@ -1055,6 +1055,13 @@ impl Daemon {
         let fetch_error = git::remote_url(&repo, "origin")
             .and_then(|_| git::fetch(&repo, "origin", &self.options.git_env).err())
             .map(|e| e.message);
+        let default = default_base(&repo, &project);
+        if let Some(base) = default.as_deref().filter(|b| b.starts_with("origin/")) {
+            // Agents compare against the local branch, which nothing else keeps current.
+            if let Err(e) = git::fast_forward_local(&repo, base) {
+                eprintln!("asterismd: fast-forwarding {base}: {}", e.message);
+            }
+        }
         let worktree_root = self.worktree_root(&repo, &project).ok();
         let worktrees = match &worktree_root {
             Some(root) => self.root_worktrees(&repo, project.id, root)?,
@@ -1062,7 +1069,7 @@ impl Daemon {
         };
         Ok(ProjectBranches {
             branches: git::branches(&repo)?,
-            default: default_base(&repo, &project),
+            default,
             automatic: automatic_base(&repo),
             configured: project.default_base.clone(),
             fetch_error,

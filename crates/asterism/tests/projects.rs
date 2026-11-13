@@ -548,7 +548,7 @@ fn has_upstream(repo: &Path, branch: &str) -> bool {
 }
 
 #[tokio::test]
-async fn task_starts_from_fetched_origin_without_touching_local_main() {
+async fn task_starts_from_fetched_origin_and_fast_forwards_local_main() {
     let env = setup(false);
     let url = bare_origin(env.home.path());
     let project = env
@@ -558,7 +558,6 @@ async fn task_starts_from_fetched_origin_without_touching_local_main() {
         .unwrap();
     let repo = Path::new(&project.path);
     push_commit(&url, env.home.path(), "remote.txt");
-    let local_main = run_git(repo, &["rev-parse", "main"]);
 
     let branches = env.daemon.project_branches(project.id).unwrap();
     assert_eq!(branches.fetch_error, None);
@@ -583,7 +582,10 @@ async fn task_starts_from_fetched_origin_without_touching_local_main() {
     let task = create(&env, project.id, "t", None).await.unwrap().task;
     assert_eq!(task.base_branch, "origin/main");
     assert!(Path::new(&task.worktree_path).join("remote.txt").exists());
-    assert_eq!(run_git(repo, &["rev-parse", "main"]), local_main);
+    assert_eq!(
+        run_git(repo, &["rev-parse", "main"]),
+        run_git(repo, &["rev-parse", "origin/main"])
+    );
     assert!(!has_upstream(repo, &task.branch));
 }
 
@@ -953,4 +955,45 @@ async fn unknown_workspace_clones_nothing() {
     assert_eq!(err.kind, ErrorKind::NotFound);
     assert!(!env.home.path().join("h/repos/acme").exists());
     assert!(!Path::new(&work.repos).join("acme").exists());
+}
+
+#[tokio::test]
+async fn local_base_is_fast_forwarded_after_fetch() {
+    let env = setup(false);
+    let url = bare_origin(env.home.path());
+    let project = env
+        .daemon
+        .clone_project(&url, None, None, None)
+        .await
+        .unwrap();
+    let repo = Path::new(&project.path);
+    let work = env.home.path().join("work");
+    let bare = env
+        .home
+        .path()
+        .join("remotes/acme/demo.git")
+        .display()
+        .to_string();
+    let push_upstream = |message: &str| {
+        common::commit_all(&work, message);
+        run_git(&work, &["push", "-q", &bare, "main"]);
+    };
+    let sha = |rev: &str| run_git(repo, &["rev-parse", rev]);
+
+    push_upstream("upstream 1");
+    env.daemon.project_branches(project.id).unwrap();
+    assert_eq!(sha("main"), sha("origin/main"));
+
+    std::fs::write(repo.join("dirty.txt"), "wip").unwrap();
+    push_upstream("upstream 2");
+    let branches = env.daemon.project_branches(project.id).unwrap();
+    assert_eq!(branches.fetch_error, None);
+    assert_ne!(sha("main"), sha("origin/main"));
+    std::fs::remove_file(repo.join("dirty.txt")).unwrap();
+
+    common::commit_all(repo, "local");
+    let diverged = sha("main");
+    push_upstream("upstream 3");
+    env.daemon.project_branches(project.id).unwrap();
+    assert_eq!(sha("main"), diverged);
 }
