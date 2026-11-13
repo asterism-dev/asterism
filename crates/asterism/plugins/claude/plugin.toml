@@ -13,6 +13,7 @@ display_name = "Claude Code"
 binary = "claude"
 launch = "backend"
 waiting_patterns = ["Do you want to", "❯ 1. Yes"]
+background_marker = "shell-snapshots/snapshot-"
 settings = ["args", "mcp", "hooks", "hibernate"]
 reserved_args = ["--", "--settings", "--mcp-config", "--resume", "-r", "--continue", "-c", "--print", "-p", "--settings=", "--mcp-config=", "--resume=", "--name", "-n", "--name="]
 

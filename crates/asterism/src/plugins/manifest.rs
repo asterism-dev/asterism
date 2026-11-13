@@ -100,6 +100,9 @@ pub struct AgentDecl {
     pub launch: LaunchKind,
     #[serde(default)]
     pub waiting_patterns: Vec<String>,
+    /// Command-line text of the agent's tool shells; while one runs, the session counts as working.
+    #[serde(default)]
+    pub background_marker: Option<String>,
     #[serde(default)]
     pub settings: Vec<AgentSettingKind>,
     /// Flags the user may not pass as args; entries ending in `=` match as prefixes.

@@ -12,7 +12,7 @@ pub fn timeout(minutes: Option<u32>, minute: Duration) -> Option<Duration> {
     }
 }
 
-/// Quiet output guards background work (subagents, monitors) that keeps running while hooks report idle.
+/// Background work keeps the status `Working`, so only the status and quiet output decide.
 pub fn should_hibernate(
     status: SessionStatus,
     quiet_for: Duration,

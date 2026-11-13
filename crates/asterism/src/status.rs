@@ -10,6 +10,7 @@ use tokio::time::{sleep_until, Instant};
 use crate::session::Pty;
 
 pub const IDLE_AFTER: Duration = Duration::from_secs(2);
+pub const BUSY_RECHECK: Duration = Duration::from_secs(10);
 
 pub fn idle_status(screen: &str, waiting_patterns: &[String]) -> SessionStatus {
     if waiting_patterns.iter().any(|p| screen.contains(p.as_str())) {
@@ -29,12 +30,14 @@ pub fn hook_status(event: HookEvent) -> Option<SessionStatus> {
 }
 
 /// Derives status from PTY activity; once hooks report for a session, only silence ending `Working` and exit are applied here.
+/// Silence does not end `Working` while `busy` reports background work (subagents, background shells).
 pub async fn track(
     pty: Arc<Pty>,
     waiting_patterns: Arc<[String]>,
     status: Arc<watch::Sender<SessionStatus>>,
     hooks_active: Arc<AtomicBool>,
     last_output: Arc<Mutex<Instant>>,
+    busy: Arc<dyn Fn() -> bool + Send + Sync>,
 ) {
     let set = |next: SessionStatus| {
         status.send_if_modified(|current| {
@@ -63,7 +66,11 @@ pub async fn track(
                 if !hooks_active.load(Ordering::Relaxed) {
                     set(idle_status(&pty.text(), &waiting_patterns));
                 } else if *status.borrow() == SessionStatus::Working {
-                    set(SessionStatus::Idle);
+                    if busy() {
+                        idle_at = Some(Instant::now() + BUSY_RECHECK);
+                    } else {
+                        set(SessionStatus::Idle);
+                    }
                 }
             }
             _ = exited.wait_for(|done| *done) => {
