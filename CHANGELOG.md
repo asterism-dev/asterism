@@ -1,3 +1,9 @@
+## v0.23.0 (2026-11-13)
+
+### Feat
+
+- fast-forward the local base branch after fetching origin (#30)
+
 ## v0.22.1 (2026-11-13)
 
 ### Fix
