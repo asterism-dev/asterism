@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, Field, Switch, TextInput } from '@asterism-dev/lumen';
 import { ask, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { onMounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../../api';
@@ -120,8 +121,8 @@ watch(() => [state.storesVersion, state.pluginsVersion], load);
           >
           <span class="spacer" />
           <template v-if="!busy[s.name]">
-            <button @click="refresh(s.name)">Refresh</button>
-            <button @click="remove(s.name)">Remove</button>
+            <Button @click="refresh(s.name)">Refresh</Button>
+            <Button @click="remove(s.name)">Remove</Button>
           </template>
           <span v-else class="muted">Working…</span>
         </div>
@@ -131,31 +132,26 @@ watch(() => [state.storesVersion, state.pluginsVersion], load);
       </li>
     </ul>
     <form class="add-form" @submit.prevent="add">
-      <label
-        >Add store
-        <input
+      <Field label="Add store">
+        <TextInput
           v-model="source"
           placeholder="https://…/plugins.git or a local folder"
           spellcheck="false"
           :disabled="adding"
         />
-      </label>
+      </Field>
       <div class="actions">
-        <button type="button" :disabled="adding" @click="pickFolder">Choose folder…</button>
-        <button type="submit" :disabled="adding || !source.trim()">
+        <Button :disabled="adding" @click="pickFolder">Choose folder…</Button>
+        <Button type="submit" variant="accent" :disabled="adding || !source.trim()">
           {{ adding ? 'Adding…' : 'Add store' }}
-        </button>
+        </Button>
       </div>
     </form>
-    <label class="toggle">
-      <input
-        type="checkbox"
-        role="switch"
-        :checked="list?.auto_update ?? false"
-        @change="toggleAutoUpdate"
-      />
-      Install updates automatically
-    </label>
+    <div class="toggle">
+      <Switch :model-value="list?.auto_update ?? false" @update:model-value="toggleAutoUpdate">
+        Install updates automatically
+      </Switch>
+    </div>
     <p class="muted">Updates that ask for new permissions always wait for you.</p>
   </section>
 </template>
@@ -184,9 +180,6 @@ watch(() => [state.storesVersion, state.pluginsVersion], load);
   background: var(--select);
 }
 .toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   margin-top: 12px;
 }
 </style>

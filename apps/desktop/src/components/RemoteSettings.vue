@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, Dialog, NumberInput, Select, Switch, TextInput } from '@asterism-dev/lumen';
 import { ask } from '@tauri-apps/plugin-dialog';
 import QRCode from 'qrcode';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
@@ -41,6 +42,10 @@ let unmounted = false;
 const CUSTOM = '__custom__';
 const custom = ref(false);
 const adding = ref(false);
+const bindOptions = computed(() => [
+  ...interfaces.value.map((i) => ({ value: i.address, label: interfaceLabel(i) })),
+  { value: CUSTOM, label: 'Custom address…' },
+]);
 const selected = computed({
   get: () => (custom.value ? CUSTOM : form.value.bind),
   set: (v: string) => {
@@ -133,41 +138,43 @@ function lastSeen(d: RemoteDevice): string {
     <section>
       <h3>Remote access</h3>
       <p class="hint">Use asterism from your phone or tablet over Tailscale.</p>
-      <label class="switch"
-        ><input v-model="form.enabled" type="checkbox" role="switch" /> Enable remote access</label
-      >
+      <Switch v-model="form.enabled">Enable remote access</Switch>
       <div class="settings-row">
         <label for="remote-serve" class="serve-label">HTTPS via Tailscale serve</label>
-        <select id="remote-serve" v-model="form.serve">
-          <option v-for="o in SERVE_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
-        </select>
-        <input
+        <Select id="remote-serve" v-model="form.serve" :options="SERVE_OPTIONS" />
+        <NumberInput
           v-if="form.serve !== 'off'"
-          v-model.number="form.serve_port"
-          type="number"
+          :model-value="form.serve_port"
           min="1"
           max="65535"
           aria-label="HTTPS port"
+          @update:model-value="(v) => v !== null && (form.serve_port = v)"
         />
       </div>
       <p v-if="form.serve !== 'off'" class="hint">
         Listens on 127.0.0.1 only; Tailscale serve forwards HTTPS to it.
       </p>
       <div class="settings-row">
-        <select v-if="form.serve === 'off'" v-model="selected" aria-label="Interface">
-          <option v-for="i in interfaces" :key="i.address" :value="i.address">
-            {{ interfaceLabel(i) }}
-          </option>
-          <option :value="CUSTOM">Custom address…</option>
-        </select>
-        <input
+        <Select
+          v-if="form.serve === 'off'"
+          v-model="selected"
+          :options="bindOptions"
+          aria-label="Interface"
+        />
+        <TextInput
           v-if="custom && form.serve === 'off'"
           v-model="form.bind"
           spellcheck="false"
           aria-label="Custom address"
         />
-        <input v-model.number="form.port" type="number" min="1" max="65535" aria-label="Port" />
-        <button @click="save">Save</button>
+        <NumberInput
+          :model-value="form.port"
+          min="1"
+          max="65535"
+          aria-label="Port"
+          @update:model-value="(v) => v !== null && (form.port = v)"
+        />
+        <Button variant="accent" @click="save">Save</Button>
       </div>
       <p v-if="warning" class="error">{{ warning }}</p>
       <p v-if="status" class="muted">{{ statusLine(status) }}</p>
@@ -175,14 +182,14 @@ function lastSeen(d: RemoteDevice): string {
         <p v-if="status.public_url" class="muted">Phones open {{ status.public_url }}</p>
         <template v-if="serving === 'manual' && status.serve_command">
           <div class="settings-row">
-            <input
+            <TextInput
               class="command"
-              :value="status.serve_command"
+              :model-value="status.serve_command"
               readonly
               aria-label="Tailscale serve command"
               @focus="($event.target as HTMLInputElement).select()"
             />
-            <button @click="copyCommand(status.serve_command)">Copy</button>
+            <Button @click="copyCommand(status.serve_command)">Copy</Button>
           </div>
           <p class="hint">
             Run it in a terminal. To stop it:
@@ -199,27 +206,36 @@ function lastSeen(d: RemoteDevice): string {
       <div v-for="d in devices" :key="d.id" class="settings-row device-row">
         <span>{{ d.name }}</span>
         <span class="hint">{{ lastSeen(d) }}</span>
-        <button @click="rotate(d)">New token</button>
-        <button class="danger" @click="remove(d)">Remove</button>
+        <Button @click="rotate(d)">New token</Button>
+        <Button variant="danger" @click="remove(d)">Remove</Button>
       </div>
       <form class="settings-row" @submit.prevent="addDevice">
-        <input v-model="newName" placeholder="Device name, e.g. iPhone" />
-        <button type="submit" :disabled="!newName.trim() || adding">Add device</button>
+        <TextInput v-model="newName" placeholder="Device name, e.g. iPhone" />
+        <Button type="submit" :disabled="!newName.trim() || adding">Add device</Button>
       </form>
     </section>
-    <div v-if="pairing" class="modal-backdrop" @click.self="pairing = null">
-      <div class="modal">
-        <h3>Pair {{ pairing.name }}</h3>
-        <img v-if="pairing.qr" :src="pairing.qr" alt="Pairing QR code" width="240" height="240" />
-        <p class="hint">Scan with the device's camera. The code is shown only once.</p>
-        <input
-          :value="pairing.url"
-          readonly
-          @focus="($event.target as HTMLInputElement).select()"
-        />
-        <div class="actions"><button @click="pairing = null">Done</button></div>
-      </div>
-    </div>
+    <Dialog
+      v-if="pairing"
+      :open="true"
+      :title="`Pair ${pairing.name}`"
+      @update:open="(o) => !o && (pairing = null)"
+    >
+      <img
+        v-if="pairing.qr"
+        class="qr"
+        :src="pairing.qr"
+        alt="Pairing QR code"
+        width="240"
+        height="240"
+      />
+      <p class="hint">Scan with the device's camera. The code is shown only once.</p>
+      <TextInput
+        :model-value="pairing.url"
+        readonly
+        @focus="($event.target as HTMLInputElement).select()"
+      />
+      <template #actions><Button @click="pairing = null">Done</Button></template>
+    </Dialog>
   </div>
 </template>
 
@@ -233,12 +249,8 @@ function lastSeen(d: RemoteDevice): string {
 .remote-settings section > * {
   margin: 0;
 }
-.switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+.lm-choice {
   align-self: flex-start;
-  cursor: pointer;
 }
 .serve-label {
   align-self: center;
@@ -254,10 +266,7 @@ function lastSeen(d: RemoteDevice): string {
   flex: 1;
   font-family: ui-monospace, Menlo, monospace;
 }
-.danger {
-  color: var(--danger);
-}
-.modal img {
+.qr {
   align-self: center;
   background: #fff;
 }

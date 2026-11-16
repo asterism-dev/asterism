@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, Switch } from '@asterism-dev/lumen';
 import { ask, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { computed, onMounted, ref, watch } from 'vue';
 import { api, errorMessage, RpcError } from '../../api';
@@ -98,9 +99,9 @@ watch(() => [state.pluginsVersion, state.storesVersion], load);
     <div class="plugins-header">
       <h3>Installed</h3>
       <span class="spacer" />
-      <button v-if="updates" @click="updateAll">Update all ({{ updates }})</button>
-      <button @click="linkLocal">Link local plugin…</button>
-      <button @click="api.reloadPlugins().catch((e) => toast(errorMessage(e)))">Reload</button>
+      <Button v-if="updates" @click="updateAll">Update all ({{ updates }})</Button>
+      <Button @click="linkLocal">Link local plugin…</Button>
+      <Button @click="api.reloadPlugins().catch((e) => toast(errorMessage(e)))">Reload</Button>
     </div>
     <p v-if="error" class="error">{{ error }}</p>
     <ul class="plugin-list">
@@ -113,33 +114,30 @@ watch(() => [state.pluginsVersion, state.storesVersion], load);
           }}</span>
           <span class="spacer" />
           <template v-if="!busy[p.name]">
-            <button v-if="p.update_available" @click="act(p.name, () => update(p))">Update</button>
-            <button
+            <Button v-if="p.update_available" @click="act(p.name, () => update(p))">Update</Button>
+            <Button
               v-if="p.previous_version"
               :title="`Back to ${p.previous_version}`"
               @click="act(p.name, () => rollback(p.name))"
             >
               Rollback
-            </button>
-            <label class="toggle">
-              <input
-                type="checkbox"
-                role="switch"
-                :checked="p.state.state !== 'disabled'"
-                @change="act(p.name, () => setEnabled(p))"
-              />
+            </Button>
+            <Switch
+              :model-value="p.state.state !== 'disabled'"
+              @update:model-value="act(p.name, () => setEnabled(p))"
+            >
               Enabled
-            </label>
-            <button
+            </Switch>
+            <Button
               v-if="p.state.state !== 'broken' && p.state.state !== 'disabled'"
               @click="state.pluginSettingsRequest = p.name"
             >
               Configure
-            </button>
-            <button v-if="p.origin === 'installed'" @click="uninstall(p)">Uninstall</button>
-            <button v-if="p.origin === 'linked'" @click="act(p.name, () => unlink(p.name))">
+            </Button>
+            <Button v-if="p.origin === 'installed'" @click="uninstall(p)">Uninstall</Button>
+            <Button v-if="p.origin === 'linked'" @click="act(p.name, () => unlink(p.name))">
               Unlink
-            </button>
+            </Button>
           </template>
           <span v-else class="muted">Working…</span>
         </div>
@@ -196,10 +194,5 @@ watch(() => [state.pluginsVersion, state.storesVersion], load);
 }
 .plugins-header .spacer {
   flex: 1;
-}
-.toggle {
-  display: flex;
-  align-items: center;
-  gap: 4px;
 }
 </style>

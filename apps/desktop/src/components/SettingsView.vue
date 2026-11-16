@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, SegmentedControl } from '@asterism-dev/lumen';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { computed, ref, useTemplateRef, watch } from 'vue';
@@ -86,6 +87,10 @@ async function loadTabs() {
   }
 }
 watch(() => [state.pluginsVersion, state.agents], loadTabs, { immediate: true });
+const agentOptions = BASE_AGENTS.map((name) => ({
+  value: name,
+  label: name.charAt(0).toUpperCase() + name.slice(1),
+}));
 const themes: { value: ThemeChoice; label: string }[] = [
   { value: 'system', label: 'System' },
   { value: 'light', label: 'Light' },
@@ -114,50 +119,64 @@ async function open(next: Section) {
 <template>
   <section class="settings-view">
     <header class="settings-header">
-      <button @click="leaveSettings()">← Back</button>
+      <Button @click="leaveSettings()">← Back</Button>
       <h1>Settings</h1>
     </header>
     <div class="settings-body">
       <nav class="settings-nav">
-        <button :class="{ active: section === 'interface' }" @click="open('interface')">
+        <Button
+          variant="ghost"
+          :class="{ active: section === 'interface' }"
+          @click="open('interface')"
+        >
           Interface
-        </button>
-        <button :class="{ active: section === 'shortcuts' }" @click="open('shortcuts')">
+        </Button>
+        <Button
+          variant="ghost"
+          :class="{ active: section === 'shortcuts' }"
+          @click="open('shortcuts')"
+        >
           Shortcuts
-        </button>
-        <button :class="{ active: section === 'paths' }" @click="open('paths')">Paths</button>
-        <button :class="{ active: section === 'remote' }" @click="open('remote')">
+        </Button>
+        <Button variant="ghost" :class="{ active: section === 'paths' }" @click="open('paths')"
+          >Paths</Button
+        >
+        <Button variant="ghost" :class="{ active: section === 'remote' }" @click="open('remote')">
           Remote access
-        </button>
-        <button :class="{ active: section === 'sessions' }" @click="open('sessions')">
+        </Button>
+        <Button
+          variant="ghost"
+          :class="{ active: section === 'sessions' }"
+          @click="open('sessions')"
+        >
           Sessions
-        </button>
-        <button :class="{ active: section === 'plugins' }" @click="open('plugins')">Plugins</button>
-        <button
+        </Button>
+        <Button variant="ghost" :class="{ active: section === 'plugins' }" @click="open('plugins')"
+          >Plugins</Button
+        >
+        <Button
           v-for="t in tabs"
           :key="t.name"
+          variant="ghost"
           :class="{ active: plugin === t.name }"
           @click="open(`plugin:${t.name}`)"
         >
           {{ t.title }}
-        </button>
-        <button :class="{ active: section === 'about' }" @click="open('about')">About</button>
+        </Button>
+        <Button variant="ghost" :class="{ active: section === 'about' }" @click="open('about')"
+          >About</Button
+        >
       </nav>
       <div v-if="section === 'interface'" class="settings-content">
         <section>
           <h3>Theme</h3>
-          <div class="agent-picker" role="radiogroup" aria-label="Theme">
-            <button
-              v-for="t in themes"
-              :key="t.value"
-              role="radio"
-              :aria-checked="themeChoice === t.value"
-              :class="{ active: themeChoice === t.value }"
-              @click="setTheme(t.value)"
-            >
-              {{ t.label }}
-            </button>
-          </div>
+          <SegmentedControl
+            class="agent-picker"
+            aria-label="Theme"
+            :options="themes"
+            :model-value="themeChoice"
+            @update:model-value="setTheme"
+          />
           <p class="muted">
             System follows your operating system's appearance. Terminals stay dark.
           </p>
@@ -185,13 +204,13 @@ async function open(next: Section) {
           <AgentSettings ref="agentForms" :agent="a.name" :info="a" embedded />
         </template>
         <div class="save-bar">
-          <button
-            :class="{ primary: pluginDirty }"
+          <Button
+            :variant="pluginDirty ? 'accent' : 'default'"
             :disabled="savingPlugin || !pluginDirty"
             @click="savePlugin"
           >
             Save
-          </button>
+          </Button>
           <span class="muted">Applies to newly started sessions.</span>
         </div>
       </div>
@@ -199,19 +218,19 @@ async function open(next: Section) {
         <section>
           <h3>asterism {{ updater.current }}</h3>
           <div class="about-actions">
-            <button
+            <Button
               :disabled="updater.checking || updater.installing"
               @click="checkForUpdates(true)"
             >
               {{ updater.checking ? 'Checking…' : 'Check for updates' }}
-            </button>
-            <button
+            </Button>
+            <Button
               v-if="updater.available"
               :disabled="updater.installing"
               @click="installUpdate()"
             >
               {{ updateLabel() }}
-            </button>
+            </Button>
           </div>
           <template v-if="updater.available">
             <p class="muted">Version {{ updater.available.version }} is available.</p>
@@ -224,16 +243,12 @@ async function open(next: Section) {
         </section>
       </div>
       <div v-else class="settings-content">
-        <div class="agent-picker">
-          <button
-            v-for="name in BASE_AGENTS"
-            :key="name"
-            :class="{ active: name === sessionKind }"
-            @click="pick(name)"
-          >
-            {{ name.charAt(0).toUpperCase() + name.slice(1) }}
-          </button>
-        </div>
+        <SegmentedControl
+          class="agent-picker"
+          :options="agentOptions"
+          :model-value="sessionKind"
+          @update:model-value="pick"
+        />
         <AgentSettings :key="sessionKind" :agent="sessionKind" />
       </div>
     </div>
@@ -272,13 +287,10 @@ async function open(next: Section) {
   flex-direction: column;
   gap: 4px;
 }
-.settings-nav button,
-.agent-picker button {
-  border: 0;
-  text-align: left;
+.settings-nav button {
+  justify-content: flex-start;
 }
-.settings-nav button.active,
-.agent-picker button.active {
+.settings-nav button.active {
   background: var(--select);
 }
 .settings-content {
@@ -286,8 +298,6 @@ async function open(next: Section) {
   padding: 14px 18px;
 }
 .agent-picker {
-  display: flex;
-  gap: 6px;
   margin-bottom: 12px;
 }
 .settings-content h3 {

@@ -1,50 +1,33 @@
 <script setup lang="ts">
+import { Tabs } from '@asterism-dev/lumen';
 import { ref } from 'vue';
 import { state } from '../store';
 import DiscoverTab from './plugins/DiscoverTab.vue';
 import InstalledTab from './plugins/InstalledTab.vue';
 import StoresTab from './plugins/StoresTab.vue';
 
-const tab = ref<'installed' | 'discover' | 'stores'>('installed');
+const tab = ref('installed');
 const TABS = [
   { value: 'installed', label: 'Installed' },
   { value: 'discover', label: 'Discover' },
   { value: 'stores', label: 'Stores' },
-] as const;
+];
 
 const configure = (name: string) => (state.pluginSettingsRequest = name);
 </script>
 
 <template>
   <section>
-    <div class="tabs" role="tablist" aria-label="Plugins">
-      <button
-        v-for="t in TABS"
-        :key="t.value"
-        role="tab"
-        :aria-selected="tab === t.value"
-        :class="{ active: tab === t.value }"
-        @click="tab = t.value"
-      >
-        {{ t.label }}
-      </button>
-    </div>
-    <InstalledTab v-if="tab === 'installed'" />
-    <DiscoverTab v-else-if="tab === 'discover'" @configure="configure" />
-    <StoresTab v-else />
+    <Tabs v-model="tab" class="tabs" :tabs="TABS">
+      <template #installed><InstalledTab /></template>
+      <template #discover><DiscoverTab @configure="configure" /></template>
+      <template #stores><StoresTab /></template>
+    </Tabs>
   </section>
 </template>
 
 <style scoped>
-.tabs {
-  display: flex;
-  gap: 6px;
+.tabs :deep(.lm-tabs__list) {
   margin-bottom: 12px;
-}
-.tabs button {
-  border: 0;
-}
-.tabs button.active {
-  background: var(--select);
 }
 </style>

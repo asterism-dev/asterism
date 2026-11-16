@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button } from '@asterism-dev/lumen';
 import { onUnmounted, ref } from 'vue';
 import {
   ACTION_IDS,
@@ -82,12 +83,12 @@ onUnmounted(stopRecording);
   <section>
     <div class="header">
       <h3>Keyboard shortcuts</h3>
-      <button @click="resetAll()">Reset all</button>
+      <Button @click="resetAll()">Reset all</Button>
     </div>
     <p v-if="pending" class="conflict">
       {{ formatBinding(pending.binding, IS_MAC) }} is used by {{ ACTIONS[pending.conflict].title }}.
-      <button class="primary" @click="replace">Replace</button>
-      <button @click="pending = null">Cancel</button>
+      <Button variant="accent" @click="replace">Replace</Button>
+      <Button @click="pending = null">Cancel</Button>
     </p>
     <table class="shortcuts">
       <tbody>
@@ -99,18 +100,18 @@ onUnmounted(stopRecording);
             </p>
           </td>
           <td>
-            <button
+            <Button
               class="binding"
               :class="{ recording: editing === id }"
               @click="startRecording(id)"
             >
               {{ editing === id ? 'Press keys…' : shortcutHint(id) || 'Not set' }}
-            </button>
+            </Button>
             <p v-if="editing === id && notice" class="muted hint">{{ notice }}</p>
           </td>
           <td class="row-actions">
-            <button v-if="bindingFor(id)" @click="setBinding(id, null)">Clear</button>
-            <button v-if="hasOverride(id)" @click="requestReset(id)">Reset</button>
+            <Button v-if="bindingFor(id)" @click="setBinding(id, null)">Clear</Button>
+            <Button v-if="hasOverride(id)" @click="requestReset(id)">Reset</Button>
           </td>
         </tr>
       </tbody>
