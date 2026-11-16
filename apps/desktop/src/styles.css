@@ -285,11 +285,3 @@ textarea.json {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.segmented {
-  display: flex;
-  gap: 6px;
-}
-.segmented button.active {
-  background: var(--select);
-  border-color: var(--accent);
-}
