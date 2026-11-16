@@ -1734,6 +1734,38 @@ impl Daemon {
         })
     }
 
+    /// Gives a repository without commits a README commit and publishes it, so tasks have a base.
+    pub async fn initialize_project(&self, project_id: i64) -> Result<ProjectInitializeResult> {
+        let project = self
+            .store()
+            .project(project_id)?
+            .ok_or_else(|| not_found("project", project_id))?;
+        let repo = PathBuf::from(&project.path);
+        if git::resolves(&repo, "HEAD") {
+            return Ok(ProjectInitializeResult {
+                initialized: false,
+                remote_error: None,
+            });
+        }
+        let env = self.options.git_env.clone();
+        let remote_error = tokio::task::spawn_blocking(move || -> Result<Option<String>> {
+            git::commit_readme(&repo, &project.name, &env)?;
+            if git::remote_url(&repo, "origin").is_none() {
+                return Ok(None);
+            }
+            let branch = git::base_ref(&repo)?;
+            Ok(git::push_upstream(&repo, "origin", &branch, &env)
+                .err()
+                .map(|e| e.message))
+        })
+        .await
+        .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))??;
+        Ok(ProjectInitializeResult {
+            initialized: true,
+            remote_error,
+        })
+    }
+
     pub async fn create_task(
         self: &Arc<Self>,
         params: TaskCreateParams,
