@@ -1,3 +1,9 @@
+## v0.25.0 (2026-11-16)
+
+### Feat
+
+- initialize empty repositories when cloning (#31)
+
 ## v0.24.0 (2026-11-13)
 
 ### Feat
