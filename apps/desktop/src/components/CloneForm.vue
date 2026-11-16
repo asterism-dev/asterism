@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, Checkbox, Field, Select, TextInput } from '@asterism-dev/lumen';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
 import { activityFor } from '../activity';
@@ -25,7 +26,7 @@ const reposRoot = computed(
 );
 const error = ref<string | null>(null);
 const busy = ref(false);
-const input = ref<HTMLInputElement>();
+const input = ref<InstanceType<typeof TextInput>>();
 const token = ref('');
 const activity = computed(() => activityFor(state.activities, token.value));
 let closed = false;
@@ -34,6 +35,10 @@ onUnmounted(() => (closed = true));
 const owners = computed(() =>
   status.value?.account ? [status.value.account, ...status.value.owners] : [],
 );
+const forgeOptions = computed(() =>
+  forges.value.map((f) => ({ value: f.id, label: f.display_name })),
+);
+const ownerOptions = computed(() => owners.value.map((o) => ({ value: o, label: o })));
 const forgeName = computed(
   () => forges.value.find((f) => f.id === forge.value)?.display_name ?? 'remote',
 );
@@ -80,7 +85,7 @@ async function loadStatus() {
 }
 
 onMounted(async () => {
-  input.value?.focus();
+  input.value?.$el.focus();
   try {
     const [list, config] = await Promise.all([api.forges(), api.nodeConfig()]);
     forges.value = list;
@@ -132,7 +137,7 @@ async function clone() {
     busy.value = false;
     if (error.value && !closed) {
       await nextTick();
-      input.value?.focus();
+      input.value?.$el.focus();
     }
   }
 }
@@ -141,30 +146,24 @@ watch(busy, (b) => emit('busy', b));
 
 <template>
   <form class="add-form" @submit.prevent="clone">
-    <label
-      >Repository
-      <input
+    <Field label="Repository">
+      <TextInput
         ref="input"
         v-model="source"
         placeholder="owner/repo or https://… / git@…"
         spellcheck="false"
         :disabled="busy"
-    /></label>
+      />
+    </Field>
     <p v-if="preview" class="muted mono">→ {{ preview }}</p>
-    <label v-if="forges.length > 1"
-      >Forge
-      <select v-model="forge" :disabled="busy">
-        <option v-for="f in forges" :key="f.id" :value="f.id">{{ f.display_name }}</option>
-      </select>
-    </label>
+    <Field v-if="forges.length > 1" label="Forge">
+      <Select v-model="forge" :options="forgeOptions" :disabled="busy" />
+    </Field>
     <template v-if="status?.authenticated">
-      <label
-        >Browse
-        <select v-model="owner" :disabled="busy">
-          <option v-for="o in owners" :key="o" :value="o">{{ o }}</option>
-        </select>
-      </label>
-      <input
+      <Field label="Browse">
+        <Select v-model="owner" :options="ownerOptions" :disabled="busy" />
+      </Field>
+      <TextInput
         v-model="filter"
         placeholder="Filter repositories"
         aria-label="Filter repositories"
@@ -183,17 +182,25 @@ watch(busy, (b) => emit('busy', b));
     <p v-else-if="status" class="muted">
       {{ status.error ?? `${forgeName} is not available` }} — you can still clone by URL.
     </p>
-    <label
-      ><input v-model="initialize" type="checkbox" :disabled="busy" /> Initialize repository
-      <span class="muted">— commit a README and push it if the repository is empty</span></label
-    >
+    <Checkbox v-model="initialize" :disabled="busy">
+      Initialize repository
+      <span class="muted">— commit a README and push it if the repository is empty</span>
+    </Checkbox>
     <ActivitySteps v-if="activity && (busy || error)" :steps="activity.steps" />
     <p v-if="error" class="error">{{ error }}</p>
     <div class="actions">
-      <button type="button" :disabled="busy" @click="emit('close')">Cancel</button>
-      <button type="submit" :disabled="busy">
+      <Button :disabled="busy" @click="emit('close')">Cancel</Button>
+      <Button type="submit" :disabled="busy">
         {{ busy ? 'Cloning…' : 'Clone' }}<Kbd v-if="!busy" action="confirm" />
-      </button>
+      </Button>
     </div>
   </form>
 </template>
+
+<style scoped>
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+</style>

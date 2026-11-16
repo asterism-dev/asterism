@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, Dialog, Field, Select } from '@asterism-dev/lumen';
 import { open } from '@tauri-apps/plugin-dialog';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { activityFor } from '../activity';
@@ -24,13 +25,16 @@ const existingIn = computed(
     state.workspaces.find((w) => w.id === existing.value?.workspace_id)?.name ??
     'another workspace',
 );
+const workspaceOptions = computed(() =>
+  state.workspaces.map((w) => ({ value: w.id, label: w.name })),
+);
 const chosenName = computed(() => state.workspaces.find((w) => w.id === workspaceId.value)?.name);
 const busy = ref(false);
 const token = ref('');
 const activity = computed(() => activityFor(state.activities, token.value));
 const error = ref<string | null>(null);
-const chooseButton = ref<HTMLButtonElement>();
-const dialog = ref<HTMLElement>();
+const chooseButton = ref<InstanceType<typeof Button>>();
+const form = ref<InstanceType<typeof CloneForm> | InstanceType<typeof CreateRepoForm>>();
 let closed = false;
 
 // On window, like NewTaskDialog: WebKit doesn't focus clicked buttons, so focus often sits on body.
@@ -40,11 +44,11 @@ function onKey(e: KeyboardEvent) {
   if (existing.value) return;
   if (state.projectDialog === 'folder') void chooseFolder();
   // Clicking (not requestSubmit) respects the button's disabled state and works on Safari 15.
-  else dialog.value?.querySelector<HTMLButtonElement>('button[type="submit"]')?.click();
+  else form.value?.$el.querySelector('button[type="submit"]')?.click();
 }
 
 onMounted(() => {
-  chooseButton.value?.focus();
+  chooseButton.value?.$el.focus();
   window.addEventListener('keydown', onKey);
 });
 onUnmounted(() => {
@@ -104,70 +108,74 @@ async function chooseFolder() {
 </script>
 
 <template>
-  <div class="modal-backdrop" tabindex="-1" @click.self="close" @keydown.esc="close">
-    <div ref="dialog" class="modal" role="dialog" aria-modal="true" aria-label="Add project">
-      <label class="add-form"
-        >Workspace
-        <select v-model="workspaceId" :disabled="busy">
-          <option v-for="w in state.workspaces" :key="w.id" :value="w.id">{{ w.name }}</option>
-        </select>
-      </label>
-      <div class="segmented" role="tablist">
-        <button
-          v-for="t in TABS"
-          :key="t.id"
-          type="button"
-          role="tab"
-          :aria-selected="state.projectDialog === t.id"
-          :class="{ active: state.projectDialog === t.id }"
-          :disabled="busy && state.projectDialog !== t.id"
-          @click="select(t.id)"
-        >
-          {{ t.label }}
-        </button>
-      </div>
-      <div v-if="state.projectDialog === 'folder' && existing" class="add-form">
-        <p>{{ existing.name }} is already in {{ existingIn }}.</p>
-        <ActivitySteps v-if="activity && (busy || error)" :steps="activity.steps" />
-        <p v-if="error" class="error">{{ error }}</p>
-        <div class="actions">
-          <button type="button" :disabled="busy" @click="close">Cancel</button>
-          <button type="button" :disabled="busy" @click="resolveExisting('clone')">
-            Create a second clone
-          </button>
-          <button type="button" class="primary" :disabled="busy" @click="resolveExisting('move')">
-            Move to {{ chosenName }}
-          </button>
-        </div>
-      </div>
-      <div v-else-if="state.projectDialog === 'folder'" class="add-form">
-        <p class="muted">Add a git repository that already exists on this computer.</p>
-        <p v-if="error" class="error">{{ error }}</p>
-        <div class="actions">
-          <button type="button" :disabled="busy" @click="close">Cancel</button>
-          <button
-            ref="chooseButton"
-            type="button"
-            class="primary"
-            :disabled="busy"
-            @click="chooseFolder"
-          >
-            {{ busy ? 'Adding…' : 'Choose folder…' }}<Kbd v-if="!busy" action="confirm" />
-          </button>
-        </div>
-      </div>
-      <CloneForm
-        v-else-if="state.projectDialog === 'clone'"
-        :workspace-id="workspaceId"
-        @busy="busy = $event"
-        @close="state.projectDialog = null"
+  <Dialog :open="true" title="Add project" @update:open="(o) => !o && close()">
+    <Field label="Workspace">
+      <Select
+        :model-value="workspaceId as number"
+        :options="workspaceOptions"
+        :disabled="busy"
+        @update:model-value="workspaceId = $event"
       />
-      <CreateRepoForm
-        v-else
-        :workspace-id="workspaceId"
-        @busy="busy = $event"
-        @close="state.projectDialog = null"
-      />
+    </Field>
+    <div class="segmented" role="tablist">
+      <Button
+        v-for="t in TABS"
+        :key="t.id"
+        role="tab"
+        :aria-selected="state.projectDialog === t.id"
+        :class="{ active: state.projectDialog === t.id }"
+        :disabled="busy && state.projectDialog !== t.id"
+        @click="select(t.id)"
+      >
+        {{ t.label }}
+      </Button>
     </div>
-  </div>
+    <div v-if="state.projectDialog === 'folder' && existing" class="add-form">
+      <p>{{ existing.name }} is already in {{ existingIn }}.</p>
+      <ActivitySteps v-if="activity && (busy || error)" :steps="activity.steps" />
+      <p v-if="error" class="error">{{ error }}</p>
+      <div class="actions">
+        <Button :disabled="busy" @click="close">Cancel</Button>
+        <Button :disabled="busy" @click="resolveExisting('clone')">Create a second clone</Button>
+        <Button variant="accent" :disabled="busy" @click="resolveExisting('move')">
+          Move to {{ chosenName }}
+        </Button>
+      </div>
+    </div>
+    <div v-else-if="state.projectDialog === 'folder'" class="add-form">
+      <p class="muted">Add a git repository that already exists on this computer.</p>
+      <p v-if="error" class="error">{{ error }}</p>
+      <div class="actions">
+        <Button :disabled="busy" @click="close">Cancel</Button>
+        <Button ref="chooseButton" variant="accent" :disabled="busy" @click="chooseFolder">
+          {{ busy ? 'Adding…' : 'Choose folder…' }}<Kbd v-if="!busy" action="confirm" />
+        </Button>
+      </div>
+    </div>
+    <CloneForm
+      v-else-if="state.projectDialog === 'clone'"
+      ref="form"
+      :workspace-id="workspaceId"
+      @busy="busy = $event"
+      @close="state.projectDialog = null"
+    />
+    <CreateRepoForm
+      v-else
+      ref="form"
+      :workspace-id="workspaceId"
+      @busy="busy = $event"
+      @close="state.projectDialog = null"
+    />
+  </Dialog>
 </template>
+
+<style scoped>
+.segmented > button {
+  flex: 1;
+}
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+</style>

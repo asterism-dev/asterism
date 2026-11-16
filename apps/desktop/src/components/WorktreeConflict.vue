@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, Switch } from '@asterism-dev/lumen';
 import { computed, ref } from 'vue';
 import { TriangleAlert } from '@lucide/vue';
 import { api, errorMessage } from '../api';
@@ -59,10 +60,9 @@ async function confirmDelete() {
       <span class="mono">{{ conflict.name }}</span> already exists
     </p>
     <div class="segmented small" role="group" aria-label="Existing worktree">
-      <button
+      <Button
         v-for="c in conflict.choices"
         :key="c"
-        type="button"
         :class="{ active: choice === c }"
         :aria-pressed="choice === c"
         :disabled="c === 'replace' && blocked"
@@ -70,7 +70,7 @@ async function confirmDelete() {
         @click="choice = c"
       >
         {{ label(c) }}
-      </button>
+      </Button>
     </div>
     <p v-if="choice === 'replace'" class="warning">
       Discards uncommitted changes and local commits in {{ conflict.name }}.
@@ -82,9 +82,9 @@ async function confirmDelete() {
             >Belongs to <strong>{{ t.title }}</strong> ·
             {{ t.archived ? 'archived' : 'active' }}</span
           >
-          <button v-if="pending?.id !== t.id" type="button" class="danger" @click="startDelete(t)">
+          <Button v-if="pending?.id !== t.id" variant="danger" @click="startDelete(t)">
             Delete task
-          </button>
+          </Button>
         </div>
         <div v-if="pending?.id === t.id" class="confirm">
           <p v-if="!check && !error" class="muted">Checking…</p>
@@ -93,16 +93,15 @@ async function confirmDelete() {
               The worktree stays: {{ check.shared_with.length }} other task(s) use it.
             </p>
             <p v-else-if="check.dirty" class="warning">Uncommitted changes will be lost.</p>
-            <label v-if="check.branch_exists && !check.shared_with.length" class="switch">
-              <input v-model="deleteBranch" type="checkbox" role="switch" />
+            <Switch v-if="check.branch_exists && !check.shared_with.length" v-model="deleteBranch">
               Also delete branch <span class="mono">{{ check.branch }}</span>
               <span v-if="check.unmerged_commits" class="warning"
                 >({{ check.unmerged_commits }} unmerged commit(s))</span
               >
-            </label>
+            </Switch>
             <div class="row">
-              <button type="button" @click="pending = null">Cancel</button>
-              <button type="button" class="danger" @click="confirmDelete">Delete</button>
+              <Button @click="pending = null">Cancel</Button>
+              <Button variant="danger" @click="confirmDelete">Delete</Button>
             </div>
           </template>
         </div>
@@ -134,8 +133,7 @@ async function confirmDelete() {
   border: none;
   padding: 2px 8px;
 }
-.warning,
-button.danger {
+.warning {
   color: var(--danger);
 }
 .owners {
@@ -157,13 +155,5 @@ button.danger {
   flex-direction: column;
   gap: 4px;
   padding-left: 8px;
-}
-.switch {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.switch input {
-  width: auto;
 }
 </style>

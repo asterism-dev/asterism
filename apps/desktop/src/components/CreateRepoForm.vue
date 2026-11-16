@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, Field, Select, TextInput } from '@asterism-dev/lumen';
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
 import { repoNameError, targetPath, visibilityChoices } from '../projects';
@@ -22,15 +23,20 @@ const reposRoot = computed(
 );
 const error = ref<string | null>(null);
 const busy = ref(false);
-const input = ref<HTMLInputElement>();
+const input = ref<InstanceType<typeof TextInput>>();
 
 const owners = computed(() =>
   status.value?.account ? [status.value.account, ...status.value.owners] : [],
 );
+const forgeOptions = computed(() =>
+  forges.value.map((f) => ({ value: f.id, label: f.display_name })),
+);
+const ownerOptions = computed(() => owners.value.map((o) => ({ value: o, label: o })));
 const forgeName = computed(
   () => forges.value.find((f) => f.id === forge.value)?.display_name ?? 'remote',
 );
 const choices = computed(() => (status.value ? visibilityChoices(owner.value, status.value) : []));
+const visibilityOptions = computed(() => choices.value.map((v) => ({ value: v, label: v })));
 const nameError = computed(() => (name.value ? repoNameError(name.value) : null));
 const preview = computed(() =>
   name.value && !nameError.value && reposRoot.value
@@ -43,7 +49,7 @@ watch(choices, (list) => {
 });
 
 onMounted(async () => {
-  input.value?.focus();
+  input.value?.$el.focus();
   try {
     const [list, config] = await Promise.all([api.forges(), api.nodeConfig()]);
     forges.value = list;
@@ -93,7 +99,7 @@ async function create() {
     busy.value = false;
     if (error.value) {
       await nextTick();
-      input.value?.focus();
+      input.value?.$el.focus();
     }
   }
 }
@@ -102,66 +108,62 @@ watch(busy, (b) => emit('busy', b));
 
 <template>
   <form class="add-form" @submit.prevent="create">
-    <label
-      >Name
-      <input
+    <Field label="Name" :error="nameError ?? undefined">
+      <TextInput
         ref="input"
         v-model="name"
         placeholder="my-service"
         spellcheck="false"
         :disabled="busy"
-    /></label>
-    <p v-if="nameError" class="error">{{ nameError }}</p>
+      />
+    </Field>
     <div class="segmented" role="group" aria-label="Where">
-      <button
-        type="button"
+      <Button
         :aria-pressed="!onRemote"
         :class="{ active: !onRemote }"
         :disabled="busy"
         @click="onRemote = false"
       >
         Local only
-      </button>
-      <button
-        type="button"
+      </Button>
+      <Button
         :aria-pressed="onRemote"
         :class="{ active: onRemote }"
         :disabled="busy || !status?.authenticated"
         @click="onRemote = true"
       >
         On {{ forgeName }}
-      </button>
+      </Button>
     </div>
-    <label v-if="forges.length > 1"
-      >Forge
-      <select v-model="forge" :disabled="busy">
-        <option v-for="f in forges" :key="f.id" :value="f.id">{{ f.display_name }}</option>
-      </select>
-    </label>
+    <Field v-if="forges.length > 1" label="Forge">
+      <Select v-model="forge" :options="forgeOptions" :disabled="busy" />
+    </Field>
     <p v-if="status && !status.authenticated" class="muted">
       {{ status.error ?? `${forgeName} is not available` }}
     </p>
     <template v-if="onRemote">
-      <label
-        >Owner
-        <select v-model="owner" :disabled="busy">
-          <option v-for="o in owners" :key="o" :value="o">{{ o }}</option>
-        </select>
-      </label>
-      <label
-        >Visibility
-        <select v-model="visibility" :disabled="busy">
-          <option v-for="v in choices" :key="v" :value="v">{{ v }}</option>
-        </select>
-      </label>
+      <Field label="Owner">
+        <Select v-model="owner" :options="ownerOptions" :disabled="busy" />
+      </Field>
+      <Field label="Visibility">
+        <Select v-model="visibility" :options="visibilityOptions" :disabled="busy" />
+      </Field>
     </template>
     <p v-if="preview" class="muted mono">→ {{ preview }}</p>
     <p v-if="error" class="error">{{ error }}</p>
     <div class="actions">
-      <button type="button" :disabled="busy" @click="emit('close')">Cancel</button>
-      <button type="submit" :disabled="busy || !!nameError">
+      <Button :disabled="busy" @click="emit('close')">Cancel</Button>
+      <Button type="submit" :disabled="busy || !!nameError">
         {{ busy ? 'Creating…' : 'Create' }}<Kbd v-if="!busy" action="confirm" />
-      </button>
+      </Button>
     </div>
   </form>
 </template>
+
+<style scoped>
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+</style>

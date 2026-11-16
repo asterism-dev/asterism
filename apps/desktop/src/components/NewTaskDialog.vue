@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { X } from '@lucide/vue';
+import { Button, Dialog, Select, Tabs, Textarea, TextInput } from '@asterism-dev/lumen';
 import { activityFor } from '../activity';
 import { api, errorMessage, RpcError } from '../api';
 import { baseChoice } from '../baseBranch';
@@ -38,15 +38,22 @@ const suffix = randomSuffix();
 const agents = computed(() => state.agents.filter((a) => a.available));
 const projectId = ref(props.projectId);
 const projectOptions = computed(() =>
-  state.projects.filter(
-    (p) => p.id === props.projectId || p.workspace_id === state.activeWorkspace,
-  ),
+  state.projects
+    .filter((p) => p.id === props.projectId || p.workspace_id === state.activeWorkspace)
+    .map((p) => ({ value: p.id, label: p.name })),
 );
+const agentOptions = computed(() =>
+  agents.value.map((a) => ({ value: a.name, label: a.display_name || a.name })),
+);
+const TABS = [
+  { value: 'conversation', label: 'Initial Conversation' },
+  { value: 'workspace', label: 'Workspace Settings' },
+];
 const title = ref('');
 const prompt = ref('');
 const agent = ref(agents.value[0]?.name ?? '');
 const session = ref<'agent' | 'shell'>(agents.value.length ? 'agent' : 'shell');
-const tab = ref<'conversation' | 'workspace'>('conversation');
+const tab = ref('conversation');
 const kind = ref<'issue' | 'pr'>('issue');
 const issue = ref<TaskIssue | null>(null);
 const prBranch = ref<string | null>(null);
@@ -63,7 +70,7 @@ const busy = ref(false);
 const token = ref('');
 const activity = computed(() => activityFor(state.activities, token.value));
 let closed = false;
-const titleInput = ref<HTMLInputElement>();
+const titleInput = ref<InstanceType<typeof TextInput>>();
 const picker = ref<InstanceType<typeof BasedOnPicker>>();
 
 const branches = ref<ProjectBranches | null>(null);
@@ -194,16 +201,13 @@ function onEsc() {
 
 // On window, not the form: WebKit doesn't focus clicked buttons, so focus often sits on body.
 function onKey(e: KeyboardEvent) {
-  if (matchAction(e) === 'confirm') {
-    e.preventDefault();
-    submit();
-  } else if (e.key === 'Escape') {
-    onEsc();
-  }
+  if (matchAction(e) !== 'confirm') return;
+  e.preventDefault();
+  submit();
 }
 
 onMounted(() => {
-  titleInput.value?.focus();
+  titleInput.value?.$el.focus();
   window.addEventListener('keydown', onKey);
 });
 onUnmounted(() => {
@@ -263,23 +267,13 @@ async function submit() {
 </script>
 
 <template>
-  <div class="modal-backdrop" @click.self="emit('close')">
-    <form class="modal create-task" @submit.prevent="submit">
-      <header>
-        <h2>
-          Create Task in
-          <select v-model="projectId" class="project" aria-label="Project">
-            <option v-for="p in projectOptions" :key="p.id" :value="p.id">{{ p.name }}</option>
-          </select>
-        </h2>
-        <button type="button" class="icon" aria-label="Close" @click="emit('close')">
-          <X :size="16" />
-        </button>
-      </header>
+  <Dialog :open="true" title="Create Task" width="520px" @update:open="(o) => !o && onEsc()">
+    <form class="create-task" @submit.prevent="submit">
+      <Select v-model="projectId" :options="projectOptions" class="project" aria-label="Project" />
 
-      <input
+      <TextInput
         ref="titleInput"
-        :value="title"
+        :model-value="title"
         class="title"
         :placeholder="placeholder"
         aria-label="Task name"
@@ -297,71 +291,53 @@ async function submit() {
         @open-settings="openSettings"
       />
 
-      <div class="tabs" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          :aria-selected="tab === 'conversation'"
-          :class="{ active: tab === 'conversation' }"
-          @click="tab = 'conversation'"
-        >
-          Initial Conversation
-        </button>
-        <button
-          type="button"
-          role="tab"
-          :aria-selected="tab === 'workspace'"
-          :class="{ active: tab === 'workspace' }"
-          @click="tab = 'workspace'"
-        >
-          Workspace Settings
-        </button>
-      </div>
-
-      <div v-show="tab === 'conversation'" class="conversation">
-        <div class="segmented small" role="group" aria-label="Session">
-          <button
-            type="button"
-            :disabled="!agents.length"
-            :class="{ active: session === 'agent' }"
-            :aria-pressed="session === 'agent'"
-            @click="session = 'agent'"
-          >
-            Agent
-          </button>
-          <button
-            type="button"
-            :class="{ active: session === 'shell' }"
-            :aria-pressed="session === 'shell'"
-            @click="session = 'shell'"
-          >
-            Shell
-          </button>
-        </div>
-        <template v-if="session === 'agent'">
-          <select v-model="agent" aria-label="Agent">
-            <option v-for="a in agents" :key="a.name" :value="a.name">
-              {{ a.display_name || a.name }}
-            </option>
-          </select>
-          <textarea v-model="prompt" rows="4" placeholder="Describe what the agent should do…" />
+      <Tabs v-model="tab" :tabs="TABS" keep-mounted>
+        <template #conversation>
+          <div class="conversation tab-panel">
+            <div class="segmented small" role="group" aria-label="Session">
+              <Button
+                :disabled="!agents.length"
+                :class="{ active: session === 'agent' }"
+                :aria-pressed="session === 'agent'"
+                @click="session = 'agent'"
+              >
+                Agent
+              </Button>
+              <Button
+                :class="{ active: session === 'shell' }"
+                :aria-pressed="session === 'shell'"
+                @click="session = 'shell'"
+              >
+                Shell
+              </Button>
+            </div>
+            <template v-if="session === 'agent'">
+              <Select v-model="agent" :options="agentOptions" aria-label="Agent" />
+              <Textarea
+                v-model="prompt"
+                :rows="4"
+                placeholder="Describe what the agent should do…"
+              />
+            </template>
+            <p v-else class="muted">Opens a shell in the worktree — no agent is started.</p>
+          </div>
         </template>
-        <p v-else class="muted">Opens a shell in the worktree — no agent is started.</p>
-      </div>
-
-      <WorkspaceSettings
-        v-show="tab === 'workspace'"
-        v-model:mode="mode"
-        v-model:base="base"
-        v-model:branch="branch"
-        v-model:checkout="checkout"
-        v-model:push="push"
-        :branches="branches"
-        :loading="loadingBranches"
-        :pr-branch="prBranch"
-        @touch-branch="branchTouched = true"
-        @refresh="loadBranches"
-      />
+        <template #workspace>
+          <WorkspaceSettings
+            v-model:mode="mode"
+            v-model:base="base"
+            v-model:branch="branch"
+            v-model:checkout="checkout"
+            v-model:push="push"
+            class="tab-panel"
+            :branches="branches"
+            :loading="loadingBranches"
+            :pr-branch="prBranch"
+            @touch-branch="branchTouched = true"
+            @refresh="loadBranches"
+          />
+        </template>
+      </Tabs>
 
       <WorktreeConflict
         v-if="conflict"
@@ -372,70 +348,43 @@ async function submit() {
       <ActivitySteps v-if="activity && (busy || error)" :steps="activity.steps" />
       <p v-if="error" class="error">{{ error }}</p>
       <footer class="actions">
-        <button
+        <Button
           type="submit"
-          class="primary"
-          :class="{ replace: replacing }"
+          :variant="replacing ? 'danger' : 'accent'"
           :disabled="busy || loadingBranches || !canCreate"
         >
           {{ replacing ? 'Replace & create' : 'Create' }} <Kbd action="confirm" />
-        </button>
+        </Button>
       </footer>
     </form>
-  </div>
+  </Dialog>
 </template>
 
 <style scoped>
 .create-task {
-  width: 520px;
-}
-header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-header h2 {
-  margin: 0;
-  font-size: 14px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 10px;
 }
 .project {
   width: auto;
+  align-self: flex-start;
   border: none;
   font-weight: 600;
   padding: 0 4px;
-}
-.icon {
-  border: none;
-  background: none;
-  display: inline-flex;
-  align-items: center;
-  padding: 4px;
 }
 .title {
   font-size: 18px;
   border: none;
   padding: 6px 4px;
 }
-.tabs {
-  display: flex;
-  gap: 4px;
-}
-.tabs button {
-  border: none;
-  background: none;
-  color: var(--muted);
-}
-.tabs button.active {
-  color: inherit;
-  background: var(--select);
-}
 .conversation {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.tab-panel {
+  padding-top: 10px;
 }
 .conversation .segmented {
   align-self: flex-start;
@@ -444,23 +393,9 @@ header h2 {
   border: none;
   padding: 2px 8px;
 }
-.primary {
-  background: #1f8f4e;
-  border-color: #1f8f4e;
-  color: #fff;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.primary:hover:not(:disabled) {
-  background: #187a42;
-}
-.primary:disabled {
-  opacity: 0.6;
-}
-.primary.replace,
-.primary.replace:hover:not(:disabled) {
-  background: var(--danger);
-  border-color: var(--danger);
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 </style>

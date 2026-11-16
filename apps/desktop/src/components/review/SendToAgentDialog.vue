@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, Dialog, Field, Select, Textarea } from '@asterism-dev/lumen';
 import { computed, onMounted, ref } from 'vue';
 import { api, errorMessage } from '../../api';
 import { agentSessions, defaultTarget } from '../../review';
@@ -20,6 +21,21 @@ const error = ref<string | null>(null);
 const busy = ref(false);
 
 const sessions = computed(() => agentSessions(state.sessions, props.taskId));
+const targetOptions = computed(() => [
+  ...sessions.value.map((s) => ({
+    value: s.id as number | 'new',
+    label: `#${s.id} ${s.kind.type === 'agent' ? s.kind.name : ''} · ${s.status}`,
+  })),
+  { value: 'new' as const, label: 'New session' },
+]);
+const agentOptions = computed(() =>
+  agents.value.map((a) => ({ value: a.name, label: a.display_name })),
+);
+const title = computed(() =>
+  props.threads.length
+    ? `Send ${props.threads.length} thread${props.threads.length === 1 ? '' : 's'} to an agent`
+    : 'Send to an agent',
+);
 const busyWarning = computed(() => sessions.value.some((s) => s.status === 'working'));
 
 onMounted(async () => {
@@ -56,43 +72,27 @@ async function send() {
 </script>
 
 <template>
-  <div class="modal-backdrop" tabindex="-1" @click.self="close" @keydown.esc="close">
-    <div class="modal" role="dialog" aria-modal="true" aria-label="Send to an agent">
-      <strong v-if="!threads.length">Send to an agent</strong>
-      <strong v-else>
-        Send {{ threads.length }} thread{{ threads.length === 1 ? '' : 's' }} to an agent
-      </strong>
-      <label>
-        Session
-        <select v-model="target">
-          <option v-for="s in sessions" :key="s.id" :value="s.id">
-            #{{ s.id }} {{ s.kind.type === 'agent' ? s.kind.name : '' }} · {{ s.status }}
-          </option>
-          <option value="new">New session</option>
-        </select>
-      </label>
-      <label v-if="target === 'new'">
-        Agent
-        <select v-model="agent">
-          <option v-for="a in agents" :key="a.name" :value="a.name">{{ a.display_name }}</option>
-        </select>
-      </label>
-      <p v-if="busyWarning" class="hint">
-        An agent in this task is working; parallel edits in one worktree can conflict.
-      </p>
-      <textarea v-model="prompt" rows="12" />
-      <p v-if="error" class="error">{{ error }}</p>
-      <div class="actions">
-        <button type="button" :disabled="busy" @click="close">Cancel</button>
-        <button
-          type="button"
-          class="primary"
-          :disabled="busy || !prompt.trim() || (target === 'new' && !agent)"
-          @click="send"
-        >
-          Send
-        </button>
-      </div>
-    </div>
-  </div>
+  <Dialog :open="true" :title="title" @update:open="(o) => !o && close()">
+    <Field label="Session">
+      <Select v-model="target" :options="targetOptions" />
+    </Field>
+    <Field v-if="target === 'new'" label="Agent">
+      <Select v-model="agent" :options="agentOptions" />
+    </Field>
+    <p v-if="busyWarning" class="hint">
+      An agent in this task is working; parallel edits in one worktree can conflict.
+    </p>
+    <Textarea v-model="prompt" :rows="12" />
+    <p v-if="error" class="error">{{ error }}</p>
+    <template #actions>
+      <Button :disabled="busy" @click="close">Cancel</Button>
+      <Button
+        variant="accent"
+        :disabled="busy || !prompt.trim() || (target === 'new' && !agent)"
+        @click="send"
+      >
+        Send
+      </Button>
+    </template>
+  </Dialog>
 </template>

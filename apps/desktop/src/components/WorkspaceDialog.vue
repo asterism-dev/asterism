@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, Dialog, Field, Select, TextInput } from '@asterism-dev/lumen';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api, errorMessage } from '../api';
 import { matchAction } from '../shortcuts';
@@ -17,6 +18,7 @@ const worktrees = ref('');
 const color = ref(props.workspace?.color ?? nextFreeColor(state.workspaces));
 const others = computed(() => state.workspaces.filter((w) => w.id !== props.workspace?.id));
 const moveTo = ref<number | undefined>(others.value[0]?.id);
+const moveOptions = computed(() => others.value.map((w) => ({ value: w.id, label: w.name })));
 const reposDefault = ref('');
 const busy = ref(false);
 const error = ref<string | null>(null);
@@ -88,36 +90,28 @@ async function submit() {
 </script>
 
 <template>
-  <div class="modal-backdrop" tabindex="-1" @click.self="close" @keydown.esc="close">
-    <form
-      ref="dialog"
-      class="modal"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="title"
-      @submit.prevent="submit"
-    >
+  <Dialog :open="true" :title="title" @update:open="(o) => !o && close()">
+    <form ref="dialog" class="workspace-form" @submit.prevent="submit">
       <template v-if="mode === 'delete'">
         <p>
           Delete workspace "{{ workspace?.name }}"? Its projects move to the workspace you pick; no
           files are removed.
         </p>
-        <label
-          >Move projects to
-          <select v-model="moveTo">
-            <option v-for="w in others" :key="w.id" :value="w.id">{{ w.name }}</option>
-          </select>
-        </label>
+        <Field label="Move projects to">
+          <Select
+            :model-value="moveTo as number"
+            :options="moveOptions"
+            @update:model-value="moveTo = $event"
+          />
+        </Field>
       </template>
       <template v-else>
-        <label
-          >Name
-          <input v-model="name" type="text" autofocus />
-        </label>
-        <label
-          >Label
-          <input v-model="label" type="text" maxlength="2" placeholder="e.g. W" />
-        </label>
+        <Field label="Name">
+          <TextInput v-model="name" />
+        </Field>
+        <Field label="Label">
+          <TextInput v-model="label" maxlength="2" placeholder="e.g. W" />
+        </Field>
         <fieldset class="colors">
           <legend>Color</legend>
           <label
@@ -131,22 +125,20 @@ async function submit() {
           </label>
         </fieldset>
         <template v-if="mode === 'create'">
-          <label
-            >Repositories folder
-            <input v-model="repos" type="text" :placeholder="placeholders.repos" />
-          </label>
-          <label
-            >Worktrees folder
-            <input v-model="worktrees" type="text" :placeholder="placeholders.worktrees" />
-          </label>
+          <Field label="Repositories folder">
+            <TextInput v-model="repos" :placeholder="placeholders.repos" />
+          </Field>
+          <Field label="Worktrees folder">
+            <TextInput v-model="worktrees" :placeholder="placeholders.worktrees" />
+          </Field>
         </template>
       </template>
       <p v-if="error" class="error">{{ error }}</p>
       <div class="actions">
-        <button type="button" :disabled="busy" @click="close">Cancel</button>
-        <button
+        <Button :disabled="busy" @click="close">Cancel</Button>
+        <Button
           type="submit"
-          :class="mode === 'delete' ? 'danger' : 'primary'"
+          :variant="mode === 'delete' ? 'danger' : 'accent'"
           :disabled="
             busy ||
             (mode !== 'delete' && !name.trim()) ||
@@ -155,15 +147,22 @@ async function submit() {
         >
           {{ mode === 'create' ? 'Create' : mode === 'rename' ? 'Save' : 'Delete'
           }}<Kbd v-if="!busy" action="confirm" />
-        </button>
+        </Button>
       </div>
     </form>
-  </div>
+  </Dialog>
 </template>
 
 <style scoped>
-button.danger {
-  color: var(--danger);
+.workspace-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 .colors {
   display: flex;

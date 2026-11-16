@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { Check, ChevronDown, GitPullRequest, GitPullRequestDraft, X } from '@lucide/vue';
+import { Button, Select, SegmentedControl, TextInput } from '@asterism-dev/lumen';
 import { api, errorMessage, RpcError } from '../api';
 import { issueStateClass, prDisabledReason } from '../taskForm';
 import { searchParams } from '../taskSources';
@@ -16,7 +17,7 @@ const emit = defineEmits<{
 }>();
 
 const open = ref(false);
-const searchInput = ref<HTMLInputElement>();
+const searchInput = ref<InstanceType<typeof TextInput>>();
 const menuOpen = ref(false);
 const query = ref('');
 const source = ref('');
@@ -30,6 +31,15 @@ const failure = ref<{ message: string; plugin: string | null; setup: boolean } |
 const searching = ref(false);
 let seq = 0;
 let debounce: ReturnType<typeof setTimeout> | undefined;
+
+const KINDS = [
+  { value: 'issue' as const, label: 'Issue' },
+  { value: 'pr' as const, label: 'Pull Request' },
+];
+const PR_STATES = [
+  { value: 'open' as const, label: 'Open' },
+  { value: 'closed' as const, label: 'Closed' },
+];
 
 const sourceInfo = computed(() => props.sources.find((s) => s.id === source.value) ?? null);
 const empty = computed(
@@ -129,7 +139,7 @@ function toggle() {
   open.value = !open.value;
   if (open.value) {
     search();
-    nextTick(() => searchInput.value?.focus());
+    nextTick(() => searchInput.value?.$el.focus());
   }
 }
 
@@ -173,31 +183,12 @@ onUnmounted(() => clearTimeout(debounce));
     <div class="card">
       <div class="head">
         <span>Based on</span>
-        <div class="segmented small" role="group" aria-label="Based on">
-          <button
-            type="button"
-            :class="{ active: kind === 'issue' }"
-            :aria-pressed="kind === 'issue'"
-            @click="kind = 'issue'"
-          >
-            Issue
-          </button>
-          <button
-            type="button"
-            :class="{ active: kind === 'pr' }"
-            :aria-pressed="kind === 'pr'"
-            @click="kind = 'pr'"
-          >
-            Pull Request
-          </button>
-        </div>
+        <SegmentedControl v-model="kind" :options="KINDS" class="small" aria-label="Based on" />
       </div>
       <div v-if="picked" class="picked">
         <span class="mono muted">{{ picked.key }}</span>
         <span class="name">{{ picked.label }}</span>
-        <button type="button" class="icon" aria-label="Clear" @click="clear">
-          <X :size="14" />
-        </button>
+        <Button variant="ghost" size="sm" :icon="X" aria-label="Clear" @click="clear" />
       </div>
       <button v-else type="button" class="placeholder" @click="toggle">
         <template v-if="kind === 'issue'">Select issue</template>
@@ -211,15 +202,15 @@ onUnmounted(() => clearTimeout(debounce));
     <div v-if="open" class="panel" @keydown.esc.stop="closePanel">
       <div class="search">
         <div v-if="kind === 'issue' && sources.length" class="provider">
-          <button
-            type="button"
-            class="icon"
+          <Button
+            variant="ghost"
+            size="sm"
             :aria-expanded="menuOpen"
             aria-label="Issue provider"
             @click="menuOpen = !menuOpen"
           >
             <ProviderIcon :id="source" /> <ChevronDown :size="12" />
-          </button>
+          </Button>
           <ul v-if="menuOpen" class="menu">
             <li v-for="s in sources" :key="s.id">
               <button
@@ -237,7 +228,7 @@ onUnmounted(() => clearTimeout(debounce));
             </li>
           </ul>
         </div>
-        <input
+        <TextInput
           ref="searchInput"
           v-model="query"
           :placeholder="
@@ -247,25 +238,22 @@ onUnmounted(() => clearTimeout(debounce));
           "
           @keydown.enter.prevent
         />
-        <select
+        <Select
           v-if="kind === 'pr'"
           v-model="prState"
+          :options="PR_STATES"
           class="state"
           aria-label="Pull request state"
-        >
-          <option value="open">Open</option>
-          <option value="closed">Closed</option>
-        </select>
+        />
       </div>
       <p v-if="failure" class="error">
         {{ failure.message }}
-        <button
+        <Button
           v-if="failure.setup && failure.plugin"
-          type="button"
           @click="emit('openSettings', failure.plugin)"
         >
           Open settings
-        </button>
+        </Button>
       </p>
       <ul v-else class="hits">
         <template v-if="kind === 'issue'">
@@ -326,7 +314,7 @@ onUnmounted(() => clearTimeout(debounce));
   padding: 6px 8px;
   border-bottom: 1px solid var(--border);
 }
-.segmented.small button {
+.small :deep(button) {
   border: none;
   padding: 2px 8px;
 }
@@ -356,14 +344,6 @@ onUnmounted(() => clearTimeout(debounce));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.icon {
-  border: none;
-  background: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px 4px;
 }
 .panel {
   border: 1px solid var(--border);
