@@ -147,11 +147,13 @@ watch(() => [state.storesVersion, state.pluginsVersion], load);
         </Button>
       </div>
     </form>
-    <div class="toggle">
-      <Switch :model-value="list?.auto_update ?? false" @update:model-value="toggleAutoUpdate">
-        Install updates automatically
-      </Switch>
-    </div>
+    <Switch
+      class="toggle"
+      :model-value="list?.auto_update ?? false"
+      @update:model-value="toggleAutoUpdate"
+    >
+      Install updates automatically
+    </Switch>
     <p class="muted">Updates that ask for new permissions always wait for you.</p>
   </section>
 </template>

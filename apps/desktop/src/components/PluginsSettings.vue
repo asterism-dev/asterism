@@ -18,7 +18,7 @@ const configure = (name: string) => (state.pluginSettingsRequest = name);
 
 <template>
   <section>
-    <Tabs v-model="tab" class="tabs" :tabs="TABS">
+    <Tabs v-model="tab" class="tabs" :tabs="TABS" variant="underline" aria-label="Plugins">
       <template #installed><InstalledTab /></template>
       <template #discover><DiscoverTab @configure="configure" /></template>
       <template #stores><StoresTab /></template>
@@ -27,7 +27,7 @@ const configure = (name: string) => (state.pluginSettingsRequest = name);
 </template>
 
 <style scoped>
-.tabs :deep(.lm-tabs__list) {
+.tabs :deep(.lm-tabs__bar) {
   margin-bottom: 12px;
 }
 </style>

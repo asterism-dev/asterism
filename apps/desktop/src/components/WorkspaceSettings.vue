@@ -34,7 +34,13 @@ const path = computed(() => {
 
 <template>
   <div class="workspace">
-    <SegmentedControl v-model="mode" :options="modes" :disabled="!!prBranch" aria-label="Branch" />
+    <SegmentedControl
+      v-model="mode"
+      :options="modes"
+      size="sm"
+      :disabled="!!prBranch"
+      aria-label="Branch"
+    />
 
     <template v-if="mode === 'new'">
       <BranchPicker
@@ -95,12 +101,6 @@ const path = computed(() => {
 .field input:not([type='checkbox']) {
   border: none;
   padding: 2px 0;
-}
-/* The global .modal label rule stacks label content vertically */
-.lm-choice {
-  flex-direction: row !important;
-  align-items: center;
-  gap: 8px !important;
 }
 .path {
   display: flex;

@@ -23,20 +23,10 @@ let debounce: ReturnType<typeof setTimeout> | undefined;
 let searchSeq = 0;
 
 const key = (h: SearchHit) => `${h.store}/${h.name}`;
-// Select values can't be null, so '' stands for "all"
-const capabilityOptions = CAPABILITY_FILTERS.map((f) => ({ value: f.value ?? '', label: f.label }));
-const capabilityFilter = computed({
-  get: () => capability.value ?? '',
-  set: (v: string) => (capability.value = (v || null) as CapabilityKind | null),
-});
 const storeOptions = computed(() => [
-  { value: '', label: 'All stores' },
+  { value: null, label: 'All stores' },
   ...stores.value.map((s) => ({ value: s, label: s })),
 ]);
-const storeFilter = computed({
-  get: () => store.value ?? '',
-  set: (v: string) => (store.value = v || null),
-});
 const action = computed(() => (selected.value ? hitAction(selected.value) : null));
 
 async function search() {
@@ -155,13 +145,8 @@ onMounted(() => {
         aria-label="Search plugins"
         spellcheck="false"
       />
-      <Select v-model="capabilityFilter" :options="capabilityOptions" aria-label="Capability" />
-      <Select
-        v-if="stores.length > 1"
-        v-model="storeFilter"
-        :options="storeOptions"
-        aria-label="Store"
-      />
+      <Select v-model="capability" :options="CAPABILITY_FILTERS" aria-label="Capability" />
+      <Select v-if="stores.length > 1" v-model="store" :options="storeOptions" aria-label="Store" />
     </div>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-else-if="!hits.length" class="muted">No plugins found. Add a store under Stores.</p>

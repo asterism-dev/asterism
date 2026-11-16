@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button, Checkbox } from '@asterism-dev/lumen';
+import { Badge, Button, Checkbox } from '@asterism-dev/lumen';
 import { ref } from 'vue';
 import { api, errorMessage } from '../../api';
 import { formatTime } from '../../review';
@@ -51,10 +51,10 @@ async function reply(body: string) {
       <Button variant="ghost" size="sm" @click="open = !open">
         {{ thread.path }}:{{ thread.line }}
       </Button>
-      <span v-if="thread.local" class="badge">local</span>
-      <span v-if="thread.pending" class="badge">pending</span>
-      <span v-if="thread.outdated" class="badge">outdated</span>
-      <span v-if="thread.resolved" class="badge">resolved</span>
+      <Badge v-if="thread.local" variant="outline">local</Badge>
+      <Badge v-if="thread.pending" variant="outline">pending</Badge>
+      <Badge v-if="thread.outdated" variant="outline">outdated</Badge>
+      <Badge v-if="thread.resolved" variant="outline">resolved</Badge>
     </div>
     <template v-if="open">
       <div v-for="c in thread.comments" :key="c.id" class="comment">
@@ -100,12 +100,6 @@ async function reply(body: string) {
   display: flex;
   gap: 6px;
   align-items: center;
-}
-.badge {
-  font-size: 11px;
-  padding: 0 6px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
 }
 .body {
   white-space: pre-wrap;
