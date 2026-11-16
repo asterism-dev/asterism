@@ -204,27 +204,6 @@ body.resizing {
 .banner button:hover {
   background: rgba(0, 0, 0, 0.08);
 }
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: none;
-  display: inline-block;
-  background: transparent;
-  border: 1px solid var(--border);
-}
-.dot.idle {
-  background: var(--idle);
-  border-color: var(--idle);
-}
-.dot.waiting_input {
-  background: var(--waiting);
-  border-color: var(--waiting);
-}
-.dot.exited {
-  background: var(--exited);
-  border-color: var(--exited);
-}
 .toasts {
   position: fixed;
   right: 16px;
@@ -241,61 +220,10 @@ body.resizing {
   border-radius: 8px;
   max-width: 420px;
 }
-.menu {
-  position: fixed;
-  z-index: 10002;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 4px;
-  min-width: 180px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15);
-}
-.menu button {
-  display: block;
-  width: 100%;
-  text-align: left;
-  border: 0;
-}
-.menu button.danger {
-  color: var(--danger);
-}
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.35);
-  display: grid;
-  place-items: center;
-  z-index: 10001;
-}
-.modal {
-  background: var(--panel);
-  border-radius: 10px;
-  padding: 18px;
-  width: 460px;
-  max-height: calc(100vh - 32px);
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.modal .actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
 .add-form {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-.modal label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.modal [role='tablist'] button {
-  flex: 1;
 }
 .error {
   color: var(--danger);
@@ -337,11 +265,6 @@ textarea.json {
   bottom: 0;
   background: var(--bg);
   padding: 8px 0;
-}
-button.primary {
-  background: var(--accent);
-  color: #1d1f27;
-  border-color: var(--accent);
 }
 .repo-list {
   list-style: none;
