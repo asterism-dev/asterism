@@ -249,9 +249,6 @@ function lastSeen(d: RemoteDevice): string {
 .remote-settings section > * {
   margin: 0;
 }
-.lm-choice {
-  align-self: flex-start;
-}
 .serve-label {
   align-self: center;
   white-space: nowrap;

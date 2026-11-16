@@ -212,7 +212,7 @@ watch(
           <p v-if="state.prErrors[projectId]" class="error">
             PR status: {{ state.prErrors[projectId] }}
           </p>
-          <Table :columns="TASK_COLUMNS" :rows="shown" row-key="id">
+          <Table :columns="TASK_COLUMNS" :rows="shown" row-key="id" size="sm" hover="clickable">
             <template #header-pick>
               <Checkbox
                 aria-label="Select all tasks"
@@ -271,7 +271,13 @@ watch(
               Prune missing worktrees
             </Button>
           </div>
-          <Table :columns="WORKTREE_COLUMNS" :rows="worktrees" row-key="path">
+          <Table
+            :columns="WORKTREE_COLUMNS"
+            :rows="worktrees"
+            row-key="path"
+            size="sm"
+            hover="clickable"
+          >
             <template #cell-path="{ row: w }">
               <span :title="w.path">{{ w.path }}</span>
               <span v-if="w.is_main" class="flag">main</span>

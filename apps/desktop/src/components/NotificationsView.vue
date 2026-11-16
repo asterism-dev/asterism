@@ -91,11 +91,7 @@ function open(n: NotificationEntry) {
         }"
         @click="open(n)"
       >
-        <StatusDot
-          class="dot"
-          :tone="n.kind === 'waiting' ? 'waiting' : 'accent'"
-          :label="n.kind === 'waiting' ? 'Waiting' : 'Notification'"
-        />
+        <StatusDot class="dot" :tone="n.kind === 'waiting' ? 'waiting' : 'accent'" />
         <div class="text">
           <div class="title">{{ n.task_title ?? 'Unknown task' }}</div>
           <div class="muted">{{ detail(n) }}</div>

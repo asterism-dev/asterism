@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Tabs } from '@asterism-dev/lumen';
+import { Badge, Tabs } from '@asterism-dev/lumen';
 import { FileDiff, GitCommitHorizontal, ListChecks, MessageSquare } from '@lucide/vue';
 import { computed } from 'vue';
 import { diffBar, type ReviewTab } from '../../review';
@@ -33,7 +33,7 @@ const bar = computed(() => diffBar(props.additions, props.deletions));
     <template #tab="{ tab }">
       <component :is="ICONS[tab.value as ReviewTab]" :size="15" />
       {{ tab.label }}
-      <span class="pill">{{ counts[tab.value] }}</span>
+      <Badge variant="pill" weight="normal">{{ counts[tab.value] }}</Badge>
     </template>
     <template #end>
       <span class="stat">
@@ -51,13 +51,6 @@ const bar = computed(() => diffBar(props.additions, props.deletions));
 }
 .review-tabs :deep(.lm-tabs__bar) {
   padding: 0 4px 0 14px;
-}
-.pill {
-  font-size: 11px;
-  padding: 0 7px;
-  border-radius: 10px;
-  background: var(--select);
-  color: var(--text);
 }
 .stat {
   display: flex;

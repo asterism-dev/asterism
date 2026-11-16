@@ -94,6 +94,8 @@ onUnmounted(() => {
         :columns="COLUMNS"
         :rows="rows"
         row-key="key"
+        size="sm"
+        hover="clickable"
         :row-clickable="(r) => !!r.session"
         @row-click="(r) => r.session && selectSession(state, r.session)"
       >

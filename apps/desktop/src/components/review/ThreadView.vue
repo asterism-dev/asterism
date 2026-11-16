@@ -51,10 +51,10 @@ async function reply(body: string) {
       <Button variant="ghost" size="sm" @click="open = !open">
         {{ thread.path }}:{{ thread.line }}
       </Button>
-      <Badge v-if="thread.local" variant="outline">local</Badge>
-      <Badge v-if="thread.pending" variant="outline">pending</Badge>
-      <Badge v-if="thread.outdated" variant="outline">outdated</Badge>
-      <Badge v-if="thread.resolved" variant="outline">resolved</Badge>
+      <Badge v-if="thread.local" variant="outline" weight="normal">local</Badge>
+      <Badge v-if="thread.pending" variant="outline" weight="normal">pending</Badge>
+      <Badge v-if="thread.outdated" variant="outline" weight="normal">outdated</Badge>
+      <Badge v-if="thread.resolved" variant="outline" weight="normal">resolved</Badge>
     </div>
     <template v-if="open">
       <div v-for="c in thread.comments" :key="c.id" class="comment">
