@@ -157,7 +157,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app" @click="state.menu = null">
+  <div class="app">
     <div v-if="accent" class="workspace-accent" :style="{ background: accent }" />
     <div v-if="state.node.state === 'update_available'" class="banner">
       <template v-if="state.node.hello.daemon_version === state.node.bundled_version">

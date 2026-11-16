@@ -1,7 +1,9 @@
 import { createApp } from 'vue';
 import App from './App.vue';
-import 'dockview-vue/dist/styles/dockview.css';
+// styles.css first: it fixes the cascade-layer order so lumen beats the base layer.
 import './styles.css';
+import '@asterism-dev/lumen/style.css';
+import 'dockview-vue/dist/styles/dockview.css';
 import { initTheme } from './theme';
 
 // Only text fields keep the native menu (copy/paste); elsewhere WebKit would offer Reload.

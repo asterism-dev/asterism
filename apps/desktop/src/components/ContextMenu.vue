@@ -1,34 +1,30 @@
 <script setup lang="ts">
-import { state, type MenuItem } from '../store';
+import { Menu } from '@asterism-dev/lumen';
+import { state } from '../store';
 
-function run(item: MenuItem) {
-  state.menu = null;
-  item.action();
+function onOpen(open: boolean) {
+  if (!open) state.menu = null;
 }
 </script>
 
 <template>
-  <div
+  <!-- showMenu opens at the pointer, so an invisible anchor there stands in for the trigger -->
+  <Menu
     v-if="state.menu"
-    class="menu"
-    :style="{ left: `${state.menu.x}px`, top: `${state.menu.y}px` }"
-    @click.stop
+    :key="`${state.menu.x},${state.menu.y}`"
+    :open="true"
+    :items="state.menu.items"
+    @update:open="onOpen"
   >
-    <button
-      v-for="item in state.menu.items"
-      :key="item.label"
-      :class="{ danger: item.danger }"
-      @click="run(item)"
-    >
-      <span class="check">{{ item.checked ? '✓' : '' }}</span
-      >{{ item.label }}
-    </button>
-  </div>
+    <span class="menu-anchor" :style="{ left: `${state.menu.x}px`, top: `${state.menu.y}px` }" />
+  </Menu>
 </template>
 
 <style scoped>
-.check {
-  display: inline-block;
-  width: 1.2em;
+.menu-anchor {
+  position: fixed;
+  width: 0;
+  height: 0;
+  pointer-events: none;
 }
 </style>

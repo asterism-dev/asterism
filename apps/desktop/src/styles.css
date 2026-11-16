@@ -1,65 +1,4 @@
-:root {
-  color-scheme: light;
-  --bg: #f7f7f8;
-  --panel: #ffffff;
-  --text: #1d1f27;
-  --muted: #6b6f7b;
-  --border: #e2e3e8;
-  --accent: #c98a00;
-  --select: #ececf1;
-  --danger: #c43b3b;
-  --hl-keyword: #a626a4;
-  --hl-string: #50a14f;
-  --hl-comment: #a0a1a7;
-  --hl-number: #986801;
-  --hl-title: #4078f2;
-  --hl-type: #c18401;
-  --hl-attr: #e45649;
-  --idle: #8a8f98;
-  --waiting: #f59e0b;
-  --exited: #d0d2d8;
-  --ws-blue: #3b82f6;
-  --ws-green: #22a35a;
-  --ws-amber: #d99a06;
-  --ws-red: #dc4a4a;
-  --ws-purple: #8b5cf6;
-  --ws-pink: #e0559b;
-  --ws-teal: #14a3a3;
-  --ws-slate: #64748b;
-  font:
-    13px/1.4 -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    system-ui,
-    sans-serif;
-  color: var(--text);
-  background: var(--bg);
-}
-:root[data-theme='dark'] {
-  color-scheme: dark;
-  --bg: #16171d;
-  --panel: #1d1f27;
-  --text: #e6e7eb;
-  --muted: #8b8f9a;
-  --border: #2c2f3a;
-  --select: #2a2d38;
-  --exited: #3a3d48;
-  --ws-blue: #60a5fa;
-  --ws-green: #4ade80;
-  --ws-amber: #fbbf24;
-  --ws-red: #f87171;
-  --ws-purple: #a78bfa;
-  --ws-pink: #f472b6;
-  --ws-teal: #2dd4bf;
-  --ws-slate: #94a3b8;
-  --hl-keyword: #c678dd;
-  --hl-string: #98c379;
-  --hl-comment: #7f848e;
-  --hl-number: #d19a66;
-  --hl-title: #61afef;
-  --hl-type: #e5c07b;
-  --hl-attr: #e06c75;
-}
+@layer base, lumen;
 * {
   box-sizing: border-box;
 }
@@ -70,27 +9,89 @@ body,
   height: 100%;
   overflow: hidden;
 }
-button {
-  font: inherit;
-  color: inherit;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 3px 9px;
-  cursor: pointer;
+/* Native-control defaults sit below lumen so its components win. */
+@layer base {
+  button {
+    font: inherit;
+    color: inherit;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 9px;
+    cursor: pointer;
+  }
+  button:hover {
+    background: var(--select);
+  }
+  button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+  }
+  /* On/off settings render as sliders; plain checkboxes stay for ticking items off. */
+  input[type='checkbox'][role='switch'] {
+    appearance: none;
+    flex: none;
+    position: relative;
+    width: 30px;
+    height: 18px;
+    margin: 0;
+    padding: 0;
+    border: none;
+    border-radius: 9px;
+    background: var(--border);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  input[type='checkbox'][role='switch']::before {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    transition: transform 0.15s;
+  }
+  input[type='checkbox'][role='switch']:checked {
+    background: var(--accent);
+  }
+  input[type='checkbox'][role='switch']:checked::before {
+    transform: translateX(12px);
+  }
+  input[type='checkbox'][role='switch']:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  input[type='checkbox'][role='switch']:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+    width: 100%;
+  }
 }
-button:hover {
-  background: var(--select);
-}
-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-}
-.lucide {
+/* Only icons without an explicit size; lumen sizes its own. */
+.lucide[width='24'] {
   width: 16px;
   height: 16px;
+}
+.lucide {
   stroke-width: 1.75;
   flex: none;
 }
@@ -106,62 +107,6 @@ button {
 .pane-tab .lucide {
   width: 14px;
   height: 14px;
-}
-/* On/off settings render as sliders; plain checkboxes stay for ticking items off. */
-input[type='checkbox'][role='switch'] {
-  appearance: none;
-  flex: none;
-  position: relative;
-  width: 30px;
-  height: 18px;
-  margin: 0;
-  padding: 0;
-  border: none;
-  border-radius: 9px;
-  background: var(--border);
-  cursor: pointer;
-  transition: background 0.15s;
-}
-input[type='checkbox'][role='switch']::before {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-  transition: transform 0.15s;
-}
-input[type='checkbox'][role='switch']:checked {
-  background: var(--accent);
-}
-input[type='checkbox'][role='switch']:checked::before {
-  transform: translateX(12px);
-}
-input[type='checkbox'][role='switch']:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-input[type='checkbox'][role='switch']:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-input,
-textarea,
-select {
-  font: inherit;
-  color: inherit;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 5px 8px;
-  width: 100%;
 }
 .app {
   display: flex;
@@ -424,30 +369,4 @@ button.primary {
 .segmented button.active {
   background: var(--select);
   border-color: var(--accent);
-}
-
-.pr-badge {
-  flex: none;
-  font-size: 12px;
-  font-weight: 600;
-  text-decoration: none;
-}
-.pr-draft {
-  color: var(--muted);
-}
-.pr-pending {
-  color: #d4a72c;
-}
-.pr-success {
-  color: #2da44e;
-}
-.pr-failure {
-  color: var(--danger);
-}
-.pr-merged {
-  color: #8250df;
-}
-.pr-closed {
-  color: var(--muted);
-  text-decoration: line-through;
 }

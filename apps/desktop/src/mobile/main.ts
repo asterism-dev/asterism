@@ -1,5 +1,6 @@
 import { createApp } from 'vue';
 import '../styles.css';
+import '@asterism-dev/lumen/style.css';
 import './mobile.css';
 import { initTheme } from '../theme';
 import { connect } from './connection';

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { StatusDot } from '@asterism-dev/lumen';
 import { Moon } from '@lucide/vue';
 import type { SessionStatus } from '../types';
 
@@ -12,6 +13,13 @@ const LABELS: Record<SessionStatus, string> = {
   exited: 'Exited',
   hibernated: 'Hibernated',
 };
+const TONES = {
+  waiting_input: 'waiting',
+  working: 'none',
+  idle: 'idle',
+  exited: 'exited',
+  hibernated: 'none',
+} as const satisfies Record<SessionStatus, string>;
 </script>
 
 <template>
@@ -39,14 +47,12 @@ const LABELS: Record<SessionStatus, string> = {
     role="img"
     :aria-label="LABELS.hibernated"
   />
-  <span
+  <StatusDot
     v-else-if="status === 'waiting_input' || (status && showAll)"
-    class="dot"
-    :class="status"
+    :tone="TONES[status]"
     :title="LABELS[status]"
-    role="img"
-    :aria-label="LABELS[status]"
-  ></span>
+    :label="LABELS[status]"
+  />
 </template>
 
 <style scoped>

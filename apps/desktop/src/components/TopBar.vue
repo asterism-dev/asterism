@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, Popover } from '@asterism-dev/lumen';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import {
@@ -93,29 +94,27 @@ function moreMenu(e: MouseEvent) {
     },
     { label: 'Reset layout…', action: () => void resetLayout() },
   ]);
-  // Opened at the window's right edge; keep the menu on screen.
-  if (state.menu) state.menu.x = Math.min(state.menu.x, window.innerWidth - 200);
 }
 </script>
 
 <template>
   <header class="top-bar">
-    <button
+    <Button
+      variant="ghost"
+      :icon="sidebar.open ? PanelLeftClose : PanelLeftOpen"
       :aria-pressed="sidebar.open"
       :title="withHint(sidebar.open ? 'Hide projects' : 'Show projects', 'toggleSidebar')"
       @click="sidebar.open = !sidebar.open"
-    >
-      <PanelLeftClose v-if="sidebar.open" /><PanelLeftOpen v-else />
-    </button>
+    />
     <div class="location">
       <span v-if="pageProject" class="repo">{{ pageProject.name }}</span>
       <template v-else-if="task">
         <span class="repo">{{ repo }}</span>
         <span class="muted">/</span>
-        <button class="branch" :title="task.branch" @click="branchMenu">
+        <Button variant="ghost" size="sm" class="branch" :title="task.branch" @click="branchMenu">
           <span class="branch-name">{{ task.branch }}</span
-          ><ChevronDown />
-        </button>
+          ><ChevronDown :size="14" />
+        </Button>
         <a
           v-if="task.issue"
           class="chip issue"
@@ -127,48 +126,53 @@ function moreMenu(e: MouseEvent) {
         <PrBadge v-if="state.prs[task.id]" class="chip" :pr="state.prs[task.id]!" />
       </template>
     </div>
-    <div class="anchor">
-      <button
-        :class="{ active: activityOpen }"
-        title="Activity"
-        @click.stop="activityOpen = !activityOpen"
-      >
+    <Popover v-model:open="activityOpen" align="end" aria-label="Activity">
+      <Button variant="ghost" :class="{ active: activityOpen }" title="Activity">
         <LoaderCircle v-if="running" class="spin" /><Activity v-else />Activity
-      </button>
-      <ActivityMenu v-if="activityOpen" @close="activityOpen = false" />
-    </div>
+      </Button>
+      <template #content><ActivityMenu /></template>
+    </Popover>
     <template v-if="state.projectPage === null">
       <OpenInButton v-if="task" :path="task.worktree_path" />
-      <button
+      <Button
         v-if="task"
+        variant="ghost"
+        :icon="FolderTree"
         :aria-pressed="isTreeOpen(task.id)"
         :class="{ active: isTreeOpen(task.id) }"
         title="Toggle file tree"
         @click="setTreeOpen(task.id, !isTreeOpen(task.id))"
       >
-        <FolderTree />Files
-      </button>
-      <button
+        Files
+      </Button>
+      <Button
+        variant="ghost"
+        :icon="GitCompare"
         :disabled="!mainApi"
         :class="{ active: paneState('diff') === 'front' }"
         :title="withHint('Toggle review', 'toggleDiff')"
         @click="togglePane('diff')"
       >
-        <GitCompare />Review<span v-if="formatDiffCount(added)" class="added">{{
-          formatDiffCount(added)
-        }}</span>
-      </button>
-      <button
+        Review<span v-if="formatDiffCount(added)" class="added">{{ formatDiffCount(added) }}</span>
+      </Button>
+      <Button
+        variant="ghost"
+        :icon="Gauge"
         :disabled="!mainApi"
         :class="{ active: paneState('activity') === 'front' }"
         @click="togglePane('activity')"
       >
-        <Gauge />Resources
-      </button>
+        Resources
+      </Button>
       <span class="separator" />
-      <button :disabled="!mainApi" title="Layout" aria-label="Layout" @click="moreMenu">
-        <Ellipsis />
-      </button>
+      <Button
+        variant="ghost"
+        :icon="Ellipsis"
+        :disabled="!mainApi"
+        title="Layout"
+        aria-label="Layout"
+        @click="moreMenu"
+      />
     </template>
   </header>
 </template>
@@ -183,16 +187,10 @@ function moreMenu(e: MouseEvent) {
   background: var(--panel);
   min-height: 40px;
 }
-button {
-  border: 0;
-  background: transparent;
+.lm-button {
   color: var(--muted);
-  padding: 3px 8px;
 }
-button:hover:not(:disabled) {
-  background: var(--select);
-}
-button.active {
+.lm-button.active {
   background: var(--select);
   color: var(--text);
 }
@@ -212,17 +210,12 @@ button.active {
 .branch {
   min-width: 0;
   gap: 2px;
-  padding: 2px 4px;
   font-family: ui-monospace, Menlo, monospace;
   font-size: 12px;
 }
 .branch-name {
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.branch .lucide {
-  width: 14px;
-  height: 14px;
 }
 .chip {
   flex: none;
@@ -234,9 +227,6 @@ button.active {
 }
 .issue {
   color: var(--muted);
-}
-.anchor {
-  position: relative;
 }
 .added {
   color: var(--ws-green);
