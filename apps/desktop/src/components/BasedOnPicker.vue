@@ -36,7 +36,6 @@ const picked = ref<{ value: string; key: string; label: string } | null>(null);
 const failure = ref<{ message: string; plugin: string | null; setup: boolean } | null>(null);
 const searching = ref(false);
 let seq = 0;
-let fetched: IssueDetails | null = null;
 let debounce: ReturnType<typeof setTimeout> | undefined;
 
 const KINDS = [
@@ -48,20 +47,24 @@ const PR_STATES = [
   { value: 'closed' as const, label: 'Closed' },
 ];
 
+type Hit = { kind: 'issue'; hit: IssueHit } | { kind: 'pr'; hit: PrHit };
+
 const sourceInfo = computed(() => props.sources.find((s) => s.id === source.value) ?? null);
-const items = computed<ComboboxOption[]>(() =>
+const items = computed<ComboboxOption<string, Hit>[]>(() =>
   kind.value === 'pr'
     ? prHits.value.map((h) => ({
         value: String(h.number),
         label: h.title,
         disabled: !!prDisabledReason(h),
         title: prDisabledReason(h) ?? undefined,
+        class: 'based-on-pr',
+        data: { kind: 'pr', hit: h },
       }))
-    : issueHits.value.map((h) => ({ value: h.key, label: h.title })),
-);
-const issueByKey = computed(() => Object.fromEntries(issueHits.value.map((h) => [h.key, h])));
-const prByValue = computed(() =>
-  Object.fromEntries(prHits.value.map((h) => [String(h.number), h])),
+    : issueHits.value.map((h) => ({
+        value: h.key,
+        label: h.title,
+        data: { kind: 'issue', hit: h },
+      })),
 );
 const providerItems = computed<MenuItem[]>(() =>
   props.sources.map((s) => ({
@@ -114,7 +117,7 @@ async function search() {
     failure.value = {
       message: errorMessage(e),
       plugin,
-      setup: e instanceof RpcError && e.kind === 'needs_setup',
+      setup: needsSetup(e),
     };
   } finally {
     if (mine === seq) searching.value = false;
@@ -138,21 +141,24 @@ function clear() {
   picked.value = null;
 }
 
-async function fetchIssue(key: string, signal: AbortSignal) {
-  const details = await api.getIssue(props.projectId, source.value, key);
-  if (!signal.aborted) fetched = details;
+function fetchIssue(key: string) {
+  return api.getIssue(props.projectId, source.value, key);
 }
 
-function onPick(value: string) {
-  if (kind.value === 'issue') {
-    if (!fetched) return;
-    picked.value = { value, key: fetched.key, label: fetched.title };
-    emit('issue', fetched);
-  } else {
-    const hit = prByValue.value[value];
-    picked.value = { value, key: `#${hit.number}`, label: hit.title };
-    emit('pr', hit);
+function onSelect(value: string, details: IssueDetails | undefined) {
+  if (details) {
+    picked.value = { value, key: details.key, label: details.title };
+    emit('issue', details);
+    return;
   }
+  const hit = prHits.value.find((h) => String(h.number) === value);
+  if (!hit) return;
+  picked.value = { value, key: `#${hit.number}`, label: hit.title };
+  emit('pr', hit);
+}
+
+function needsSetup(e: unknown) {
+  return e instanceof RpcError && e.kind === 'needs_setup';
 }
 
 watch(kind, (now, before) => {
@@ -204,7 +210,7 @@ onUnmounted(() => clearTimeout(debounce));
             : `Search ${sourceInfo?.display_name ?? 'issues'}…`
         "
         :before-select="kind === 'issue' ? fetchIssue : undefined"
-        @update:model-value="onPick"
+        @select="onSelect"
       >
         <template #trigger>
           <button type="button" class="trigger" :class="{ placeholder: !picked }">
@@ -219,12 +225,14 @@ onUnmounted(() => clearTimeout(debounce));
             <template v-else>Select pull request</template>
           </button>
         </template>
-        <template #search-actions>
+        <template #search-start>
           <Menu v-if="kind === 'issue' && sources.length" :items="providerItems">
             <Button variant="ghost" size="sm" aria-label="Issue provider">
               <ProviderIcon :id="source" /> <ChevronDown :size="12" />
             </Button>
           </Menu>
+        </template>
+        <template #search-actions>
           <Select
             v-if="kind === 'pr'"
             v-model="prState"
@@ -233,27 +241,35 @@ onUnmounted(() => clearTimeout(debounce));
             aria-label="Pull request state"
           />
         </template>
-        <template #item="{ item }">
-          <template v-if="kind === 'issue'">
-            <span class="dot" :class="issueStateClass(issueByKey[item.value].state)" />
-            <span class="name">{{ item.label }}</span>
-            <span class="mono muted">{{ item.value }}</span>
+        <template #item="{ item: { label, data } }">
+          <template v-if="data?.kind === 'issue'">
+            <span class="dot" :class="issueStateClass(data.hit.state)" />
+            <span class="name">{{ label }}</span>
+            <span class="mono muted">{{ data.hit.key }}</span>
           </template>
-          <template v-else>
+          <template v-else-if="data?.kind === 'pr'">
             <component
-              :is="prByValue[item.value].draft ? GitPullRequestDraft : GitPullRequest"
+              :is="data.hit.draft ? GitPullRequestDraft : GitPullRequest"
               :size="14"
-              :class="prByValue[item.value].draft ? 'muted' : 'open-pr'"
+              :class="data.hit.draft ? 'muted' : 'open-pr'"
             />
             <span class="lines">
-              <span class="name">{{ item.label }}</span>
+              <span class="name">{{ label }}</span>
               <span class="muted sub"
-                >{{ prByValue[item.value].author }} ·
-                <span class="mono">{{ prByValue[item.value].head_branch }}</span></span
+                >{{ data.hit.author }} · <span class="mono">{{ data.hit.head_branch }}</span></span
               >
             </span>
-            <span class="mono muted">#{{ item.value }}</span>
+            <span class="mono muted">#{{ data.hit.number }}</span>
           </template>
+        </template>
+        <template #error="{ error }">
+          {{ errorMessage(error) }}
+          <Button
+            v-if="sourceInfo && needsSetup(error)"
+            @click="emit('openSettings', sourceInfo.plugin)"
+          >
+            Open settings
+          </Button>
         </template>
         <template #empty>
           <span v-if="failure" class="error">
@@ -353,6 +369,9 @@ onUnmounted(() => clearTimeout(debounce));
 .dot.canceled {
   border-color: var(--muted);
   background: var(--muted);
+}
+:global(.lm-combobox__item.based-on-pr) {
+  align-items: flex-start;
 }
 .open-pr {
   color: #2e9d5b;
