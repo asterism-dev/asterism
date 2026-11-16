@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { TextInput } from '@asterism-dev/lumen';
 import {
   ChevronDown,
   ChevronRight,
@@ -35,7 +36,7 @@ function toggle(path: string) {
 
 <template>
   <div class="tree">
-    <input v-model="query" class="filter" placeholder="Filter files…" />
+    <TextInput v-model="query" class="filter" placeholder="Filter files…" />
     <div v-if="!hideProgress" class="muted progress">
       {{ files.filter((f) => viewed.has(f.path)).length }} / {{ files.length }} viewed
     </div>

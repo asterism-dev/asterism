@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { Button } from '@asterism-dev/lumen';
+import { ExternalLink } from '@lucide/vue';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { computed, ref, watch } from 'vue';
 import { api, errorMessage } from '../../api';
@@ -134,24 +136,30 @@ async function toAgent(c: CheckRun, excerpt?: string) {
           <span v-if="c.workflow" class="muted">{{ c.workflow }} / </span>{{ c.name }}
         </button>
         <span class="muted">{{ duration(c) }}</span>
-        <button
+        <Button
           v-if="failed(c) && c.rerunnable"
+          size="sm"
           :disabled="busy.has(c.id) || c.id in requested"
           @click="rerun(c)"
         >
           {{ c.id in requested ? 'Re-run requested' : 'Re-run' }}
-        </button>
-        <button v-if="failed(c) && c.has_log" :disabled="agentBusy.has(c.id)" @click="toAgent(c)">
+        </Button>
+        <Button
+          v-if="failed(c) && c.has_log"
+          size="sm"
+          :disabled="agentBusy.has(c.id)"
+          @click="toAgent(c)"
+        >
           → Agent
-        </button>
-        <button
-          class="link"
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          :icon="ExternalLink"
           title="Open in browser"
           aria-label="Open in browser"
           @click="openExternal(c.url)"
-        >
-          ↗
-        </button>
+        />
         <p v-if="rerunError[c.id] || agentError[c.id]" class="error">
           {{ rerunError[c.id] ?? agentError[c.id] }}
         </p>
@@ -161,7 +169,9 @@ async function toAgent(c: CheckRun, excerpt?: string) {
       <h4>{{ current.name }}</h4>
       <p v-if="logError" class="muted">
         {{ logError }}
-        <button class="link" @click="openExternal(current.url)">Open in browser ↗</button>
+        <Button variant="ghost" size="sm" @click="openExternal(current.url)">
+          Open in browser ↗
+        </Button>
       </p>
       <p v-else-if="!log" class="muted">Loading log…</p>
       <LogViewer
@@ -233,13 +243,6 @@ h4 {
 }
 .icon.running {
   color: var(--waiting);
-}
-.link {
-  background: none;
-  border: none;
-  padding: 0 4px;
-  cursor: pointer;
-  color: var(--muted);
 }
 .error {
   width: 100%;

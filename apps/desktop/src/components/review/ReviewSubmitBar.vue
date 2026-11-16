@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, Textarea } from '@asterism-dev/lumen';
 import { ref } from 'vue';
 import { api, errorMessage } from '../../api';
 import type { ReviewEvent, ReviewResult } from '../../types';
@@ -30,16 +31,18 @@ async function submit(event: ReviewEvent) {
       Review: {{ review.pending_review.comments }} comment(s) pending
     </span>
     <span class="spacer" />
-    <button @click="open = !open">
+    <Button size="sm" @click="open = !open">
       {{ review.pending_review ? 'Finish review' : 'Review changes' }} ▾
-    </button>
+    </Button>
     <div v-if="open" class="submit-box">
-      <textarea v-model="body" rows="3" placeholder="Leave a comment" />
+      <Textarea v-model="body" :rows="3" placeholder="Leave a comment" />
       <p v-if="error" class="error">{{ error }}</p>
       <div class="actions">
-        <button :disabled="busy" @click="submit('comment')">Comment</button>
-        <button :disabled="busy" @click="submit('approve')">Approve</button>
-        <button :disabled="busy" @click="submit('request_changes')">Request changes</button>
+        <Button size="sm" :disabled="busy" @click="submit('comment')">Comment</Button>
+        <Button size="sm" :disabled="busy" @click="submit('approve')">Approve</Button>
+        <Button size="sm" :disabled="busy" @click="submit('request_changes')">
+          Request changes
+        </Button>
       </div>
     </div>
   </div>
