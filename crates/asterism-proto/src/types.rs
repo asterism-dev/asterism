@@ -62,6 +62,7 @@ pub mod method {
     pub const NODE_CONFIG_SET: &str = "node_config.set";
     pub const PROJECT_CLONE: &str = "project.clone";
     pub const PROJECT_CREATE: &str = "project.create";
+    pub const PROJECT_INITIALIZE: &str = "project.initialize";
     pub const NODE_STATS: &str = "node.stats";
     pub const PROJECT_WORKTREES: &str = "project.worktrees";
     pub const PROJECT_WORKTREE_SIZES: &str = "project.worktree_sizes";
@@ -791,6 +792,13 @@ pub struct ProjectCreateParams {
 pub struct ProjectCreateResult {
     pub project: Project,
     /// Set when the local repository was created but the remote was not.
+    pub remote_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectInitializeResult {
+    pub initialized: bool,
+    /// Set when the initial commit was made but could not be pushed to origin.
     pub remote_error: Option<String>,
 }
 

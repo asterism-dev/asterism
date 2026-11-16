@@ -357,6 +357,10 @@ export interface ProjectCreateResult {
   project: Project;
   remote_error: string | null;
 }
+export interface ProjectInitializeResult {
+  initialized: boolean;
+  remote_error: string | null;
+}
 
 export type AgentSettingKind = 'args' | 'mcp' | 'hooks' | 'hibernate';
 export interface AgentInfo {

@@ -433,6 +433,11 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
                     .await?,
             )
         }
+        method::PROJECT_INITIALIZE => to_value(
+            daemon
+                .initialize_project(params::<ProjectIdParams>(raw)?.project_id)
+                .await?,
+        ),
         method::PROJECT_CLONE_COPY => to_value(daemon.clone_copy(params(raw)?).await?),
         method::PROJECT_CREATE => to_value(
             daemon

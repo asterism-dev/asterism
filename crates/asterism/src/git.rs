@@ -553,6 +553,11 @@ pub fn push_upstream(worktree: &Path, remote: &str, branch: &str, extra: &GitEnv
 pub fn init_with_readme(dir: &Path, name: &str, extra: &GitEnv) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     run_with_env(Some(dir), &["init", "-q", "-b", "main"], extra)?;
+    commit_readme(dir, name, extra)
+}
+
+/// Commits a README onto the checked-out branch, e.g. the unborn one of an empty clone.
+pub fn commit_readme(dir: &Path, name: &str, extra: &GitEnv) -> Result<()> {
     std::fs::write(dir.join("README.md"), format!("# {name}\n"))?;
     run_with_env(Some(dir), &["add", "README.md"], extra)?;
     run_with_env(Some(dir), &["commit", "-q", "-m", "Initial commit"], extra).map(|_| ())

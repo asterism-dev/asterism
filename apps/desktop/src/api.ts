@@ -26,6 +26,7 @@ import type {
   Project,
   ProjectBranches,
   ProjectCreateResult,
+  ProjectInitializeResult,
   RemoteConfig,
   RemoteDevice,
   RemoteInterface,
@@ -330,6 +331,8 @@ export const api = {
       workspace_id: workspaceId ?? null,
       activity_token: activityToken,
     }),
+  initializeProject: (projectId: number) =>
+    call<ProjectInitializeResult>('project.initialize', { project_id: projectId }),
   createProject: (name: string, remote: RemoteTarget | null, workspaceId?: number) =>
     call<ProjectCreateResult>('project.create', {
       name,

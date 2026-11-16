@@ -12,6 +12,7 @@ const props = defineProps<{ workspaceId: number | null }>();
 const emit = defineEmits<{ close: []; busy: [boolean] }>();
 
 const source = ref('');
+const initialize = ref(true);
 const forges = ref<ForgeInfo[]>([]);
 const forge = ref('');
 const status = ref<ForgeStatus | null>(null);
@@ -109,9 +110,21 @@ async function clone() {
       props.workspaceId ?? undefined,
       token.value,
     );
+    // The clone already succeeded, so an init failure must not leave the form retrying it.
+    const init = initialize.value
+      ? await api
+          .initializeProject(project.id)
+          .catch((e) => ({ initialized: false, remote_error: errorMessage(e) }))
+      : null;
     if (closed) return;
     delete state.collapsed[project.id];
-    toast(`Cloned ${o}/${r}`);
+    toast(
+      init?.remote_error
+        ? `Cloned ${o}/${r}; initialization incomplete: ${init.remote_error}`
+        : init?.initialized
+          ? `Cloned ${o}/${r} and created an initial commit`
+          : `Cloned ${o}/${r}`,
+    );
     emit('close');
   } catch (e) {
     if (!closed) error.value = errorMessage(e);
@@ -170,6 +183,10 @@ watch(busy, (b) => emit('busy', b));
     <p v-else-if="status" class="muted">
       {{ status.error ?? `${forgeName} is not available` }} — you can still clone by URL.
     </p>
+    <label
+      ><input v-model="initialize" type="checkbox" :disabled="busy" /> Initialize repository
+      <span class="muted">— commit a README and push it if the repository is empty</span></label
+    >
     <ActivitySteps v-if="activity && (busy || error)" :steps="activity.steps" />
     <p v-if="error" class="error">{{ error }}</p>
     <div class="actions">

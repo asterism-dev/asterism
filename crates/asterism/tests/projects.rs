@@ -661,6 +661,29 @@ async fn empty_repository_gives_clear_error_and_no_task() {
 }
 
 #[tokio::test]
+async fn initialize_commits_and_pushes_an_empty_clone() {
+    let env = setup(false);
+    let bare = env.home.path().join("remotes/acme/empty.git");
+    std::fs::create_dir_all(&bare).unwrap();
+    run_git(&bare, &["init", "-q", "--bare", "-b", "main"]);
+    let project = env
+        .daemon
+        .clone_project(&format!("file://{}", bare.display()), None, None, None)
+        .await
+        .unwrap();
+
+    let result = env.daemon.initialize_project(project.id).await.unwrap();
+    assert_eq!((result.initialized, result.remote_error), (true, None));
+    assert!(git::resolves(&bare, "refs/heads/main"));
+    let branches = env.daemon.project_branches(project.id).unwrap();
+    assert_eq!(branches.default.as_deref(), Some("origin/main"));
+    create(&env, project.id, "t", None).await.unwrap();
+
+    let again = env.daemon.initialize_project(project.id).await.unwrap();
+    assert!(!again.initialized);
+}
+
+#[tokio::test]
 async fn configured_default_base_is_used_until_it_disappears() {
     let env = setup(false);
     let url = bare_origin(env.home.path());
