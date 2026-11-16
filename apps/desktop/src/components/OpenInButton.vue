@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button } from '@asterism-dev/lumen';
 import { ChevronDown, FolderOpen } from '@lucide/vue';
 import { computed, onMounted, ref } from 'vue';
 import { errorMessage } from '../api';
@@ -48,12 +49,17 @@ function menu(e: MouseEvent) {
 
 <template>
   <div class="open-in">
-    <button :title="`Open in ${current}`" @click="open(current)">
-      <FolderOpen />{{ current }}
-    </button>
-    <button class="chevron" title="Open in…" aria-label="Choose app" @click="menu">
-      <ChevronDown />
-    </button>
+    <Button variant="ghost" :icon="FolderOpen" :title="`Open in ${current}`" @click="open(current)">
+      {{ current }}
+    </Button>
+    <Button
+      variant="ghost"
+      size="sm"
+      :icon="ChevronDown"
+      title="Open in…"
+      aria-label="Choose app"
+      @click="menu"
+    />
   </div>
 </template>
 
@@ -61,20 +67,7 @@ function menu(e: MouseEvent) {
 .open-in {
   display: flex;
 }
-button {
-  border: 0;
-  background: transparent;
+.open-in > * {
   color: var(--muted);
-  padding: 3px 8px;
-}
-button:hover {
-  background: var(--select);
-}
-.chevron {
-  padding: 3px 4px;
-}
-.chevron .lucide {
-  width: 14px;
-  height: 14px;
 }
 </style>

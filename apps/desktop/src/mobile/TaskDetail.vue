@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, Tabs } from '@asterism-dev/lumen';
 import { Archive, ChevronLeft } from '@lucide/vue';
 import { computed } from 'vue';
 import StatusIndicator from '../components/StatusIndicator.vue';
@@ -23,8 +24,18 @@ const terminal = computed<Session | null>(
     null,
 );
 
+const TABS = [
+  { value: 'sessions', label: 'Sessions' },
+  { value: 'terminal', label: 'Terminal' },
+];
+
 function show(tab: DetailTab, sessionId: number | null = null) {
   go({ name: 'task', taskId: props.taskId, tab, sessionId });
+}
+
+function selectTab(tab: string) {
+  if (tab === 'sessions') show('sessions');
+  else show('terminal', terminal.value?.id ?? null);
 }
 
 // Not sessionActions.startSession: on mobile a new session should open its terminal right away.
@@ -48,43 +59,46 @@ function archive() {
 <template>
   <div v-if="task" class="task-detail">
     <header>
-      <button class="icon back" aria-label="Back" @click="go({ name: 'list' })">
-        <ChevronLeft :size="20" />
-      </button>
+      <Button
+        variant="ghost"
+        class="back"
+        :icon="ChevronLeft"
+        aria-label="Back"
+        @click="go({ name: 'list' })"
+      />
       <h1>{{ task.title }}</h1>
-      <button class="icon" aria-label="Archive task" @click="archive">
-        <Archive :size="18" />
-      </button>
+      <Button variant="ghost" :icon="Archive" aria-label="Archive task" @click="archive" />
     </header>
-    <nav class="tabs">
-      <button :class="{ active: tab === 'sessions' }" @click="show('sessions')">Sessions</button>
-      <button
-        :class="{ active: tab === 'terminal' }"
-        @click="show('terminal', terminal?.id ?? null)"
-      >
-        Terminal
-      </button>
-    </nav>
-    <section v-if="tab === 'sessions'" class="sessions">
-      <div v-for="s in sessions" :key="s.id" class="session">
-        <button class="open" @click="show('terminal', s.id)">
-          <span class="status"><StatusIndicator :status="s.status" show-all /></span>
-          {{ sessionLabel(s) }}
-        </button>
-        <button @click="closeSession(s)">Close</button>
-      </div>
-      <p v-if="!sessions.length" class="empty">No sessions</p>
-      <div class="start">
-        <button v-for="a in agents" :key="a.name" @click="start({ type: 'agent', name: a.name })">
-          + {{ a.display_name || a.name }}
-        </button>
-        <button @click="start({ type: 'shell' })">+ Terminal</button>
-      </div>
-    </section>
-    <section v-else class="terminal">
-      <MobileTerminal v-if="terminal" :session="terminal" />
-      <p v-else class="empty">No running session</p>
-    </section>
+    <Tabs :model-value="tab" :tabs="TABS" class="tabs" @update:model-value="selectTab">
+      <template #sessions>
+        <section class="sessions">
+          <div v-for="s in sessions" :key="s.id" class="session">
+            <button class="open" @click="show('terminal', s.id)">
+              <span class="status"><StatusIndicator :status="s.status" show-all /></span>
+              {{ sessionLabel(s) }}
+            </button>
+            <Button @click="closeSession(s)">Close</Button>
+          </div>
+          <p v-if="!sessions.length" class="empty">No sessions</p>
+          <div class="start">
+            <Button
+              v-for="a in agents"
+              :key="a.name"
+              @click="start({ type: 'agent', name: a.name })"
+            >
+              + {{ a.display_name || a.name }}
+            </Button>
+            <Button @click="start({ type: 'shell' })">+ Terminal</Button>
+          </div>
+        </section>
+      </template>
+      <template #terminal>
+        <section class="terminal">
+          <MobileTerminal v-if="terminal" :session="terminal" />
+          <p v-else class="empty">No running session</p>
+        </section>
+      </template>
+    </Tabs>
   </div>
   <p v-else class="empty">This task no longer exists.</p>
 </template>
@@ -108,31 +122,12 @@ h1 {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.icon {
-  min-width: 44px;
-  min-height: 44px;
-}
 .tabs {
-  display: flex;
-  padding: 0 8px;
-  border-bottom: 1px solid var(--border);
-}
-.tabs button {
   flex: 1;
-  min-height: 44px;
-  border: none;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  background: none;
-}
-.tabs button.active {
-  font-weight: 600;
-  border-bottom-color: currentColor;
 }
 .sessions,
 .terminal {
-  flex: 1;
-  min-height: 0;
+  height: 100%;
   overflow: auto;
 }
 .session {
@@ -142,12 +137,9 @@ h1 {
   min-height: 44px;
   padding: 0 8px;
 }
-.session button,
-.start button {
-  min-height: 44px;
-}
 .open {
   flex: 1;
+  min-height: 44px;
   justify-content: flex-start;
   gap: 8px;
   border: none;

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button } from '@asterism-dev/lumen';
 import NewTaskDialog from '../components/NewTaskDialog.vue';
 import { state } from '../store';
 import { paired, revoked } from './connection';
@@ -16,7 +17,7 @@ const reload = () => window.location.reload();
     <div v-if="state.node.state === 'disconnected'" class="banner">Disconnected, reconnecting…</div>
     <div v-else-if="state.node.state === 'connecting'" class="banner">Connecting…</div>
     <div v-else-if="state.node.state === 'incompatible'" class="banner error">
-      {{ state.node.message }} <button @click="reload">Reload</button>
+      {{ state.node.message }} <Button @click="reload">Reload</Button>
     </div>
     <main class="body" :class="{ 'has-task': route.name === 'task' }">
       <TaskList class="list-pane" />

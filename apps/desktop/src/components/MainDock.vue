@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button } from '@asterism-dev/lumen';
 import {
   DockviewVue,
   themeLight,
@@ -159,7 +160,9 @@ onUnmounted(() => {
       @ready="onReady"
     />
     <div v-if="!panelCount" class="workspace-empty">
-      <button class="primary" @click="newSessionMenu($event, task.id)"><Plus />New session</button>
+      <Button variant="accent" :icon="Plus" @click="newSessionMenu($event, task.id)"
+        >New session</Button
+      >
       <p class="muted">Start an agent or a terminal.</p>
     </div>
   </div>

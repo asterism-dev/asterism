@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, TextInput } from '@asterism-dev/lumen';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import {
@@ -213,38 +214,40 @@ function taskMenu(e: MouseEvent, t: Task) {
           <span v-if="!connected" class="muted offline-label" :title="offlineLabel">{{
             offlineLabel
           }}</span>
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             class="add"
             :class="{ active: state.notificationsOpen }"
             title="Notifications"
             :aria-label="badgeCount ? `Notifications (${badgeCount})` : 'Notifications'"
+            :icon="Bell"
             :aria-pressed="state.notificationsOpen"
             @click="state.notificationsOpen = !state.notificationsOpen"
           >
-            <Bell />
             <span v-if="badgeCount" class="bell-count">{{ badgeCount }}</span>
-          </button>
-          <button
-            class="add"
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            :icon="ArrowDownUp"
             :title="`Sort: ${SORT_LABELS[sortMode]}`"
             aria-label="Sort projects and tasks"
             @click.stop="sortMenu"
-          >
-            <ArrowDownUp />
-          </button>
-          <button
-            class="add"
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            :icon="SquarePlus"
             :title="withHint('Add project', 'newProject')"
             aria-label="Add project"
             @click="state.projectDialog = 'folder'"
-          >
-            <SquarePlus />
-          </button>
+          />
         </div>
         <NotificationsView v-if="state.notificationsOpen" :now="now" />
         <template v-else>
           <div class="search-wrap">
-            <input
+            <TextInput
               id="sidebar-search"
               v-model="query"
               class="search"
@@ -289,13 +292,16 @@ function taskMenu(e: MouseEvent, t: Task) {
                   @click="openProject(item.project)"
                   >{{ item.project.name }}</span
                 >
-                <button
+                <Button
+                  variant="ghost"
+                  size="sm"
                   class="hover-action"
+                  :icon="Plus"
                   :title="withHint('New task', 'newTask')"
                   @click="state.newTaskFor = item.project.id"
                 >
-                  <Plus />Task
-                </button>
+                  Task
+                </Button>
               </div>
               <template v-if="searching || !state.collapsed[item.project.id]">
                 <div
@@ -343,35 +349,40 @@ function taskMenu(e: MouseEvent, t: Task) {
           </p>
         </template>
       </div>
-      <button
+      <Button
+        variant="ghost"
         class="settings-button"
         :class="{ active: state.settingsOpen }"
+        :icon="Settings"
         @click="state.settingsOpen = true"
       >
-        <Settings />Settings<Kbd action="settings" /><span
+        Settings<Kbd action="settings" /><span
           v-if="state.pluginUpdates"
           class="badge update-badge"
           :title="`${state.pluginUpdates} plugin update(s)`"
           >{{ state.pluginUpdates }}</span
         >
-      </button>
+      </Button>
       <div class="version-row">
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
           class="docs-link"
+          :icon="BookOpen"
           title="Open documentation"
           @click="openUrl(DOCS_URL).catch(report)"
         >
-          <BookOpen :size="13" />Docs
-        </button>
+          Docs
+        </Button>
         <div class="version-info">
-          <button
+          <Button
             v-if="updater.available"
-            class="update-button"
+            size="sm"
             :disabled="updater.installing"
             @click="installUpdate()"
           >
             {{ updateLabel() }}
-          </button>
+          </Button>
           <span v-if="updater.current" class="muted">v{{ updater.current }}</span>
         </div>
       </div>
@@ -461,7 +472,6 @@ function taskMenu(e: MouseEvent, t: Task) {
 }
 .hover-action {
   visibility: hidden;
-  padding: 0 6px;
   font-size: 12px;
 }
 .row:hover .hover-action {
@@ -496,7 +506,8 @@ function taskMenu(e: MouseEvent, t: Task) {
 }
 .add {
   position: relative;
-  padding: 0 7px;
+  /* matches the icon-only siblings even though the count lives in the slot */
+  padding: 4px;
 }
 .age {
   flex: none;
@@ -561,18 +572,9 @@ function taskMenu(e: MouseEvent, t: Task) {
   gap: 8px;
 }
 .docs-link {
-  gap: 4px;
-  padding: 1px 4px;
-  border: none;
-  background: none;
   color: var(--muted);
 }
 .docs-link:hover {
   color: var(--text);
-  background: var(--select);
-}
-.update-button {
-  padding: 1px 8px;
-  font-size: 12px;
 }
 </style>

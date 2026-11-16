@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button } from '@asterism-dev/lumen';
 import { ref } from 'vue';
 import { api } from '../api';
 import TerminalPane from '../components/TerminalPane.vue';
@@ -31,7 +32,7 @@ const KEYS = [
     </div>
     <div v-if="session.status !== 'exited'" class="keys">
       <div v-if="showKeys" class="scroll">
-        <button
+        <Button
           v-for="k in KEYS"
           :key="k.label"
           :aria-label="k.name"
@@ -39,15 +40,16 @@ const KEYS = [
           @click="api.send(props.session.id, k.data)"
         >
           {{ k.label }}
-        </button>
+        </Button>
       </div>
-      <button
+      <Button
+        variant="ghost"
         class="toggle"
         :aria-label="showKeys ? 'Hide keys' : 'Show keys'"
         @click="showKeys = !showKeys"
       >
         {{ showKeys ? '⌄' : '⌃' }}
-      </button>
+      </Button>
     </div>
   </div>
 </template>
@@ -78,7 +80,6 @@ const KEYS = [
 .keys button {
   flex: none;
   min-width: 44px;
-  min-height: 44px;
 }
 /* on a phone all keys must stay visible, so they share the width instead of scrolling */
 @media (max-width: 767.98px) {

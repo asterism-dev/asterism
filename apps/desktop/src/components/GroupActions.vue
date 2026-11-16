@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button } from '@asterism-dev/lumen';
 import type { DockviewApi, IDockviewGroupPanel } from 'dockview-vue';
 import { Plus } from '@lucide/vue';
 import { api } from '../api';
@@ -44,25 +45,21 @@ async function open(e: MouseEvent) {
 </script>
 
 <template>
-  <button
+  <Button
+    variant="ghost"
+    size="sm"
     class="new-session"
+    :icon="Plus"
     title="New tab"
     aria-label="New tab"
     @pointerdown.stop
     @click.stop="open"
-  >
-    <Plus />
-  </button>
+  />
 </template>
 
 <style scoped>
 .new-session {
-  border: 0;
-  background: transparent;
-  padding: 0 8px;
   height: 100%;
-  display: flex;
-  align-items: center;
   color: var(--muted);
 }
 .new-session:hover {

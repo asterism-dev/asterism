@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button } from '@asterism-dev/lumen';
 import type { DockviewApi, DockviewPanelApi } from 'dockview-vue';
 import { X } from '@lucide/vue';
 import { computed } from 'vue';
@@ -64,15 +65,16 @@ function menu(e: MouseEvent) {
   >
     <StatusIndicator v-if="session" :status="session.status" show-all />
     <span>{{ label }}</span>
-    <button
+    <Button
+      variant="ghost"
+      size="sm"
       class="close"
+      :icon="X"
       :aria-label="`Close ${label}`"
       :title="`Close ${label}`"
       @pointerdown.stop
       @click.stop="close"
-    >
-      <X />
-    </button>
+    />
   </div>
 </template>
 
@@ -88,14 +90,9 @@ function menu(e: MouseEvent) {
   color: var(--muted);
 }
 .close {
-  border: 0;
-  background: transparent;
-  padding: 0 3px;
-  border-radius: 4px;
   opacity: 0.5;
 }
 .close:hover {
   opacity: 1;
-  background: var(--border);
 }
 </style>

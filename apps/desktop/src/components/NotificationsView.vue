@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button } from '@asterism-dev/lumen';
 import { ArrowLeft } from '@lucide/vue';
 import { computed } from 'vue';
 import { api, errorMessage } from '../api';
@@ -58,13 +59,23 @@ function open(n: NotificationEntry) {
 <template>
   <div class="notifications">
     <div class="row header">
-      <button class="back" aria-label="Back to projects" @click="state.notificationsOpen = false">
-        <ArrowLeft />
-      </button>
+      <Button
+        variant="ghost"
+        size="sm"
+        :icon="ArrowLeft"
+        aria-label="Back to projects"
+        @click="state.notificationsOpen = false"
+      />
       <span class="name">Notifications</span>
-      <button v-if="hasUnread" class="link" @click="api.readAllNotifications().catch(report)">
+      <Button
+        v-if="hasUnread"
+        variant="ghost"
+        size="sm"
+        class="link"
+        @click="api.readAllNotifications().catch(report)"
+      >
         Mark all read
-      </button>
+      </Button>
     </div>
     <p v-if="!groups.length" class="hint muted">Nothing here.</p>
     <section v-for="g in groups" :key="g.title">
@@ -94,12 +105,6 @@ function open(n: NotificationEntry) {
 <style scoped>
 .header .name {
   font-weight: 600;
-}
-.back,
-.link {
-  background: none;
-  border: 0;
-  padding: 0 4px;
 }
 .link {
   font-size: 12px;
