@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { Button, Dialog, Select, Tabs, Textarea, TextInput } from '@asterism-dev/lumen';
+import {
+  Button,
+  Dialog,
+  SegmentedControl,
+  Select,
+  Tabs,
+  Textarea,
+  TextInput,
+} from '@asterism-dev/lumen';
 import { activityFor } from '../activity';
 import { api, errorMessage, RpcError } from '../api';
 import { baseChoice } from '../baseBranch';
@@ -45,6 +53,10 @@ const projectOptions = computed(() =>
 const agentOptions = computed(() =>
   agents.value.map((a) => ({ value: a.name, label: a.display_name || a.name })),
 );
+const sessionOptions = computed(() => [
+  { value: 'agent' as const, label: 'Agent', disabled: !agents.value.length },
+  { value: 'shell' as const, label: 'Shell' },
+]);
 const TABS = [
   { value: 'conversation', label: 'Initial Conversation' },
   { value: 'workspace', label: 'Workspace Settings' },
@@ -71,7 +83,6 @@ const token = ref('');
 const activity = computed(() => activityFor(state.activities, token.value));
 let closed = false;
 const titleInput = ref<InstanceType<typeof TextInput>>();
-const picker = ref<InstanceType<typeof BasedOnPicker>>();
 
 const branches = ref<ProjectBranches | null>(null);
 const loadingBranches = ref(false);
@@ -195,10 +206,6 @@ function openSettings(plugin: string) {
   emit('close');
 }
 
-function onEsc() {
-  if (!picker.value?.closePanel()) emit('close');
-}
-
 // On window, not the form: WebKit doesn't focus clicked buttons, so focus often sits on body.
 function onKey(e: KeyboardEvent) {
   if (matchAction(e) !== 'confirm') return;
@@ -267,10 +274,12 @@ async function submit() {
 </script>
 
 <template>
-  <Dialog :open="true" title="Create Task" width="520px" @update:open="(o) => !o && onEsc()">
-    <form class="create-task" @submit.prevent="submit">
+  <Dialog :open="true" width="520px" closable @update:open="(o) => !o && emit('close')">
+    <template #title>
+      Create Task in
       <Select v-model="projectId" :options="projectOptions" class="project" aria-label="Project" />
-
+    </template>
+    <form class="create-task" @submit.prevent="submit">
       <TextInput
         ref="titleInput"
         :model-value="title"
@@ -282,7 +291,6 @@ async function submit() {
       />
 
       <BasedOnPicker
-        ref="picker"
         v-model:kind="kind"
         :project-id="projectId"
         :sources="sources"
@@ -294,23 +302,13 @@ async function submit() {
       <Tabs v-model="tab" :tabs="TABS" keep-mounted>
         <template #conversation>
           <div class="conversation tab-panel">
-            <div class="segmented small" role="group" aria-label="Session">
-              <Button
-                :disabled="!agents.length"
-                :class="{ active: session === 'agent' }"
-                :aria-pressed="session === 'agent'"
-                @click="session = 'agent'"
-              >
-                Agent
-              </Button>
-              <Button
-                :class="{ active: session === 'shell' }"
-                :aria-pressed="session === 'shell'"
-                @click="session = 'shell'"
-              >
-                Shell
-              </Button>
-            </div>
+            <SegmentedControl
+              v-model="session"
+              :options="sessionOptions"
+              size="sm"
+              class="session"
+              aria-label="Session"
+            />
             <template v-if="session === 'agent'">
               <Select v-model="agent" :options="agentOptions" aria-label="Agent" />
               <Textarea
@@ -368,7 +366,6 @@ async function submit() {
 }
 .project {
   width: auto;
-  align-self: flex-start;
   border: none;
   font-weight: 600;
   padding: 0 4px;
@@ -386,12 +383,8 @@ async function submit() {
 .tab-panel {
   padding-top: 10px;
 }
-.conversation .segmented {
+.session {
   align-self: flex-start;
-}
-.segmented.small button {
-  border: none;
-  padding: 2px 8px;
 }
 .actions {
   display: flex;

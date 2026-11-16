@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button, Field, Select, TextInput } from '@asterism-dev/lumen';
+import { Button, Field, SegmentedControl, Select, TextInput } from '@asterism-dev/lumen';
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
 import { repoNameError, targetPath, visibilityChoices } from '../projects';
@@ -35,6 +35,14 @@ const ownerOptions = computed(() => owners.value.map((o) => ({ value: o, label: 
 const forgeName = computed(
   () => forges.value.find((f) => f.id === forge.value)?.display_name ?? 'remote',
 );
+const where = computed({
+  get: () => (onRemote.value ? 'remote' : 'local'),
+  set: (v) => (onRemote.value = v === 'remote'),
+});
+const whereOptions = computed(() => [
+  { value: 'local', label: 'Local only' },
+  { value: 'remote', label: `On ${forgeName.value}`, disabled: !status.value?.authenticated },
+]);
 const choices = computed(() => (status.value ? visibilityChoices(owner.value, status.value) : []));
 const visibilityOptions = computed(() => choices.value.map((v) => ({ value: v, label: v })));
 const nameError = computed(() => (name.value ? repoNameError(name.value) : null));
@@ -117,24 +125,7 @@ watch(busy, (b) => emit('busy', b));
         :disabled="busy"
       />
     </Field>
-    <div class="segmented" role="group" aria-label="Where">
-      <Button
-        :aria-pressed="!onRemote"
-        :class="{ active: !onRemote }"
-        :disabled="busy"
-        @click="onRemote = false"
-      >
-        Local only
-      </Button>
-      <Button
-        :aria-pressed="onRemote"
-        :class="{ active: onRemote }"
-        :disabled="busy || !status?.authenticated"
-        @click="onRemote = true"
-      >
-        On {{ forgeName }}
-      </Button>
-    </div>
+    <SegmentedControl v-model="where" :options="whereOptions" :disabled="busy" aria-label="Where" />
     <Field v-if="forges.length > 1" label="Forge">
       <Select v-model="forge" :options="forgeOptions" :disabled="busy" />
     </Field>

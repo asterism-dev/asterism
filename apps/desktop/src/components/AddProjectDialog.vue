@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button, Dialog, Field, Select } from '@asterism-dev/lumen';
+import { Button, Dialog, Field, SegmentedControl, Select } from '@asterism-dev/lumen';
 import { open } from '@tauri-apps/plugin-dialog';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { activityFor } from '../activity';
@@ -12,10 +12,10 @@ import CloneForm from './CloneForm.vue';
 import CreateRepoForm from './CreateRepoForm.vue';
 import Kbd from './Kbd.vue';
 
-const TABS: { id: ProjectDialogTab; label: string }[] = [
-  { id: 'folder', label: 'Add folder' },
-  { id: 'clone', label: 'Clone repository' },
-  { id: 'create', label: 'New repository' },
+const TABS: { value: ProjectDialogTab; label: string }[] = [
+  { value: 'folder', label: 'Add folder' },
+  { value: 'clone', label: 'Clone repository' },
+  { value: 'create', label: 'New repository' },
 ];
 
 const workspaceId = ref<number | null>(state.activeWorkspace);
@@ -27,6 +27,9 @@ const existingIn = computed(
 );
 const workspaceOptions = computed(() =>
   state.workspaces.map((w) => ({ value: w.id, label: w.name })),
+);
+const tabOptions = computed(() =>
+  TABS.map((t) => ({ ...t, disabled: busy.value && state.projectDialog !== t.value })),
 );
 const chosenName = computed(() => state.workspaces.find((w) => w.id === workspaceId.value)?.name);
 const busy = ref(false);
@@ -111,25 +114,19 @@ async function chooseFolder() {
   <Dialog :open="true" title="Add project" @update:open="(o) => !o && close()">
     <Field label="Workspace">
       <Select
-        :model-value="workspaceId as number"
+        v-model="workspaceId"
         :options="workspaceOptions"
+        placeholder="Choose workspace"
         :disabled="busy"
-        @update:model-value="workspaceId = $event"
       />
     </Field>
-    <div class="segmented" role="tablist">
-      <Button
-        v-for="t in TABS"
-        :key="t.id"
-        role="tab"
-        :aria-selected="state.projectDialog === t.id"
-        :class="{ active: state.projectDialog === t.id }"
-        :disabled="busy && state.projectDialog !== t.id"
-        @click="select(t.id)"
-      >
-        {{ t.label }}
-      </Button>
-    </div>
+    <SegmentedControl
+      :model-value="state.projectDialog ?? 'folder'"
+      :options="tabOptions"
+      class="tabs"
+      aria-label="Add project"
+      @update:model-value="select"
+    />
     <div v-if="state.projectDialog === 'folder' && existing" class="add-form">
       <p>{{ existing.name }} is already in {{ existingIn }}.</p>
       <ActivitySteps v-if="activity && (busy || error)" :steps="activity.steps" />
@@ -170,7 +167,7 @@ async function chooseFolder() {
 </template>
 
 <style scoped>
-.segmented > button {
+.tabs :deep(button) {
   flex: 1;
 }
 .actions {

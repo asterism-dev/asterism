@@ -27,10 +27,10 @@ const items = computed(() =>
     label: b,
   })),
 );
-const tabs = computed<SegmentOption<'local' | 'remote'>[]>(() => [
-  { value: 'local', label: `Local ${props.local.length}` },
-  { value: 'remote', label: `Remote ${props.remote.length}` },
-]);
+const TABS: SegmentOption<'local' | 'remote'>[] = [
+  { value: 'local', label: 'Local' },
+  { value: 'remote', label: 'Remote' },
+];
 
 watch(open, (isOpen) => {
   if (!isOpen) return;
@@ -60,7 +60,18 @@ watch(open, (isOpen) => {
       }}</span>
     </template>
     <template #header>
-      <SegmentedControl v-model="tab" :options="tabs" class="tabs" aria-label="Branch kind" />
+      <SegmentedControl
+        v-model="tab"
+        :options="TABS"
+        size="sm"
+        class="tabs"
+        aria-label="Branch kind"
+      >
+        <template #option="{ option }">
+          {{ option.label }}
+          <span class="count">{{ (option.value === 'local' ? local : remote).length }}</span>
+        </template>
+      </SegmentedControl>
     </template>
     <template #search-actions>
       <Button
@@ -90,8 +101,10 @@ watch(open, (isOpen) => {
 }
 .tabs :deep(button) {
   flex: 1;
-  border: none;
-  padding: 2px 8px;
+}
+.count {
+  color: var(--muted);
+  font-size: 11px;
 }
 .spinning :deep(svg) {
   animation: spin 1s linear infinite;

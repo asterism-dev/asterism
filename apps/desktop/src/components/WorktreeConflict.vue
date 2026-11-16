@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button, Switch } from '@asterism-dev/lumen';
+import { Button, SegmentedControl, Switch } from '@asterism-dev/lumen';
 import { computed, ref } from 'vue';
 import { TriangleAlert } from '@lucide/vue';
 import { api, errorMessage } from '../api';
@@ -24,6 +24,14 @@ const label = (c: ConflictChoice) =>
     : c === 'suffix'
       ? `Create additional (${props.conflict.suffixed ?? '—'})`
       : 'Replace';
+const options = computed(() =>
+  props.conflict.choices.map((c) => ({
+    value: c,
+    label: label(c),
+    disabled: c === 'replace' && blocked.value,
+    title: c === 'replace' && blocked.value ? 'Delete the task using it first' : undefined,
+  })),
+);
 
 async function startDelete(task: WorktreeTask) {
   pending.value = task;
@@ -59,19 +67,12 @@ async function confirmDelete() {
       {{ conflict.worktree ? 'Worktree' : 'Branch' }}
       <span class="mono">{{ conflict.name }}</span> already exists
     </p>
-    <div class="segmented small" role="group" aria-label="Existing worktree">
-      <Button
-        v-for="c in conflict.choices"
-        :key="c"
-        :class="{ active: choice === c }"
-        :aria-pressed="choice === c"
-        :disabled="c === 'replace' && blocked"
-        :title="c === 'replace' && blocked ? 'Delete the task using it first' : undefined"
-        @click="choice = c"
-      >
-        {{ label(c) }}
-      </Button>
-    </div>
+    <SegmentedControl
+      v-model="choice"
+      :options="options"
+      size="sm"
+      aria-label="Existing worktree"
+    />
     <p v-if="choice === 'replace'" class="warning">
       Discards uncommitted changes and local commits in {{ conflict.name }}.
     </p>
@@ -128,10 +129,6 @@ async function confirmDelete() {
   display: flex;
   align-items: center;
   gap: 6px;
-}
-.segmented.small button {
-  border: none;
-  padding: 2px 8px;
 }
 .warning {
   color: var(--danger);
