@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Table, type TableColumn } from '@asterism-dev/lumen';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api, errorMessage } from '../api';
 import { formatBytes, formatCpu } from '../stats';
@@ -15,6 +16,13 @@ interface Row {
   stats: ProcStats;
   session?: Session;
 }
+
+const COLUMNS: TableColumn[] = [
+  { key: 'name', label: 'Process' },
+  { key: 'detail', label: 'Task', class: 'muted' },
+  { key: 'memory', label: 'Memory', align: 'right', class: 'num' },
+  { key: 'cpu', label: 'CPU', align: 'right', class: 'num' },
+];
 
 const stats = ref<NodeStats | null>(null);
 const error = ref<string | null>(null);
@@ -81,41 +89,25 @@ onUnmounted(() => {
     <div class="activity-body">
       <p v-if="error" class="error">{{ error }}</p>
       <p v-else-if="!stats" class="muted">Measuring…</p>
-      <table v-else>
-        <thead>
-          <tr>
-            <th>Process</th>
-            <th>Task</th>
-            <th class="num">Memory</th>
-            <th class="num">CPU</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="r in rows"
-            :key="r.key"
-            :class="{ clickable: r.session }"
-            @click="r.session && selectSession(state, r.session)"
-          >
-            <td>
-              <span class="process"
-                >{{ r.name }}<StatusIndicator v-if="r.session" :status="r.session.status"
-              /></span>
-            </td>
-            <td class="muted">{{ r.detail }}</td>
-            <td class="num">{{ formatBytes(r.stats.memory_bytes) }}</td>
-            <td class="num">{{ formatCpu(r.stats.cpu_percent) }}</td>
-          </tr>
-        </tbody>
-        <tfoot>
-          <tr>
-            <td>Total</td>
-            <td></td>
-            <td class="num">{{ formatBytes(total.memory_bytes) }}</td>
-            <td class="num">{{ formatCpu(total.cpu_percent) }}</td>
-          </tr>
-        </tfoot>
-      </table>
+      <Table
+        v-else
+        :columns="COLUMNS"
+        :rows="rows"
+        row-key="key"
+        :row-clickable="(r) => !!r.session"
+        @row-click="(r) => r.session && selectSession(state, r.session)"
+      >
+        <template #cell-name="{ row: r }">
+          <span class="process"
+            >{{ r.name }}<StatusIndicator v-if="r.session" :status="r.session.status"
+          /></span>
+        </template>
+        <template #cell-memory="{ row: r }">{{ formatBytes(r.stats.memory_bytes) }}</template>
+        <template #cell-cpu="{ row: r }">{{ formatCpu(r.stats.cpu_percent) }}</template>
+        <template #footer-name>Total</template>
+        <template #footer-memory>{{ formatBytes(total.memory_bytes) }}</template>
+        <template #footer-cpu>{{ formatCpu(total.cpu_percent) }}</template>
+      </Table>
       <p class="muted note">
         Agents include their child processes (MCP servers, tools). CPU is relative to one core;
         WebKit's web process is not counted.
@@ -140,40 +132,13 @@ onUnmounted(() => {
   overflow-y: auto;
   padding: 8px 14px 14px;
 }
-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-th {
-  text-align: left;
-  font-weight: 600;
-  color: var(--muted);
-  font-size: 12px;
-}
-th,
-td {
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--border);
-}
-tfoot td {
-  font-weight: 600;
-  border-bottom: 0;
-}
-.num {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
+:deep(.num) {
   white-space: nowrap;
 }
 .process {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-}
-tr.clickable {
-  cursor: pointer;
-}
-tr.clickable:hover {
-  background: var(--select);
 }
 .note {
   font-size: 12px;

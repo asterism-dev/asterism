@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button } from '@asterism-dev/lumen';
+import { Button, StatusDot } from '@asterism-dev/lumen';
 import { ArrowLeft } from '@lucide/vue';
 import { computed } from 'vue';
 import { api, errorMessage } from '../api';
@@ -91,7 +91,11 @@ function open(n: NotificationEntry) {
         }"
         @click="open(n)"
       >
-        <span class="dot" :class="{ waiting: n.kind === 'waiting' }" />
+        <StatusDot
+          class="dot"
+          :tone="n.kind === 'waiting' ? 'waiting' : 'accent'"
+          :label="n.kind === 'waiting' ? 'Waiting' : 'Notification'"
+        />
         <div class="text">
           <div class="title">{{ n.task_title ?? 'Unknown task' }}</div>
           <div class="muted">{{ detail(n) }}</div>
@@ -137,15 +141,7 @@ function open(n: NotificationEntry) {
   font-weight: 600;
 }
 .dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
   margin-top: 5px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-.dot.waiting {
-  background: var(--waiting);
 }
 .text {
   flex: 1;

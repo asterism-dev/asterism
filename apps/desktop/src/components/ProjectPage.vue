@@ -1,5 +1,14 @@
 <script setup lang="ts">
-import { Button, Checkbox, Field, SegmentedControl, Select, Tabs } from '@asterism-dev/lumen';
+import {
+  Button,
+  Checkbox,
+  Field,
+  SegmentedControl,
+  Select,
+  Table,
+  Tabs,
+  type TableColumn,
+} from '@asterism-dev/lumen';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { computed, ref, watch } from 'vue';
@@ -36,6 +45,24 @@ const FILTERS: { value: TaskFilter; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'active', label: 'Active' },
   { value: 'archived', label: 'Archived' },
+];
+const TASK_COLUMNS: TableColumn[] = [
+  { key: 'pick', label: 'Select', class: 'pick' },
+  { key: 'title', label: 'Task' },
+  { key: 'branch', label: 'Branch', class: 'mono' },
+  { key: 'pr', label: 'PR' },
+  { key: 'created', label: 'Created', class: 'muted' },
+  { key: 'activity', label: 'Activity', class: 'muted' },
+  { key: 'state', label: 'State' },
+  { key: 'actions', label: '', class: 'actions' },
+];
+const WORKTREE_COLUMNS: TableColumn[] = [
+  { key: 'path', label: 'Path', class: 'mono path' },
+  { key: 'branch', label: 'Branch', class: 'mono' },
+  { key: 'base', label: 'Base', class: 'mono muted' },
+  { key: 'size', label: 'Size', align: 'right', class: 'num' },
+  { key: 'task', label: 'Task' },
+  { key: 'actions', label: '', class: 'actions' },
 ];
 const tab = ref('tasks');
 const branches = ref<ProjectBranches | null>(null);
@@ -185,63 +212,49 @@ watch(
           <p v-if="state.prErrors[projectId]" class="error">
             PR status: {{ state.prErrors[projectId] }}
           </p>
-          <table>
-            <thead>
-              <tr>
-                <th class="pick">
-                  <Checkbox
-                    aria-label="Select all tasks"
-                    :model-value="allPicked || (selected.length > 0 && 'indeterminate')"
-                    @update:model-value="toggleAll"
-                  />
-                </th>
-                <th>Task</th>
-                <th>Branch</th>
-                <th>PR</th>
-                <th>Created</th>
-                <th>Activity</th>
-                <th>State</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="t in shown" :key="t.id">
-                <td class="pick">
-                  <Checkbox
-                    :aria-label="`Select ${t.title}`"
-                    :model-value="picked.has(t.id)"
-                    @update:model-value="togglePick(t.id)"
-                  />
-                </td>
-                <td>
-                  {{ t.title }}
-                  <a
-                    v-if="t.issue"
-                    class="muted"
-                    :href="t.issue.url"
-                    @click.prevent="openIssue(t.issue.url)"
-                    >{{ t.issue.key }}</a
-                  >
-                </td>
-                <td class="mono">{{ t.branch }}</td>
-                <td>
-                  <template v-if="state.prs[t.id]"
-                    ><PrBadge :pr="state.prs[t.id]!" />
-                    <span class="muted">{{ prSummary(state.prs[t.id]!) }}</span></template
-                  >
-                </td>
-                <td class="muted">{{ relativeTime(t.created_at, now) }}</td>
-                <td class="muted">{{ relativeTime(t.last_activity_at, now) }}</td>
-                <td>{{ taskState(t, state.sessions) }}</td>
-                <td class="actions">
-                  <Button v-if="!t.archived" @click="openTask(t.id)">Open</Button>
-                  <Button v-if="!t.archived" @click="archiveTask(t)">Archive</Button>
-                  <Button v-else @click="restoreTask(t)">Restore</Button>
-                  <Button variant="danger" @click="deleteTask(t)">Delete</Button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <Table :columns="TASK_COLUMNS" :rows="shown" row-key="id">
+            <template #header-pick>
+              <Checkbox
+                aria-label="Select all tasks"
+                :model-value="allPicked || (selected.length > 0 && 'indeterminate')"
+                @update:model-value="toggleAll"
+              />
+            </template>
+            <template #cell-pick="{ row: t }">
+              <Checkbox
+                :aria-label="`Select ${t.title}`"
+                :model-value="picked.has(t.id)"
+                @update:model-value="togglePick(t.id)"
+              />
+            </template>
+            <template #cell-title="{ row: t }">
+              {{ t.title }}
+              <a
+                v-if="t.issue"
+                class="muted"
+                :href="t.issue.url"
+                @click.prevent="openIssue(t.issue.url)"
+                >{{ t.issue.key }}</a
+              >
+            </template>
+            <template #cell-pr="{ row: t }">
+              <template v-if="state.prs[t.id]"
+                ><PrBadge :pr="state.prs[t.id]!" />
+                <span class="muted">{{ prSummary(state.prs[t.id]!) }}</span></template
+              >
+            </template>
+            <template #cell-created="{ row: t }">{{ relativeTime(t.created_at, now) }}</template>
+            <template #cell-activity="{ row: t }">{{
+              relativeTime(t.last_activity_at, now)
+            }}</template>
+            <template #cell-state="{ row: t }">{{ taskState(t, state.sessions) }}</template>
+            <template #cell-actions="{ row: t }">
+              <Button v-if="!t.archived" @click="openTask(t.id)">Open</Button>
+              <Button v-if="!t.archived" @click="archiveTask(t)">Archive</Button>
+              <Button v-else @click="restoreTask(t)">Restore</Button>
+              <Button variant="danger" @click="deleteTask(t)">Delete</Button>
+            </template>
+          </Table>
           <p v-if="!shown.length" class="muted">No tasks.</p>
           <BulkDeleteDialog
             v-if="bulkDeleting"
@@ -258,47 +271,33 @@ watch(
               Prune missing worktrees
             </Button>
           </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Path</th>
-                <th>Branch</th>
-                <th>Base</th>
-                <th class="num">Size</th>
-                <th>Task</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="w in worktrees" :key="w.path">
-                <td class="mono path" :title="w.path">
-                  {{ w.path }}
-                  <span v-if="w.is_main" class="flag">main</span>
-                  <span v-if="w.locked" class="flag">locked</span>
-                  <span v-if="w.prunable" class="flag">missing</span>
-                </td>
-                <td class="mono">{{ w.branch ?? `detached @ ${w.head.slice(0, 7)}` }}</td>
-                <td class="mono muted">{{ w.base_branch ?? '—' }}</td>
-                <td class="num">{{ formatSize(sizes[w.path]) }}</td>
-                <td>{{ w.task_ids.length ? w.task_ids.map(taskTitle).join(', ') : '—' }}</td>
-                <td class="actions">
-                  <Button v-if="!w.prunable" @click="revealItemInDir(w.path).catch(report)">
-                    Reveal
-                  </Button>
-                  <Button v-if="worktreeActions(w).open" @click="openTask(w.task_ids[0])">
-                    Open task
-                  </Button>
-                  <Button
-                    v-if="worktreeActions(w).remove"
-                    variant="danger"
-                    @click="removeWorktree(w)"
-                  >
-                    Remove
-                  </Button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <Table :columns="WORKTREE_COLUMNS" :rows="worktrees" row-key="path">
+            <template #cell-path="{ row: w }">
+              <span :title="w.path">{{ w.path }}</span>
+              <span v-if="w.is_main" class="flag">main</span>
+              <span v-if="w.locked" class="flag">locked</span>
+              <span v-if="w.prunable" class="flag">missing</span>
+            </template>
+            <template #cell-branch="{ row: w }">{{
+              w.branch ?? `detached @ ${w.head.slice(0, 7)}`
+            }}</template>
+            <template #cell-base="{ row: w }">{{ w.base_branch ?? '—' }}</template>
+            <template #cell-size="{ row: w }">{{ formatSize(sizes[w.path]) }}</template>
+            <template #cell-task="{ row: w }">{{
+              w.task_ids.length ? w.task_ids.map(taskTitle).join(', ') : '—'
+            }}</template>
+            <template #cell-actions="{ row: w }">
+              <Button v-if="!w.prunable" @click="revealItemInDir(w.path).catch(report)">
+                Reveal
+              </Button>
+              <Button v-if="worktreeActions(w).open" @click="openTask(w.task_ids[0])">
+                Open task
+              </Button>
+              <Button v-if="worktreeActions(w).remove" variant="danger" @click="removeWorktree(w)">
+                Remove
+              </Button>
+            </template>
+          </Table>
         </div>
       </template>
       <template #settings>
@@ -355,42 +354,24 @@ watch(
   flex-direction: column;
   gap: 10px;
 }
-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-th {
-  text-align: left;
-  font-weight: 600;
-  color: var(--muted);
-  font-size: 12px;
-}
-th,
-td {
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: middle;
-}
-.mono {
+:deep(.mono) {
   font-family: ui-monospace, Menlo, monospace;
   font-size: 12px;
 }
-.path {
+:deep(.path) {
   max-width: 360px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.num {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
+:deep(.num) {
   white-space: nowrap;
 }
-.actions {
+:deep(.actions) {
   white-space: nowrap;
   text-align: right;
 }
-.actions button {
+:deep(.actions) button {
   margin-left: 4px;
 }
 .flag {
@@ -401,7 +382,7 @@ td {
   border-radius: 8px;
   color: var(--muted);
 }
-.pick {
+:deep(.pick) {
   width: 1%;
 }
 .bulk {
