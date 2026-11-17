@@ -405,6 +405,31 @@ pub fn show_patch(repo: &Path, sha: &str) -> Result<String> {
     )
 }
 
+/// A blob's text, or `None` when it is missing, binary, not UTF-8 or too large to display.
+pub fn blob(repo: &Path, id: &str) -> Option<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["cat-file", "blob", "--end-of-options", id])
+        .output()
+        .ok()?;
+    let bytes = out.stdout;
+    if !out.status.success()
+        || bytes.len() as u64 > crate::files::MAX_BYTES
+        || bytes[..bytes.len().min(crate::files::SNIFF_BYTES)].contains(&0)
+    {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
+}
+
+pub fn hash_object(repo: &Path, file: &Path) -> Result<String> {
+    let file = file.to_string_lossy();
+    Ok(git(repo, &["hash-object", "--no-filters", "--", &file])?
+        .trim()
+        .to_string())
+}
+
 pub type GitEnv = [(String, String)];
 
 const MESSAGE_LIMIT: usize = 2_000;

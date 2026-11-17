@@ -538,6 +538,7 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
         }
         method::REVIEW_COMMITS => to_value(daemon.review_commits(&params(raw)?).await?),
         method::REVIEW_COMMIT_DIFF => to_value(daemon.review_commit_diff(&params(raw)?).await?),
+        method::REVIEW_FILE_CONTENTS => to_value(daemon.review_file_contents(&params(raw)?).await?),
         method::TASK_FILE => {
             let daemon = daemon.clone();
             let params = params::<TaskFileParams>(raw)?;

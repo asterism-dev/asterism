@@ -737,3 +737,120 @@ async fn empty_general_comments_and_tasks_without_a_pr_are_rejected() {
         .unwrap_err();
     assert_eq!(empty.kind, ErrorKind::InvalidParams);
 }
+
+/// The `index <old>..<new>` blob ids of `path` in the local review patch.
+async fn blob_ids(env: &Env, task: &Task, path: &str) -> (String, String) {
+    let patch = env
+        .daemon
+        .review_get(&get(ReviewSource::Local, task))
+        .await
+        .unwrap()
+        .patch;
+    let header = format!("diff --git a/{path} ");
+    let file = &patch[patch.find(&header).unwrap()..];
+    let ids = file.lines().find_map(|l| l.strip_prefix("index ")).unwrap();
+    let (old, new) = ids
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .split_once("..")
+        .unwrap();
+    (old.into(), new.into())
+}
+
+fn file_contents(
+    task: &Task,
+    path: &str,
+    (old, new): (String, String),
+) -> ReviewFileContentsParams {
+    ReviewFileContentsParams {
+        task_id: task.id,
+        path: path.into(),
+        old_blob: old,
+        new_blob: new,
+    }
+}
+
+#[tokio::test]
+async fn file_contents_returns_both_sides_of_a_committed_change() {
+    let env = setup();
+    let task = task(&env).await;
+    commit_file(&task, "a.rs", "one\n", "first");
+    common::run_git(env.repo.path(), &["merge", "-q", &task.branch]);
+    commit_file(&task, "a.rs", "one\ntwo\n", "second");
+    let ids = blob_ids(&env, &task, "a.rs").await;
+    let r = env
+        .daemon
+        .review_file_contents(&file_contents(&task, "a.rs", ids))
+        .await
+        .unwrap();
+    assert_eq!(r.old.as_deref(), Some("one\n"));
+    assert_eq!(r.new.as_deref(), Some("one\ntwo\n"));
+}
+
+#[tokio::test]
+async fn file_contents_reads_uncommitted_new_side_from_the_worktree() {
+    let env = setup();
+    let task = task(&env).await;
+    commit_file(&task, "a.rs", "one\n", "first");
+    common::run_git(env.repo.path(), &["merge", "-q", &task.branch]);
+    let wt = std::path::Path::new(&task.worktree_path);
+    std::fs::write(wt.join("a.rs"), "one\ndraft\n").unwrap();
+    let ids = blob_ids(&env, &task, "a.rs").await;
+    let r = env
+        .daemon
+        .review_file_contents(&file_contents(&task, "a.rs", ids))
+        .await
+        .unwrap();
+    assert_eq!(r.old.as_deref(), Some("one\n"));
+    assert_eq!(r.new.as_deref(), Some("one\ndraft\n"));
+}
+
+#[tokio::test]
+async fn file_contents_ignores_a_worktree_file_that_changed_since() {
+    let env = setup();
+    let task = task(&env).await;
+    commit_file(&task, "a.rs", "one\n", "first");
+    common::run_git(env.repo.path(), &["merge", "-q", &task.branch]);
+    let wt = std::path::Path::new(&task.worktree_path);
+    std::fs::write(wt.join("a.rs"), "one\ndraft\n").unwrap();
+    let ids = blob_ids(&env, &task, "a.rs").await;
+    std::fs::write(wt.join("a.rs"), "one\nlater\n").unwrap();
+    let r = env
+        .daemon
+        .review_file_contents(&file_contents(&task, "a.rs", ids))
+        .await
+        .unwrap();
+    assert_eq!(r.old.as_deref(), Some("one\n"));
+    assert_eq!(r.new, None);
+}
+
+#[tokio::test]
+async fn file_contents_returns_none_for_binary() {
+    let env = setup();
+    let task = task(&env).await;
+    commit_file(&task, "b.bin", "a\0b", "first");
+    common::run_git(env.repo.path(), &["merge", "-q", &task.branch]);
+    commit_file(&task, "b.bin", "a\0c", "second");
+    let ids = blob_ids(&env, &task, "b.bin").await;
+    let r = env
+        .daemon
+        .review_file_contents(&file_contents(&task, "b.bin", ids))
+        .await
+        .unwrap();
+    assert_eq!((r.old, r.new), (None, None));
+}
+
+#[tokio::test]
+async fn file_contents_rejects_invalid_blob_ids() {
+    let env = setup();
+    let task = task(&env).await;
+    for id in ["../x", "zz12345", "--upload-pack=x", "abc"] {
+        let err = env
+            .daemon
+            .review_file_contents(&file_contents(&task, "a.rs", (id.into(), "1234567".into())))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::InvalidParams, "{id}: {}", err.message);
+    }
+}

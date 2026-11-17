@@ -35,6 +35,7 @@ pub mod method {
     pub const REVIEW_PROMPT: &str = "review.prompt";
     pub const REVIEW_COMMITS: &str = "review.commits";
     pub const REVIEW_COMMIT_DIFF: &str = "review.commit_diff";
+    pub const REVIEW_FILE_CONTENTS: &str = "review.file_contents";
     pub const REVIEW_ADD_COMMENT: &str = "review.add_comment";
     pub const REVIEW_CHECK_LOG: &str = "review.check_log";
     pub const REVIEW_CHECK_RERUN: &str = "review.check_rerun";
@@ -1399,6 +1400,22 @@ pub struct ReviewCommitDiffParams {
     /// `None` means the uncommitted changes of the worktree.
     #[serde(default)]
     pub sha: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewFileContentsParams {
+    pub task_id: i64,
+    pub path: String,
+    /// Blob ids from the patch's `index <old>..<new>` line.
+    pub old_blob: String,
+    pub new_blob: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewFileContentsResult {
+    /// `None` when unavailable: missing, binary, not UTF-8 or too large.
+    pub old: Option<String>,
+    pub new: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

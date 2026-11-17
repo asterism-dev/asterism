@@ -15,7 +15,7 @@ use serde::Serialize;
 use super::Daemon;
 use crate::error::{Error, Result};
 use crate::store::StoredReviewComment;
-use crate::{git, lock, pr_status, review};
+use crate::{files, git, lock, pr_status, review};
 
 const CACHE_TTL: Duration = Duration::from_secs(10);
 
@@ -258,6 +258,35 @@ impl Daemon {
             Ok(TaskDiffResult {
                 patch: git::show_patch(&wt, &full)?,
             })
+        })
+        .await
+    }
+
+    pub async fn review_file_contents(
+        self: &Arc<Self>,
+        p: &ReviewFileContentsParams,
+    ) -> Result<ReviewFileContentsResult> {
+        for id in [&p.old_blob, &p.new_blob] {
+            if !(7..=40).contains(&id.len()) || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(Error::new(
+                    ErrorKind::InvalidParams,
+                    format!("{id} is not a blob id"),
+                ));
+            }
+        }
+        let wt = PathBuf::from(&self.task(p.task_id)?.worktree_path);
+        let p = p.clone();
+        self.off_runtime(move |_| {
+            let old = git::blob(&wt, &p.old_blob);
+            // Uncommitted files have no blob yet; the worktree copy counts only if it is still what the patch showed.
+            let new = git::blob(&wt, &p.new_blob).or_else(|| {
+                let current = git::hash_object(&wt, &wt.join(&p.path)).ok()?;
+                if !current.starts_with(&p.new_blob.to_ascii_lowercase()) {
+                    return None;
+                }
+                files::read(&wt, None, &p.path, None).ok()?.content
+            });
+            Ok(ReviewFileContentsResult { old, new })
         })
         .await
     }
