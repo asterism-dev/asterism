@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, Checkbox } from '@asterism-dev/lumen';
 import { computed, ref } from 'vue';
 import { splitPatch, threadsByFile } from '../../review';
 import type { ReviewResult, ReviewThread } from '../../types';
@@ -37,14 +38,21 @@ function open(path: string) {
   <div class="files-tab">
     <div v-if="commit !== undefined" class="banner">
       {{ commit === null ? 'Uncommitted changes' : `Commit ${commit.slice(0, 7)}` }} ·
-      <button class="link" @click="emit('showAll')">Show all changes</button>
+      <Button variant="ghost" size="sm" class="link" @click="emit('showAll')"
+        >Show all changes</Button
+      >
     </div>
     <div class="bar">
-      <label><input v-model="split" type="checkbox" /> Side by side</label>
+      <Checkbox v-model="split">Side by side</Checkbox>
       <span class="spacer" />
-      <button v-if="!readOnly" :disabled="!review.threads.length" @click="emit('sendSelection')">
+      <Button
+        v-if="!readOnly"
+        size="sm"
+        :disabled="!review.threads.length"
+        @click="emit('sendSelection')"
+      >
         Send to agent ({{ selected.size || openCount }})
-      </button>
+      </Button>
     </div>
     <p v-if="!files.length" class="muted message">No changes.</p>
     <div v-else class="body">
@@ -89,25 +97,13 @@ function open(path: string) {
   font-size: 12px;
 }
 .link {
-  background: none;
-  border: none;
-  padding: 0;
   color: var(--accent);
-  cursor: pointer;
 }
 .bar {
   display: flex;
   gap: 10px;
   align-items: center;
   padding: 6px 14px;
-}
-.bar label {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-.bar input {
-  width: auto;
 }
 .spacer {
   flex: 1;

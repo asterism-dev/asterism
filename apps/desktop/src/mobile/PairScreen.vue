@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, TextInput } from '@asterism-dev/lumen';
 import { ref } from 'vue';
 import { connect } from './connection';
 import { saveToken, tokenFromPairingInput } from './pairing';
@@ -28,7 +29,7 @@ function pairFromInput() {
       device's camera.
     </p>
     <form @submit.prevent="pairFromInput">
-      <input
+      <TextInput
         v-model="input"
         placeholder="Paste pairing link"
         aria-label="Pairing link"
@@ -36,7 +37,7 @@ function pairFromInput() {
         autocorrect="off"
         spellcheck="false"
       />
-      <button type="submit">Pair</button>
+      <Button type="submit">Pair</Button>
       <p v-if="error" role="alert">{{ error }}</p>
     </form>
   </div>

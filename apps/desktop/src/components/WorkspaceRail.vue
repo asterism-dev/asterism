@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { Plus } from '@lucide/vue';
+import { WorkspaceRail, type WorkspaceColor, type WorkspaceItem } from '@asterism-dev/lumen';
 import { computed, ref, watch } from 'vue';
 import { errorMessage } from '../api';
 import { leaveSettings } from '../settingsGuard';
 import { showMenu, state, switchWorkspace, toast, waitingSessions } from '../store';
-import { colorVar, saveWorkspaceTasks, waitingByWorkspace } from '../workspaces';
+import { saveWorkspaceTasks, waitingByWorkspace } from '../workspaces';
 import type { Workspace } from '../types';
 import WorkspaceDialog from './WorkspaceDialog.vue';
 
@@ -12,6 +12,16 @@ const dialog = ref<{ mode: 'create' | 'rename' | 'delete'; workspace?: Workspace
 const waiting = computed(() =>
   waitingByWorkspace(state.projects, state.tasks, waitingSessions(state)),
 );
+const items = computed<WorkspaceItem[]>(() =>
+  state.workspaces.map((w) => ({
+    id: String(w.id),
+    name: w.name,
+    label: w.label,
+    color: (w.color || undefined) as WorkspaceColor | undefined,
+    waiting: waiting.value[w.id],
+  })),
+);
+const byId = (id: string) => state.workspaces.find((w) => String(w.id) === id);
 
 // Persist continuously so the task open at quit is restored, not only on switch.
 watch(
@@ -23,13 +33,17 @@ watch(
   },
 );
 
-function select(w: Workspace) {
+function select(id: string) {
+  const w = byId(id);
+  if (!w) return;
   leaveSettings()
     .then((left) => left && switchWorkspace(state, w.id))
     .catch((e) => toast(errorMessage(e)));
 }
 
-function menu(e: MouseEvent, w: Workspace) {
+function menu(id: string, e: MouseEvent) {
+  const w = byId(id);
+  if (!w) return;
   showMenu(e, [
     { label: 'Edit…', action: () => (dialog.value = { mode: 'rename', workspace: w }) },
     ...(state.workspaces.length > 1
@@ -46,90 +60,12 @@ function menu(e: MouseEvent, w: Workspace) {
 </script>
 
 <template>
-  <nav class="rail" aria-label="Workspaces">
-    <button
-      v-for="w in state.workspaces"
-      :key="w.id"
-      type="button"
-      class="tile"
-      :class="{ active: state.activeWorkspace === w.id, colored: !!w.color }"
-      :style="{ '--tile': colorVar(w.color) }"
-      :title="w.name"
-      :aria-label="
-        !waiting[w.id] || state.activeWorkspace === w.id
-          ? w.name
-          : `${w.name}, ${waiting[w.id]} waiting`
-      "
-      :aria-pressed="state.activeWorkspace === w.id"
-      @click="select(w)"
-      @contextmenu="menu($event, w)"
-    >
-      {{ w.label }}
-      <span v-if="state.activeWorkspace !== w.id && waiting[w.id]" class="badge">{{
-        waiting[w.id]
-      }}</span>
-    </button>
-    <button
-      type="button"
-      class="tile add"
-      title="New workspace"
-      aria-label="New workspace"
-      @click="dialog = { mode: 'create' }"
-    >
-      <Plus :size="16" />
-    </button>
-  </nav>
+  <WorkspaceRail
+    :workspaces="items"
+    :active="state.activeWorkspace === null ? null : String(state.activeWorkspace)"
+    @select="select"
+    @add="dialog = { mode: 'create' }"
+    @contextmenu="menu"
+  />
   <WorkspaceDialog v-if="dialog" v-bind="dialog" @close="dialog = null" />
 </template>
-
-<style scoped>
-.rail {
-  flex: none;
-  width: 44px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 0;
-  border-right: 1px solid var(--border);
-  overflow-y: auto;
-}
-.tile {
-  position: relative;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 600;
-  font-size: 12px;
-  border-radius: 8px;
-}
-.tile.active {
-  background: var(--select);
-  border-color: var(--muted);
-}
-.tile.colored {
-  color: var(--tile);
-  border-color: var(--tile);
-}
-.tile.colored.active {
-  background: var(--tile);
-  color: var(--bg);
-}
-.tile.add {
-  margin-top: auto;
-  color: var(--muted);
-}
-.badge {
-  position: absolute;
-  top: -4px;
-  right: -4px;
-  background: var(--waiting);
-  color: #1d1f27;
-  padding: 0 5px;
-  border-radius: 10px;
-  font-size: 11px;
-}
-</style>

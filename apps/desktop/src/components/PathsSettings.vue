@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, TextInput } from '@asterism-dev/lumen';
 import { open } from '@tauri-apps/plugin-dialog';
 import { computed, onMounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
@@ -84,15 +85,15 @@ const fields: { key: keyof PathSettings; label: string }[] = [
       <template v-if="drafts[w.id]">
         <div v-for="f in fields" :key="f.key" class="settings-row">
           <label :for="`path-${w.id}-${f.key}`">{{ f.label }}</label>
-          <input
+          <TextInput
             :id="`path-${w.id}-${f.key}`"
             v-model="drafts[w.id][f.key]"
             :placeholder="globals[f.key]"
             spellcheck="false"
           />
-          <button @click="choose(w.id, f.key).catch((e) => (error = errorMessage(e)))">
+          <Button @click="choose(w.id, f.key).catch((e) => (error = errorMessage(e)))">
             Choose…
-          </button>
+          </Button>
           <span v-if="!drafts[w.id][f.key]" class="muted">global default</span>
         </div>
       </template>
@@ -102,12 +103,14 @@ const fields: { key: keyof PathSettings; label: string }[] = [
       &lt;owner&gt;/&lt;repo&gt;/&lt;task&gt;.
     </p>
     <div class="save-bar">
-      <button :class="{ primary: dirty }" :disabled="saving || !dirty" @click="save">Save</button>
+      <Button :variant="dirty ? 'accent' : 'default'" :disabled="saving || !dirty" @click="save">
+        Save
+      </Button>
       <span class="muted"
         >Applies to new repositories and tasks; existing worktrees stay where they are.</span
       >
     </div>
     <p v-if="error" class="error">{{ error }}</p>
-    <button v-if="error && !loaded" @click="load">Retry</button>
+    <Button v-if="error && !loaded" @click="load">Retry</Button>
   </div>
 </template>

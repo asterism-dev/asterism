@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, Textarea } from '@asterism-dev/lumen';
 import { ref } from 'vue';
 import { errorMessage } from '../../api';
 import type { CommentTarget } from '../../types';
@@ -30,18 +31,19 @@ async function run(target: CommentTarget) {
 
 <template>
   <div class="comment-editor">
-    <textarea v-model="body" rows="4" :placeholder="placeholder ?? 'Leave a comment'" />
+    <Textarea v-model="body" :rows="4" :placeholder="placeholder ?? 'Leave a comment'" />
     <p v-if="error" class="error">{{ error }}</p>
     <div class="actions">
-      <button :disabled="busy" @click="emit('cancel')">Cancel</button>
-      <button
+      <Button variant="ghost" size="sm" :disabled="busy" @click="emit('cancel')">Cancel</Button>
+      <Button
         v-for="b in buttons"
         :key="b.target"
+        size="sm"
         :disabled="busy || !body.trim()"
         @click="run(b.target)"
       >
         {{ b.label }}
-      </button>
+      </Button>
     </div>
   </div>
 </template>
@@ -53,9 +55,6 @@ async function run(target: CommentTarget) {
   gap: 6px;
   padding: 8px;
   white-space: normal;
-}
-.comment-editor textarea {
-  resize: vertical;
 }
 .actions {
   display: flex;

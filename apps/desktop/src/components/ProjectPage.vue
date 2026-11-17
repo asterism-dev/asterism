@@ -1,4 +1,14 @@
 <script setup lang="ts">
+import {
+  Button,
+  Checkbox,
+  Field,
+  SegmentedControl,
+  Select,
+  Table,
+  Tabs,
+  type TableColumn,
+} from '@asterism-dev/lumen';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { computed, ref, watch } from 'vue';
@@ -26,7 +36,35 @@ function openIssue(url: string) {
   openUrl(url).catch(report);
 }
 const project = computed(() => state.projects.find((p) => p.id === props.projectId) ?? null);
-const tab = ref<'tasks' | 'worktrees' | 'settings'>('tasks');
+const TABS = [
+  { value: 'tasks', label: 'Tasks' },
+  { value: 'worktrees', label: 'Worktrees' },
+  { value: 'settings', label: 'Settings' },
+];
+const FILTERS: { value: TaskFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'active', label: 'Active' },
+  { value: 'archived', label: 'Archived' },
+];
+const TASK_COLUMNS: TableColumn[] = [
+  { key: 'pick', label: 'Select', class: 'pick' },
+  { key: 'title', label: 'Task' },
+  { key: 'branch', label: 'Branch', class: 'mono' },
+  { key: 'pr', label: 'PR' },
+  { key: 'created', label: 'Created', class: 'muted' },
+  { key: 'activity', label: 'Activity', class: 'muted' },
+  { key: 'state', label: 'State' },
+  { key: 'actions', label: '', class: 'actions' },
+];
+const WORKTREE_COLUMNS: TableColumn[] = [
+  { key: 'path', label: 'Path', class: 'mono path' },
+  { key: 'branch', label: 'Branch', class: 'mono' },
+  { key: 'base', label: 'Base', class: 'mono muted' },
+  { key: 'size', label: 'Size', align: 'right', class: 'num' },
+  { key: 'task', label: 'Task' },
+  { key: 'actions', label: '', class: 'actions' },
+];
+const tab = ref('tasks');
 const branches = ref<ProjectBranches | null>(null);
 const filter = ref<TaskFilter>('all');
 const tasks = ref<Task[]>([]);
@@ -68,10 +106,17 @@ function setDefaultBase(value: string) {
     .catch(report);
 }
 
-function moveToWorkspace(event: Event) {
-  const select = event.target as HTMLSelectElement;
-  api.moveProject(props.projectId, Number(select.value)).catch((e) => {
-    select.value = String(project.value?.workspace_id ?? '');
+// A local copy so a failed move can put the select back.
+const workspaceId = ref(0);
+watch(
+  () => project.value?.workspace_id,
+  (id) => (workspaceId.value = id ?? 0),
+  { immediate: true },
+);
+
+function moveToWorkspace(id: number) {
+  api.moveProject(props.projectId, id).catch((e) => {
+    workspaceId.value = project.value?.workspace_id ?? 0;
     report(e);
   });
 }
@@ -134,105 +179,55 @@ watch(
 
 <template>
   <section class="project-page">
-    <nav class="tabs" role="tablist">
-      <button
-        role="tab"
-        :aria-selected="tab === 'tasks'"
-        :class="{ active: tab === 'tasks' }"
-        @click="tab = 'tasks'"
-      >
-        Tasks
-      </button>
-      <button
-        role="tab"
-        :aria-selected="tab === 'worktrees'"
-        :class="{ active: tab === 'worktrees' }"
-        @click="tab = 'worktrees'"
-      >
-        Worktrees
-      </button>
-      <button
-        role="tab"
-        :aria-selected="tab === 'settings'"
-        :class="{ active: tab === 'settings' }"
-        @click="tab = 'settings'"
-      >
-        Settings
-      </button>
-    </nav>
-    <div v-if="tab === 'tasks'" class="body">
-      <div class="segmented" role="group" aria-label="Filter">
-        <button
-          v-for="f in ['all', 'active', 'archived'] as const"
-          :key="f"
-          :aria-pressed="filter === f"
-          :class="{ active: filter === f }"
-          @click="filter = f"
-        >
-          {{ f }}
-        </button>
-      </div>
-      <div v-if="selected.length" class="toolbar bulk">
-        <span>{{ selected.length }} selected</span>
-        <button
-          v-if="selected.some((t) => !t.archived)"
-          @click="
-            bulk(
-              archiveTasks,
-              selected.filter((t) => !t.archived),
-            )
-          "
-        >
-          Archive
-        </button>
-        <button
-          v-if="selected.some((t) => t.archived)"
-          @click="
-            bulk(
-              restoreTasks,
-              selected.filter((t) => t.archived),
-            )
-          "
-        >
-          Restore
-        </button>
-        <button class="danger" @click="bulkDeleting = true">Delete</button>
-      </div>
-      <p v-if="state.prErrors[projectId]" class="error">
-        PR status: {{ state.prErrors[projectId] }}
-      </p>
-      <table>
-        <thead>
-          <tr>
-            <th class="pick">
-              <input
-                type="checkbox"
+    <Tabs v-model="tab" :tabs="TABS" class="tabs">
+      <template #tasks>
+        <div class="body">
+          <SegmentedControl v-model="filter" :options="FILTERS" aria-label="Filter" />
+          <div v-if="selected.length" class="toolbar bulk">
+            <span>{{ selected.length }} selected</span>
+            <Button
+              v-if="selected.some((t) => !t.archived)"
+              @click="
+                bulk(
+                  archiveTasks,
+                  selected.filter((t) => !t.archived),
+                )
+              "
+            >
+              Archive
+            </Button>
+            <Button
+              v-if="selected.some((t) => t.archived)"
+              @click="
+                bulk(
+                  restoreTasks,
+                  selected.filter((t) => t.archived),
+                )
+              "
+            >
+              Restore
+            </Button>
+            <Button variant="danger" @click="bulkDeleting = true">Delete</Button>
+          </div>
+          <p v-if="state.prErrors[projectId]" class="error">
+            PR status: {{ state.prErrors[projectId] }}
+          </p>
+          <Table :columns="TASK_COLUMNS" :rows="shown" row-key="id" size="sm" hover="clickable">
+            <template #header-pick>
+              <Checkbox
                 aria-label="Select all tasks"
-                :checked="allPicked"
-                :indeterminate="selected.length > 0 && !allPicked"
-                @change="toggleAll"
+                :model-value="allPicked || (selected.length > 0 && 'indeterminate')"
+                @update:model-value="toggleAll"
               />
-            </th>
-            <th>Task</th>
-            <th>Branch</th>
-            <th>PR</th>
-            <th>Created</th>
-            <th>Activity</th>
-            <th>State</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="t in shown" :key="t.id">
-            <td class="pick">
-              <input
-                type="checkbox"
+            </template>
+            <template #cell-pick="{ row: t }">
+              <Checkbox
                 :aria-label="`Select ${t.title}`"
-                :checked="picked.has(t.id)"
-                @change="togglePick(t.id)"
+                :model-value="picked.has(t.id)"
+                @update:model-value="togglePick(t.id)"
               />
-            </td>
-            <td>
+            </template>
+            <template #cell-title="{ row: t }">
               {{ t.title }}
               <a
                 v-if="t.issue"
@@ -241,105 +236,108 @@ watch(
                 @click.prevent="openIssue(t.issue.url)"
                 >{{ t.issue.key }}</a
               >
-            </td>
-            <td class="mono">{{ t.branch }}</td>
-            <td>
+            </template>
+            <template #cell-pr="{ row: t }">
               <template v-if="state.prs[t.id]"
                 ><PrBadge :pr="state.prs[t.id]!" />
                 <span class="muted">{{ prSummary(state.prs[t.id]!) }}</span></template
               >
-            </td>
-            <td class="muted">{{ relativeTime(t.created_at, now) }}</td>
-            <td class="muted">{{ relativeTime(t.last_activity_at, now) }}</td>
-            <td>{{ taskState(t, state.sessions) }}</td>
-            <td class="actions">
-              <button v-if="!t.archived" @click="openTask(t.id)">Open</button>
-              <button v-if="!t.archived" @click="archiveTask(t)">Archive</button>
-              <button v-else @click="restoreTask(t)">Restore</button>
-              <button class="danger" @click="deleteTask(t)">Delete</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <p v-if="!shown.length" class="muted">No tasks.</p>
-      <BulkDeleteDialog
-        v-if="bulkDeleting"
-        :tasks="selected"
-        @close="bulkDeleting = false"
-        @deleted="((bulkDeleting = false), (picked = new Set()))"
-      />
-    </div>
-    <div v-else-if="tab === 'worktrees'" class="body">
-      <div v-if="worktrees.some((w) => w.prunable)" class="toolbar">
-        <button @click="api.pruneWorktrees(projectId).then(loadWorktrees).catch(report)">
-          Prune missing worktrees
-        </button>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Path</th>
-            <th>Branch</th>
-            <th>Base</th>
-            <th class="num">Size</th>
-            <th>Task</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="w in worktrees" :key="w.path">
-            <td class="mono path" :title="w.path">
-              {{ w.path }}
+            </template>
+            <template #cell-created="{ row: t }">{{ relativeTime(t.created_at, now) }}</template>
+            <template #cell-activity="{ row: t }">{{
+              relativeTime(t.last_activity_at, now)
+            }}</template>
+            <template #cell-state="{ row: t }">{{ taskState(t, state.sessions) }}</template>
+            <template #cell-actions="{ row: t }">
+              <Button v-if="!t.archived" @click="openTask(t.id)">Open</Button>
+              <Button v-if="!t.archived" @click="archiveTask(t)">Archive</Button>
+              <Button v-else @click="restoreTask(t)">Restore</Button>
+              <Button variant="danger" @click="deleteTask(t)">Delete</Button>
+            </template>
+          </Table>
+          <p v-if="!shown.length" class="muted">No tasks.</p>
+          <BulkDeleteDialog
+            v-if="bulkDeleting"
+            :tasks="selected"
+            @close="bulkDeleting = false"
+            @deleted="((bulkDeleting = false), (picked = new Set()))"
+          />
+        </div>
+      </template>
+      <template #worktrees>
+        <div class="body">
+          <div v-if="worktrees.some((w) => w.prunable)" class="toolbar">
+            <Button @click="api.pruneWorktrees(projectId).then(loadWorktrees).catch(report)">
+              Prune missing worktrees
+            </Button>
+          </div>
+          <Table
+            :columns="WORKTREE_COLUMNS"
+            :rows="worktrees"
+            row-key="path"
+            size="sm"
+            hover="clickable"
+          >
+            <template #cell-path="{ row: w }">
+              <span :title="w.path">{{ w.path }}</span>
               <span v-if="w.is_main" class="flag">main</span>
               <span v-if="w.locked" class="flag">locked</span>
               <span v-if="w.prunable" class="flag">missing</span>
-            </td>
-            <td class="mono">{{ w.branch ?? `detached @ ${w.head.slice(0, 7)}` }}</td>
-            <td class="mono muted">{{ w.base_branch ?? '—' }}</td>
-            <td class="num">{{ formatSize(sizes[w.path]) }}</td>
-            <td>{{ w.task_ids.length ? w.task_ids.map(taskTitle).join(', ') : '—' }}</td>
-            <td class="actions">
-              <button v-if="!w.prunable" @click="revealItemInDir(w.path).catch(report)">
+            </template>
+            <template #cell-branch="{ row: w }">{{
+              w.branch ?? `detached @ ${w.head.slice(0, 7)}`
+            }}</template>
+            <template #cell-base="{ row: w }">{{ w.base_branch ?? '—' }}</template>
+            <template #cell-size="{ row: w }">{{ formatSize(sizes[w.path]) }}</template>
+            <template #cell-task="{ row: w }">{{
+              w.task_ids.length ? w.task_ids.map(taskTitle).join(', ') : '—'
+            }}</template>
+            <template #cell-actions="{ row: w }">
+              <Button v-if="!w.prunable" @click="revealItemInDir(w.path).catch(report)">
                 Reveal
-              </button>
-              <button v-if="worktreeActions(w).open" @click="openTask(w.task_ids[0])">
+              </Button>
+              <Button v-if="worktreeActions(w).open" @click="openTask(w.task_ids[0])">
                 Open task
-              </button>
-              <button v-if="worktreeActions(w).remove" class="danger" @click="removeWorktree(w)">
+              </Button>
+              <Button v-if="worktreeActions(w).remove" variant="danger" @click="removeWorktree(w)">
                 Remove
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <div v-else class="body">
-      <label
-        >Workspace
-        <select :value="project?.workspace_id ?? ''" @change="moveToWorkspace">
-          <option v-for="w in state.workspaces" :key="w.id" :value="w.id">{{ w.name }}</option>
-        </select>
-      </label>
-      <label
-        >Default base branch
-        <select
-          :value="staleDefault(branches) ? '' : (project?.default_base ?? '')"
-          :disabled="!branches"
-          @change="setDefaultBase(($event.target as HTMLSelectElement).value)"
-        >
-          <option value="">
-            Automatic{{ branches?.automatic ? ` (${branches.automatic})` : '' }}
-          </option>
-          <option v-for="b in branches?.branches ?? []" :key="b" :value="b">{{ b }}</option>
-        </select>
-      </label>
-      <p v-if="staleDefault(branches)" class="muted">
-        {{ staleDefault(branches) }} no longer exists — using Automatic.
-      </p>
-      <p v-if="branches?.fetch_error" class="muted">
-        Couldn't fetch origin — branches may be stale.
-      </p>
-    </div>
+              </Button>
+            </template>
+          </Table>
+        </div>
+      </template>
+      <template #settings>
+        <div class="body">
+          <Field label="Workspace">
+            <Select
+              v-model="workspaceId"
+              :options="state.workspaces.map((w) => ({ value: w.id, label: w.name }))"
+              @update:model-value="moveToWorkspace"
+            />
+          </Field>
+          <Field label="Default base branch">
+            <Select
+              :model-value="staleDefault(branches) ? '' : (project?.default_base ?? '')"
+              :options="[
+                {
+                  value: '',
+                  label: `Automatic${branches?.automatic ? ` (${branches.automatic})` : ''}`,
+                },
+                ...(branches?.branches ?? []).map((b) => ({ value: b, label: b })),
+              ]"
+              :disabled="!branches"
+              @update:model-value="setDefaultBase"
+            />
+          </Field>
+          <p v-if="staleDefault(branches)" class="muted">
+            {{ staleDefault(branches) }} no longer exists — using Automatic.
+          </p>
+          <p v-if="branches?.fetch_error" class="muted">
+            Couldn't fetch origin — branches may be stale.
+          </p>
+        </div>
+      </template>
+    </Tabs>
     <p v-if="!project" class="muted">This project no longer exists.</p>
   </section>
 </template>
@@ -352,66 +350,35 @@ watch(
   min-height: 0;
 }
 .tabs {
-  display: flex;
-  gap: 4px;
-  padding: 8px 14px 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
-}
-.tabs button {
-  border: 0;
-  border-radius: 6px 6px 0 0;
-}
-.tabs button.active {
-  background: var(--select);
+  flex: 1;
 }
 .body {
+  height: 100%;
   overflow: auto;
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-th {
-  text-align: left;
-  font-weight: 600;
-  color: var(--muted);
-  font-size: 12px;
-}
-th,
-td {
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: middle;
-}
-.mono {
+:deep(.mono) {
   font-family: ui-monospace, Menlo, monospace;
   font-size: 12px;
 }
-.path {
+:deep(.path) {
   max-width: 360px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.num {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
+:deep(.num) {
   white-space: nowrap;
 }
-.actions {
+:deep(.actions) {
   white-space: nowrap;
   text-align: right;
 }
-.actions button {
+:deep(.actions) button {
   margin-left: 4px;
-}
-button.danger {
-  color: var(--danger);
 }
 .flag {
   margin-left: 6px;
@@ -421,21 +388,12 @@ button.danger {
   border-radius: 8px;
   color: var(--muted);
 }
-.pick {
+:deep(.pick) {
   width: 1%;
-}
-.pick input {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  cursor: pointer;
 }
 .bulk {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-.segmented button {
-  text-transform: capitalize;
 }
 </style>

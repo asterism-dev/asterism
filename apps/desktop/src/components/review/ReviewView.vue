@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { Button, SegmentedControl } from '@asterism-dev/lumen';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { ExternalLink } from '@lucide/vue';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../../api';
 import { lastReviewTab, pollInterval, splitPatch, type ReviewTab } from '../../review';
@@ -171,23 +173,28 @@ onUnmounted(() => {
       <h3 class="title">
         <template v-if="isPr && review">
           <span class="muted">#{{ review.pr }}</span> {{ review.title }}
-          <button
+          <Button
             v-if="review.url"
-            class="link"
+            variant="ghost"
+            size="sm"
+            :icon="ExternalLink"
             title="Open in browser"
+            aria-label="Open in browser"
             @click="openExternal(review.url)"
-          >
-            ↗
-          </button>
+          />
         </template>
         <template v-else>{{ task.title }}</template>
       </h3>
       <span class="spacer" />
-      <div v-if="pr && (!review || review.reviews_supported)" class="segmented">
-        <button :class="{ on: source === 'pr' }" @click="source = 'pr'">PR #{{ pr.number }}</button>
-        <button :class="{ on: source === 'local' }" @click="source = 'local'">Local</button>
-      </div>
-      <button :disabled="loading" @click="load">Refresh</button>
+      <SegmentedControl
+        v-if="pr && (!review || review.reviews_supported)"
+        v-model="source"
+        :options="[
+          { value: 'pr', label: `PR #${pr.number}` },
+          { value: 'local', label: 'Local' },
+        ]"
+      />
+      <Button size="sm" :disabled="loading" @click="load">Refresh</Button>
     </header>
     <p v-if="review?.local_ahead" class="hint">The worktree differs from the pull request.</p>
     <ReviewSubmitBar v-if="isPr && review?.reviews_supported" :task-id="task.id" :review="review" />
@@ -199,7 +206,9 @@ onUnmounted(() => {
       :deletions="deletions"
       @select="(t) => (tab = t)"
     />
-    <p v-if="error" class="error message">{{ error }} <button @click="load">Retry</button></p>
+    <p v-if="error" class="error message">
+      {{ error }} <Button size="sm" @click="load">Retry</Button>
+    </p>
     <div v-if="review" class="content">
       <ConversationTab
         v-if="tab === 'conversation'"
@@ -210,7 +219,8 @@ onUnmounted(() => {
         @to-agent="(t) => (sending = { threads: t })"
       />
       <p v-else-if="tab === 'commits' && !commits" class="error message">
-        {{ commitsError ?? 'Loading…' }} <button v-if="commitsError" @click="load">Retry</button>
+        {{ commitsError ?? 'Loading…' }}
+        <Button v-if="commitsError" size="sm" @click="load">Retry</Button>
       </p>
       <CommitsTab
         v-else-if="tab === 'commits' && commits"
@@ -228,7 +238,7 @@ onUnmounted(() => {
       />
       <template v-else-if="tab === 'files'">
         <p v-if="commitError" class="error message">
-          {{ commitError }} <button @click="showAll">Show all changes</button>
+          {{ commitError }} <Button size="sm" @click="showAll">Show all changes</Button>
         </p>
         <p v-else-if="commit !== undefined && commitPatch === null" class="muted message">
           Loading…
@@ -281,17 +291,6 @@ onUnmounted(() => {
 }
 .spacer {
   flex: 1;
-}
-.segmented button.on {
-  font-weight: 600;
-  background: var(--select);
-}
-.link {
-  background: none;
-  border: none;
-  padding: 0 4px;
-  cursor: pointer;
-  color: var(--muted);
 }
 .hint,
 .message {

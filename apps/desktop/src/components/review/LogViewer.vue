@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button } from '@asterism-dev/lumen';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { computed, ref } from 'vue';
 import { errorMessage } from '../../api';
@@ -36,8 +37,8 @@ function openExternal(url: string) {
     <div class="bar">
       <span v-if="log.truncated" class="muted">Log truncated to the last 1 MB.</span>
       <span class="spacer" />
-      <button @click="emit('toAgent', logExcerpt(sections))">→ Agent</button>
-      <button @click="openExternal(log.url)">Open in browser ↗</button>
+      <Button size="sm" @click="emit('toAgent', logExcerpt(sections))">→ Agent</Button>
+      <Button size="sm" @click="openExternal(log.url)">Open in browser ↗</Button>
     </div>
     <div v-for="(s, i) in sections" :key="i" class="section" :class="{ failed: s.failed }">
       <button v-if="s.title !== null" class="step" @click="toggle(i)">

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Badge, Button, Checkbox } from '@asterism-dev/lumen';
 import { ref } from 'vue';
 import { api, errorMessage } from '../../api';
 import { formatTime } from '../../review';
@@ -42,17 +43,18 @@ async function reply(body: string) {
 <template>
   <div class="thread" :class="{ resolved: thread.resolved }">
     <div class="thread-head">
-      <input
-        type="checkbox"
-        :checked="selected"
+      <Checkbox
+        :model-value="selected"
         title="Send to agent"
-        @change="emit('select', ($event.target as HTMLInputElement).checked)"
+        @update:model-value="(v) => emit('select', v === true)"
       />
-      <button class="link" @click="open = !open">{{ thread.path }}:{{ thread.line }}</button>
-      <span v-if="thread.local" class="badge">local</span>
-      <span v-if="thread.pending" class="badge">pending</span>
-      <span v-if="thread.outdated" class="badge">outdated</span>
-      <span v-if="thread.resolved" class="badge">resolved</span>
+      <Button variant="ghost" size="sm" @click="open = !open">
+        {{ thread.path }}:{{ thread.line }}
+      </Button>
+      <Badge v-if="thread.local" variant="outline" weight="normal">local</Badge>
+      <Badge v-if="thread.pending" variant="outline" weight="normal">pending</Badge>
+      <Badge v-if="thread.outdated" variant="outline" weight="normal">outdated</Badge>
+      <Badge v-if="thread.resolved" variant="outline" weight="normal">resolved</Badge>
     </div>
     <template v-if="open">
       <div v-for="c in thread.comments" :key="c.id" class="comment">
@@ -62,12 +64,14 @@ async function reply(body: string) {
       </div>
       <p v-if="error" class="error">{{ error }}</p>
       <div class="thread-actions">
-        <button @click="replying = !replying">Reply</button>
-        <button @click="toggleResolved">
+        <Button variant="ghost" size="sm" @click="replying = !replying">Reply</Button>
+        <Button variant="ghost" size="sm" @click="toggleResolved">
           {{ thread.resolved ? 'Unresolve' : 'Resolve' }}
-        </button>
-        <button v-if="thread.local && canPublish" @click="publish">Publish</button>
-        <button @click="emit('toAgent', thread)">→ Agent</button>
+        </Button>
+        <Button v-if="thread.local && canPublish" variant="ghost" size="sm" @click="publish">
+          Publish
+        </Button>
+        <Button variant="ghost" size="sm" @click="emit('toAgent', thread)">→ Agent</Button>
       </div>
       <CommentEditor
         v-if="replying"
@@ -97,22 +101,8 @@ async function reply(body: string) {
   gap: 6px;
   align-items: center;
 }
-.thread-head input {
-  width: auto;
-}
-.badge {
-  font-size: 11px;
-  padding: 0 6px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-}
 .body {
   white-space: pre-wrap;
   margin: 2px 0 6px;
-}
-.link {
-  background: none;
-  border: none;
-  padding: 0;
 }
 </style>

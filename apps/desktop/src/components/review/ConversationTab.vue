@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { RadioGroup } from '@asterism-dev/lumen';
 import { computed, ref } from 'vue';
 import { api } from '../../api';
 import { codeExcerpt, formatTime, splitPatch, timeline } from '../../review';
@@ -52,12 +53,11 @@ const addComment = async (body: string) => {
       </header>
       <p class="body">{{ review.body || 'No description provided.' }}</p>
     </article>
-    <div class="filters">
-      <label v-for="f in FILTERS" :key="f">
-        <input v-model="filter" type="radio" :value="f" />
-        {{ f }}
-      </label>
-    </div>
+    <RadioGroup
+      v-model="filter"
+      class="filters"
+      :options="FILTERS.map((f) => ({ value: f, label: f }))"
+    />
     <template v-for="e in entries" :key="e.kind + (e.kind === 'item' ? e.item.id : e.thread.id)">
       <article v-if="e.kind === 'item'" class="card">
         <header>
@@ -129,17 +129,7 @@ const addComment = async (body: string) => {
   padding: 8px 10px;
 }
 .filters {
-  display: flex;
-  gap: 10px;
   font-size: 12px;
-}
-.filters label {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-}
-.filters input {
-  width: auto;
 }
 .excerpt {
   margin: 0;

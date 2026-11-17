@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, TextInput } from '@asterism-dev/lumen';
 import { Plus } from '@lucide/vue';
 import { computed, reactive, ref, watch } from 'vue';
 import StatusIndicator from '../components/StatusIndicator.vue';
@@ -30,7 +31,7 @@ const selected = computed(() => (route.value.name === 'task' ? route.value.taskI
 <template>
   <nav class="task-list">
     <div v-if="state.workspaces.length > 1" class="workspaces">
-      <button
+      <Button
         v-for="w in state.workspaces"
         :key="w.id"
         type="button"
@@ -44,15 +45,23 @@ const selected = computed(() => (route.value.name === 'task' ? route.value.taskI
         <span v-if="state.activeWorkspace !== w.id && waitingCounts[w.id]" class="badge">
           {{ waitingCounts[w.id] }}<span class="sr-only"> waiting</span>
         </span>
-      </button>
+      </Button>
     </div>
-    <input v-model="query" type="search" placeholder="Search projects and tasks" />
+    <TextInput
+      v-model="query"
+      type="search"
+      placeholder="Search projects and tasks"
+      class="search"
+    />
     <section v-for="g in grouped.active" :key="g.project.id">
       <header>
         <h2>{{ g.project.name }}</h2>
-        <button class="icon" aria-label="New task" @click="state.newTaskFor = g.project.id">
-          <Plus :size="18" />
-        </button>
+        <Button
+          variant="ghost"
+          :icon="Plus"
+          aria-label="New task"
+          @click="state.newTaskFor = g.project.id"
+        />
       </header>
       <button
         v-for="t in g.tasks"
@@ -80,9 +89,12 @@ const selected = computed(() => (route.value.name === 'task' ? route.value.taskI
       <section v-for="g in grouped.idle" :key="g.project.id">
         <header>
           <h2>{{ g.project.name }}</h2>
-          <button class="icon" aria-label="New task" @click="state.newTaskFor = g.project.id">
-            <Plus :size="18" />
-          </button>
+          <Button
+            variant="ghost"
+            :icon="Plus"
+            aria-label="New task"
+            @click="state.newTaskFor = g.project.id"
+          />
         </header>
       </section>
     </template>
@@ -104,10 +116,7 @@ const selected = computed(() => (route.value.name === 'task' ? route.value.taskI
 }
 .chip {
   flex: none;
-  display: inline-flex;
-  align-items: center;
   gap: 6px;
-  min-height: 44px;
   padding: 0 14px;
   border-radius: 22px;
   white-space: nowrap;
@@ -129,22 +138,13 @@ const selected = computed(() => (route.value.name === 'task' ? route.value.taskI
   overflow: hidden;
   clip: rect(0 0 0 0);
 }
-input {
-  width: 100%;
-  font-size: 16px; /* below 16px iOS zooms into the field */
+.search {
   margin-bottom: 8px;
 }
 header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-}
-button.icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 44px;
-  min-height: 44px;
 }
 h2 {
   font-size: 13px;

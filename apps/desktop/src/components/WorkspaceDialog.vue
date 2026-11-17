@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, Dialog, Field, RadioGroup, Select, TextInput } from '@asterism-dev/lumen';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api, errorMessage } from '../api';
 import { matchAction } from '../shortcuts';
@@ -16,7 +17,13 @@ const repos = ref('');
 const worktrees = ref('');
 const color = ref(props.workspace?.color ?? nextFreeColor(state.workspaces));
 const others = computed(() => state.workspaces.filter((w) => w.id !== props.workspace?.id));
-const moveTo = ref<number | undefined>(others.value[0]?.id);
+const moveTo = ref<number | null>(others.value[0]?.id ?? null);
+const moveOptions = computed(() => others.value.map((w) => ({ value: w.id, label: w.name })));
+const colorOptions = ['', ...WORKSPACE_COLORS].map((c) => ({
+  value: c,
+  label: c || 'none',
+  title: c || 'none',
+}));
 const reposDefault = ref('');
 const busy = ref(false);
 const error = ref<string | null>(null);
@@ -68,7 +75,7 @@ async function submit() {
         label: label.value.trim(),
         color: color.value,
       });
-    else if (props.mode === 'delete' && w && moveTo.value !== undefined) {
+    else if (props.mode === 'delete' && w && moveTo.value !== null) {
       const wasActive = state.activeWorkspace === w.id;
       const selected = state.selectedTaskId;
       await api.deleteWorkspace(w.id, moveTo.value);
@@ -88,115 +95,89 @@ async function submit() {
 </script>
 
 <template>
-  <div class="modal-backdrop" tabindex="-1" @click.self="close" @keydown.esc="close">
-    <form
-      ref="dialog"
-      class="modal"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="title"
-      @submit.prevent="submit"
-    >
+  <Dialog :open="true" :title="title" @update:open="(o) => !o && close()">
+    <form ref="dialog" class="workspace-form" @submit.prevent="submit">
       <template v-if="mode === 'delete'">
         <p>
           Delete workspace "{{ workspace?.name }}"? Its projects move to the workspace you pick; no
           files are removed.
         </p>
-        <label
-          >Move projects to
-          <select v-model="moveTo">
-            <option v-for="w in others" :key="w.id" :value="w.id">{{ w.name }}</option>
-          </select>
-        </label>
+        <Field label="Move projects to">
+          <Select v-model="moveTo" :options="moveOptions" placeholder="Choose workspace" />
+        </Field>
       </template>
       <template v-else>
-        <label
-          >Name
-          <input v-model="name" type="text" autofocus />
-        </label>
-        <label
-          >Label
-          <input v-model="label" type="text" maxlength="2" placeholder="e.g. W" />
-        </label>
-        <fieldset class="colors">
-          <legend>Color</legend>
-          <label
-            v-for="c in ['', ...WORKSPACE_COLORS]"
-            :key="c"
-            class="swatch"
-            :title="c || 'none'"
-          >
-            <input v-model="color" type="radio" name="color" :value="c" :aria-label="c || 'none'" />
-            <span :style="{ background: colorVar(c) }" :class="{ none: !c }" />
-          </label>
-        </fieldset>
+        <Field label="Name">
+          <TextInput v-model="name" />
+        </Field>
+        <Field label="Label">
+          <TextInput v-model="label" maxlength="2" placeholder="e.g. W" />
+        </Field>
+        <Field label="Color">
+          <RadioGroup v-model="color" :options="colorOptions" variant="custom" class="colors">
+            <template #option="{ option }">
+              <span
+                class="swatch"
+                :style="{ background: colorVar(option.value) }"
+                :class="{ none: !option.value }"
+              />
+            </template>
+          </RadioGroup>
+        </Field>
         <template v-if="mode === 'create'">
-          <label
-            >Repositories folder
-            <input v-model="repos" type="text" :placeholder="placeholders.repos" />
-          </label>
-          <label
-            >Worktrees folder
-            <input v-model="worktrees" type="text" :placeholder="placeholders.worktrees" />
-          </label>
+          <Field label="Repositories folder">
+            <TextInput v-model="repos" :placeholder="placeholders.repos" />
+          </Field>
+          <Field label="Worktrees folder">
+            <TextInput v-model="worktrees" :placeholder="placeholders.worktrees" />
+          </Field>
         </template>
       </template>
       <p v-if="error" class="error">{{ error }}</p>
       <div class="actions">
-        <button type="button" :disabled="busy" @click="close">Cancel</button>
-        <button
+        <Button :disabled="busy" @click="close">Cancel</Button>
+        <Button
           type="submit"
-          :class="mode === 'delete' ? 'danger' : 'primary'"
+          :variant="mode === 'delete' ? 'danger' : 'accent'"
           :disabled="
-            busy ||
-            (mode !== 'delete' && !name.trim()) ||
-            (mode === 'delete' && moveTo === undefined)
+            busy || (mode !== 'delete' && !name.trim()) || (mode === 'delete' && moveTo === null)
           "
         >
           {{ mode === 'create' ? 'Create' : mode === 'rename' ? 'Save' : 'Delete'
           }}<Kbd v-if="!busy" action="confirm" />
-        </button>
+        </Button>
       </div>
     </form>
-  </div>
+  </Dialog>
 </template>
 
 <style scoped>
-button.danger {
-  color: var(--danger);
+.workspace-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 .colors {
-  display: flex;
   gap: 6px;
-  border: 0;
-  padding: 0;
-  margin: 0;
 }
-.colors legend {
-  padding: 0 0 4px;
+.colors :deep(.lm-radio-custom) {
+  border-radius: 50%;
 }
-.swatch input {
-  position: absolute;
-  opacity: 0;
-}
-.swatch span {
+.swatch {
   display: block;
   width: 20px;
   height: 20px;
   border-radius: 50%;
   border: 2px solid transparent;
-  cursor: pointer;
+  box-sizing: border-box;
 }
-.swatch span.none {
+.swatch.none {
   border-color: var(--border);
   background: linear-gradient(135deg, transparent 45%, var(--muted) 45% 55%, transparent 55%);
-}
-.swatch input:checked + span {
-  outline: 2px solid var(--text);
-  outline-offset: 2px;
-}
-.swatch input:focus-visible + span {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 </style>

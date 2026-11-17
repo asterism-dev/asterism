@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, Checkbox } from '@asterism-dev/lumen';
 import { DiffModeEnum, DiffView, SplitSide } from '@git-diff-view/vue';
 import '@git-diff-view/vue/styles/diff-view-pure.css';
 import { computed, ref, shallowRef, watch } from 'vue';
@@ -88,26 +89,37 @@ async function comment(
 <template>
   <section :id="'file-' + file.path" class="file">
     <header class="file-head">
-      <button class="link" @click="open = !open">{{ open ? '▾' : '▸' }} {{ file.path }}</button>
+      <Button variant="ghost" size="sm" class="path" @click="open = !open">
+        {{ open ? '▾' : '▸' }} {{ file.path }}
+      </Button>
       <span class="add">+{{ file.additions }}</span>
       <span class="del">−{{ file.deletions }}</span>
       <span class="spacer" />
-      <button v-if="!readOnly && openThreads.length" @click="emit('toAgent', openThreads)">
+      <Button
+        v-if="!readOnly && openThreads.length"
+        size="sm"
+        @click="emit('toAgent', openThreads)"
+      >
         → Agent
-      </button>
-      <label v-if="!readOnly">
-        <input
-          type="checkbox"
-          :checked="isViewed"
-          @change="toggleViewed(($event.target as HTMLInputElement).checked)"
-        />
+      </Button>
+      <Checkbox
+        v-if="!readOnly"
+        :model-value="isViewed"
+        @update:model-value="(v) => toggleViewed(v === true)"
+      >
         Viewed
-      </label>
+      </Checkbox>
     </header>
     <p v-if="viewedError" class="error">{{ viewedError }}</p>
-    <button v-if="!open && !isViewed && isLargeDiff(file)" class="link hint" @click="open = true">
+    <Button
+      v-if="!open && !isViewed && isLargeDiff(file)"
+      variant="ghost"
+      size="sm"
+      class="hint"
+      @click="open = true"
+    >
       Large diff — click to expand
-    </button>
+    </Button>
     <!-- Rendered only while open: the library has no virtual scrolling. -->
     <DiffView
       v-if="open"
@@ -158,14 +170,6 @@ async function comment(
   background: var(--bg);
   z-index: 1;
 }
-.file-head label {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-.file-head input {
-  width: auto;
-}
 .spacer {
   flex: 1;
 }
@@ -175,13 +179,10 @@ async function comment(
 .del {
   color: var(--danger);
 }
-.link {
-  background: none;
-  border: none;
+.path {
   font-weight: 600;
 }
 .hint {
-  font-weight: normal;
-  padding: 0 10px 8px;
+  margin: 0 4px 8px;
 }
 </style>

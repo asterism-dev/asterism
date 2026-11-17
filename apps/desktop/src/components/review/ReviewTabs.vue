@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Badge, Tabs } from '@asterism-dev/lumen';
 import { FileDiff, GitCommitHorizontal, ListChecks, MessageSquare } from '@lucide/vue';
 import { computed } from 'vue';
 import { diffBar, type ReviewTab } from '../../review';
@@ -16,73 +17,45 @@ const ICONS = {
   checks: ListChecks,
   files: FileDiff,
 };
+const items = computed(() => props.tabs.map((t) => ({ value: t.id, label: t.label })));
+const counts = computed(() => Object.fromEntries(props.tabs.map((t) => [t.id, t.count])));
 const bar = computed(() => diffBar(props.additions, props.deletions));
 </script>
 
 <template>
-  <nav class="tabs" role="tablist">
-    <button
-      v-for="t in tabs"
-      :key="t.id"
-      role="tab"
-      :aria-selected="t.id === active"
-      :class="{ active: t.id === active }"
-      @click="emit('select', t.id)"
-    >
-      <component :is="ICONS[t.id]" :size="15" />
-      {{ t.label }}
-      <span class="pill">{{ t.count }}</span>
-    </button>
-    <span class="spacer" />
-    <span class="stat">
-      <span class="add">+{{ additions.toLocaleString() }}</span>
-      <span class="del">−{{ deletions.toLocaleString() }}</span>
-      <span v-for="(s, i) in bar" :key="i" class="sq" :class="s" />
-    </span>
-  </nav>
+  <Tabs
+    :model-value="active"
+    :tabs="items"
+    variant="underline"
+    class="review-tabs"
+    @update:model-value="(v) => emit('select', v as ReviewTab)"
+  >
+    <template #tab="{ tab }">
+      <component :is="ICONS[tab.value as ReviewTab]" :size="15" />
+      {{ tab.label }}
+      <Badge variant="pill" weight="normal">{{ counts[tab.value] }}</Badge>
+    </template>
+    <template #end>
+      <span class="stat">
+        <span class="add">+{{ additions.toLocaleString() }}</span>
+        <span class="del">−{{ deletions.toLocaleString() }}</span>
+        <span v-for="(s, i) in bar" :key="i" class="sq" :class="s" />
+      </span>
+    </template>
+  </Tabs>
 </template>
 
 <style scoped>
-.tabs {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--border);
+.review-tabs {
+  flex: none;
 }
-.tabs button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  background: none;
-  border: 1px solid transparent;
-  border-bottom: none;
-  border-radius: 6px 6px 0 0;
-  margin-bottom: -1px;
-  color: var(--muted);
-  cursor: pointer;
-}
-.tabs button.active {
-  color: var(--text);
-  background: var(--panel);
-  border-color: var(--border);
-}
-.pill {
-  font-size: 11px;
-  padding: 0 7px;
-  border-radius: 10px;
-  background: var(--select);
-  color: var(--text);
-}
-.spacer {
-  flex: 1;
+.review-tabs :deep(.lm-tabs__bar) {
+  padding: 0 4px 0 14px;
 }
 .stat {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding-bottom: 8px;
   font-size: 12px;
   font-weight: 600;
 }

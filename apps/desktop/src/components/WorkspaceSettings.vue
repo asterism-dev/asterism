@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { SegmentedControl, Switch, TextInput } from '@asterism-dev/lumen';
 import { computed } from 'vue';
 import { FolderGit2 } from '@lucide/vue';
 import { baseChoice } from '../baseBranch';
@@ -17,6 +18,10 @@ const checkout = defineModel<string>('checkout', { required: true });
 const push = defineModel<boolean>('push', { required: true });
 const emit = defineEmits<{ touchBranch: []; refresh: [] }>();
 
+const modes = [
+  { value: 'checkout' as const, label: 'Checkout branch' },
+  { value: 'new' as const, label: 'Create new branch' },
+];
 const choice = computed(() => baseChoice(props.branches));
 const local = computed(() => props.branches?.local ?? []);
 const remote = computed(() => props.branches?.remote ?? []);
@@ -29,26 +34,13 @@ const path = computed(() => {
 
 <template>
   <div class="workspace">
-    <div class="segmented small" role="group" aria-label="Branch">
-      <button
-        type="button"
-        :disabled="!!prBranch"
-        :class="{ active: mode === 'checkout' }"
-        :aria-pressed="mode === 'checkout'"
-        @click="mode = 'checkout'"
-      >
-        Checkout branch
-      </button>
-      <button
-        type="button"
-        :disabled="!!prBranch"
-        :class="{ active: mode === 'new' }"
-        :aria-pressed="mode === 'new'"
-        @click="mode = 'new'"
-      >
-        Create new branch
-      </button>
-    </div>
+    <SegmentedControl
+      v-model="mode"
+      :options="modes"
+      size="sm"
+      :disabled="!!prBranch"
+      aria-label="Branch"
+    />
 
     <template v-if="mode === 'new'">
       <BranchPicker
@@ -64,11 +56,14 @@ const path = computed(() => {
       <div class="field">
         <label
           ><span class="muted">Branch name</span>
-          <input v-model="branch" class="mono" spellcheck="false" @input="emit('touchBranch')" />
+          <TextInput
+            v-model="branch"
+            class="mono"
+            spellcheck="false"
+            @input="emit('touchBranch')"
+          />
         </label>
-        <label class="switch"
-          ><input v-model="push" type="checkbox" role="switch" /> Push branch to remote</label
-        >
+        <Switch v-model="push">Push branch to remote</Switch>
       </div>
     </template>
     <BranchPicker
@@ -95,10 +90,6 @@ const path = computed(() => {
   flex-direction: column;
   gap: 8px;
 }
-.segmented.small button {
-  border: none;
-  padding: 2px 8px;
-}
 .field {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -110,14 +101,6 @@ const path = computed(() => {
 .field input:not([type='checkbox']) {
   border: none;
   padding: 2px 0;
-}
-.switch {
-  flex-direction: row !important;
-  align-items: center;
-  gap: 8px !important;
-}
-.switch input {
-  width: auto;
 }
 .path {
   display: flex;

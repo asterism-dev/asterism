@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, TextInput, Textarea } from '@asterism-dev/lumen';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { X } from '@lucide/vue';
 import { computed, ref, watch } from 'vue';
@@ -114,10 +115,16 @@ watch(() => props.agent, load, { immediate: true });
     <section v-if="sections.args">
       <h3>Parameters</h3>
       <div v-for="(_, i) in form.args" :key="i" class="settings-row">
-        <input v-model="form.args[i]" placeholder="--model" spellcheck="false" />
-        <button title="Remove" aria-label="Remove" @click="form.args.splice(i, 1)"><X /></button>
+        <TextInput v-model="form.args[i]" placeholder="--model" spellcheck="false" />
+        <Button
+          variant="ghost"
+          :icon="X"
+          title="Remove"
+          aria-label="Remove"
+          @click="form.args.splice(i, 1)"
+        />
       </div>
-      <button @click="form.args.push('')">+ Parameter</button>
+      <Button @click="form.args.push('')">+ Parameter</Button>
       <p class="muted mono">{{ commandPreview(agent, form) }}</p>
     </section>
 
@@ -127,17 +134,29 @@ watch(() => props.agent, load, { immediate: true });
         CLAUDE* and ANTHROPIC_* are never inherited — set them here if sessions need them.
       </p>
       <div v-for="(row, i) in form.set" :key="i" class="settings-row">
-        <input v-model="row.key" placeholder="NAME" spellcheck="false" />
-        <input v-model="row.value" placeholder="value" spellcheck="false" />
-        <button title="Remove" aria-label="Remove" @click="form.set.splice(i, 1)"><X /></button>
+        <TextInput v-model="row.key" placeholder="NAME" spellcheck="false" />
+        <TextInput v-model="row.value" placeholder="value" spellcheck="false" />
+        <Button
+          variant="ghost"
+          :icon="X"
+          title="Remove"
+          aria-label="Remove"
+          @click="form.set.splice(i, 1)"
+        />
       </div>
-      <button @click="form.set.push({ key: '', value: '' })">+ Variable</button>
+      <Button @click="form.set.push({ key: '', value: '' })">+ Variable</Button>
       <h4>Remove inherited</h4>
       <div v-for="(_, i) in form.remove" :key="i" class="settings-row">
-        <input v-model="form.remove[i]" placeholder="AWS_*" spellcheck="false" />
-        <button title="Remove" aria-label="Remove" @click="form.remove.splice(i, 1)"><X /></button>
+        <TextInput v-model="form.remove[i]" placeholder="AWS_*" spellcheck="false" />
+        <Button
+          variant="ghost"
+          :icon="X"
+          title="Remove"
+          aria-label="Remove"
+          @click="form.remove.splice(i, 1)"
+        />
       </div>
-      <button @click="form.remove.push('')">+ Pattern</button>
+      <Button @click="form.remove.push('')">+ Pattern</Button>
       <p v-if="errors.env" class="error">{{ errors.env }}</p>
     </section>
 
@@ -147,10 +166,10 @@ watch(() => props.agent, load, { immediate: true });
         {{ label }}'s MCP format, added to your own {{ label }} configuration.
         <a href="#" @click.prevent="docs(MCP_DOCS)">Docs</a>
       </p>
-      <textarea
+      <Textarea
         v-model="form.mcpText"
         class="json"
-        rows="8"
+        :rows="8"
         :placeholder="MCP_EXAMPLE"
         spellcheck="false"
       />
@@ -163,10 +182,10 @@ watch(() => props.agent, load, { immediate: true });
         {{ label }}'s hooks format. asterism's status hooks stay active as well.
         <a href="#" @click.prevent="docs(HOOKS_DOCS)">Docs</a>
       </p>
-      <textarea
+      <Textarea
         v-model="form.hooksText"
         class="json"
-        rows="8"
+        :rows="8"
         :placeholder="HOOKS_EXAMPLE"
         spellcheck="false"
       />
@@ -180,15 +199,19 @@ watch(() => props.agent, load, { immediate: true });
       </p>
       <label>
         Hibernate after (minutes, 0 = off)
-        <input v-model="form.hibernateAfter" inputmode="numeric" placeholder="30" />
+        <TextInput v-model="form.hibernateAfter" inputmode="numeric" placeholder="30" />
       </label>
       <p v-if="errors.hibernate" class="error">{{ errors.hibernate }}</p>
     </section>
 
     <div v-if="!embedded" class="save-bar">
-      <button :class="{ primary: dirty }" :disabled="saving || !dirty || gone" @click="save">
+      <Button
+        :variant="dirty ? 'accent' : 'default'"
+        :disabled="saving || !dirty || gone"
+        @click="save"
+      >
         Save
-      </button>
+      </Button>
       <span v-if="gone" class="muted">This agent is no longer installed.</span>
       <span v-else class="muted">Applies to newly started sessions.</span>
     </div>

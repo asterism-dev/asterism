@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, Select, TextInput } from '@asterism-dev/lumen';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { api, errorMessage, RpcError } from '../../api';
@@ -22,6 +23,10 @@ let debounce: ReturnType<typeof setTimeout> | undefined;
 let searchSeq = 0;
 
 const key = (h: SearchHit) => `${h.store}/${h.name}`;
+const storeOptions = computed(() => [
+  { value: null, label: 'All stores' },
+  ...stores.value.map((s) => ({ value: s, label: s })),
+]);
 const action = computed(() => (selected.value ? hitAction(selected.value) : null));
 
 async function search() {
@@ -134,21 +139,14 @@ onMounted(() => {
 <template>
   <section class="discover">
     <div class="filters">
-      <input
+      <TextInput
         v-model="query"
         placeholder="Search plugins"
         aria-label="Search plugins"
         spellcheck="false"
       />
-      <select v-model="capability" aria-label="Capability">
-        <option v-for="f in CAPABILITY_FILTERS" :key="f.label" :value="f.value">
-          {{ f.label }}
-        </option>
-      </select>
-      <select v-if="stores.length > 1" v-model="store" aria-label="Store">
-        <option :value="null">All stores</option>
-        <option v-for="s in stores" :key="s" :value="s">{{ s }}</option>
-      </select>
+      <Select v-model="capability" :options="CAPABILITY_FILTERS" aria-label="Capability" />
+      <Select v-if="stores.length > 1" v-model="store" :options="storeOptions" aria-label="Store" />
     </div>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-else-if="!hits.length" class="muted">No plugins found. Add a store under Stores.</p>
@@ -190,9 +188,9 @@ onMounted(() => {
           <p v-if="selected.linked" class="muted">
             A linked development copy overrides this plugin.
           </p>
-          <button v-if="action !== 'installed'" :disabled="busy" @click="install">
+          <Button v-if="action !== 'installed'" variant="accent" :disabled="busy" @click="install">
             {{ busy ? 'Working…' : action === 'update' ? 'Update' : 'Install' }}
-          </button>
+          </Button>
           <pre v-if="details.readme" class="readme">{{ details.readme }}</pre>
         </template>
       </article>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button } from '@asterism-dev/lumen';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import {
   isPermissionGranted,
@@ -157,7 +158,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app" @click="state.menu = null">
+  <div class="app">
     <div v-if="accent" class="workspace-accent" :style="{ background: accent }" />
     <div v-if="state.node.state === 'update_available'" class="banner">
       <template v-if="state.node.hello.daemon_version === state.node.bundled_version">
@@ -168,10 +169,10 @@ onUnmounted(() => {
         >Daemon update ready ({{ state.node.hello.daemon_version }} →
         {{ state.node.bundled_version }}).</template
       >
-      <button @click="restart">Restart daemon</button>
+      <Button @click="restart">Restart daemon</Button>
     </div>
     <div v-else-if="state.node.state === 'incompatible'" class="banner error">
-      {{ state.node.message }} <button @click="restart">Restart daemon</button>
+      {{ state.node.message }} <Button @click="restart">Restart daemon</Button>
     </div>
     <div class="workbench" :style="{ gridTemplateColumns: columns }">
       <template v-if="sidebar.open">

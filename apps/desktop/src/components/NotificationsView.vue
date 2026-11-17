@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button, StatusDot } from '@asterism-dev/lumen';
 import { ArrowLeft } from '@lucide/vue';
 import { computed } from 'vue';
 import { api, errorMessage } from '../api';
@@ -58,13 +59,23 @@ function open(n: NotificationEntry) {
 <template>
   <div class="notifications">
     <div class="row header">
-      <button class="back" aria-label="Back to projects" @click="state.notificationsOpen = false">
-        <ArrowLeft />
-      </button>
+      <Button
+        variant="ghost"
+        size="sm"
+        :icon="ArrowLeft"
+        aria-label="Back to projects"
+        @click="state.notificationsOpen = false"
+      />
       <span class="name">Notifications</span>
-      <button v-if="hasUnread" class="link" @click="api.readAllNotifications().catch(report)">
+      <Button
+        v-if="hasUnread"
+        variant="ghost"
+        size="sm"
+        class="link"
+        @click="api.readAllNotifications().catch(report)"
+      >
         Mark all read
-      </button>
+      </Button>
     </div>
     <p v-if="!groups.length" class="hint muted">Nothing here.</p>
     <section v-for="g in groups" :key="g.title">
@@ -80,7 +91,7 @@ function open(n: NotificationEntry) {
         }"
         @click="open(n)"
       >
-        <span class="dot" :class="{ waiting: n.kind === 'waiting' }" />
+        <StatusDot class="dot" :tone="n.kind === 'waiting' ? 'waiting' : 'accent'" />
         <div class="text">
           <div class="title">{{ n.task_title ?? 'Unknown task' }}</div>
           <div class="muted">{{ detail(n) }}</div>
@@ -94,12 +105,6 @@ function open(n: NotificationEntry) {
 <style scoped>
 .header .name {
   font-weight: 600;
-}
-.back,
-.link {
-  background: none;
-  border: 0;
-  padding: 0 4px;
 }
 .link {
   font-size: 12px;
@@ -132,15 +137,7 @@ function open(n: NotificationEntry) {
   font-weight: 600;
 }
 .dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
   margin-top: 5px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-.dot.waiting {
-  background: var(--waiting);
 }
 .text {
   flex: 1;
