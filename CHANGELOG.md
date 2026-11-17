@@ -1,3 +1,9 @@
+## v0.27.0 (2026-11-17)
+
+### Feat
+
+- **review**: expand unchanged lines and show viewed progress (#33)
+
 ## v0.26.0 (2026-11-17)
 
 ### Feat
