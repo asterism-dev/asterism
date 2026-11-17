@@ -1,3 +1,9 @@
+## v0.26.0 (2026-11-17)
+
+### Feat
+
+- **desktop**: migrate ui to lumen component library (#32)
+
 ## v0.25.0 (2026-11-16)
 
 ### Feat
