@@ -141,6 +141,15 @@ export const isLargeDiff = (f: FileDiff) => f.additions + f.deletions > LARGE_DI
 export const startsCollapsed = (f: FileDiff, index: number) =>
   isLargeDiff(f) || index >= MAX_OPEN_FILES;
 
+/** Both blob ids of a text patch with an old and a new side, from its `index <old>..<new>` header. */
+export function blobIds(patch: string): { old: string; new: string } | null {
+  const hunk = patch.indexOf('\n@@');
+  if (hunk < 0) return null;
+  const m = /^index ([0-9a-f]+)\.\.([0-9a-f]+)/m.exec(patch.slice(0, hunk));
+  if (!m || /^0+$/.test(m[1]) || /^0+$/.test(m[2])) return null;
+  return { old: m[1], new: m[2] };
+}
+
 /** Forge timestamps are ISO strings, local ones unix seconds. */
 export function formatTime(raw: string): string {
   const date = new Date(/^\d+$/.test(raw) ? Number(raw) * 1000 : raw);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  blobIds,
   defaultTarget,
   editorButtons,
   extendDataFor,
@@ -100,6 +101,31 @@ describe('splitPatch', () => {
     const [f] = splitPatch('diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n--- x\n+++ y\n');
     expect([f.additions, f.deletions]).toEqual([1, 1]);
   });
+});
+
+describe('blobIds', () => {
+  const header = 'diff --git a/x b/x\n';
+  const hunk = '--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n';
+  it('reads the index line of a modified file', () =>
+    expect(blobIds(header + 'index 1a2b3c4..5d6e7f8 100644\n' + hunk)).toEqual({
+      old: '1a2b3c4',
+      new: '5d6e7f8',
+    }));
+  it('skips added and deleted files', () => {
+    expect(blobIds(header + 'new file mode 100644\nindex 0000000..5d6e7f8\n' + hunk)).toBeNull();
+    expect(
+      blobIds(header + 'deleted file mode 100644\nindex 1a2b3c4..0000000\n' + hunk),
+    ).toBeNull();
+  });
+  it('skips a pure rename', () => expect(blobIds(splitPatch(GIT)[2].patch)).toBeNull());
+  it('skips binary files', () =>
+    expect(
+      blobIds(header + 'index 1a2b3c4..5d6e7f8 100644\nBinary files a/x and b/x differ\n'),
+    ).toBeNull());
+  it('ignores index-like lines inside a hunk', () =>
+    expect(
+      blobIds(header + '--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\nindex 1a2b3c4..5d6e7f8\n'),
+    ).toBeNull());
 });
 
 describe('extendDataFor', () => {
