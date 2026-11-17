@@ -509,6 +509,9 @@ export interface ReviewCommitsResult {
   commits: ReviewCommit[];
   uncommitted: boolean;
 }
+export interface ReviewFileContentsResult {
+  old: string | null;
+}
 export interface PendingReview {
   id: string;
   comments: number;

@@ -737,3 +737,87 @@ async fn empty_general_comments_and_tasks_without_a_pr_are_rejected() {
         .unwrap_err();
     assert_eq!(empty.kind, ErrorKind::InvalidParams);
 }
+
+/// The old blob id from the `index <old>..<new>` line of `path` in the local review patch.
+async fn old_blob(env: &Env, task: &Task, path: &str) -> String {
+    let patch = env
+        .daemon
+        .review_get(&get(ReviewSource::Local, task))
+        .await
+        .unwrap()
+        .patch;
+    let header = format!("diff --git a/{path} ");
+    let file = &patch[patch.find(&header).unwrap()..];
+    let ids = file.lines().find_map(|l| l.strip_prefix("index ")).unwrap();
+    ids.split_once("..").unwrap().0.into()
+}
+
+fn file_contents(task: &Task, old_blob: String) -> ReviewFileContentsParams {
+    ReviewFileContentsParams {
+        task_id: task.id,
+        old_blob,
+    }
+}
+
+#[tokio::test]
+async fn file_contents_returns_the_old_side_of_a_committed_change() {
+    let env = setup();
+    let task = task(&env).await;
+    commit_file(&task, "a.rs", "one\n", "first");
+    common::run_git(env.repo.path(), &["merge", "-q", &task.branch]);
+    commit_file(&task, "a.rs", "one\ntwo\n", "second");
+    let id = old_blob(&env, &task, "a.rs").await;
+    let r = env
+        .daemon
+        .review_file_contents(&file_contents(&task, id))
+        .await
+        .unwrap();
+    assert_eq!(r.old.as_deref(), Some("one\n"));
+}
+
+#[tokio::test]
+async fn file_contents_returns_the_old_side_of_an_uncommitted_change() {
+    let env = setup();
+    let task = task(&env).await;
+    commit_file(&task, "a.rs", "one\n", "first");
+    common::run_git(env.repo.path(), &["merge", "-q", &task.branch]);
+    let wt = std::path::Path::new(&task.worktree_path);
+    std::fs::write(wt.join("a.rs"), "one\ndraft\n").unwrap();
+    let id = old_blob(&env, &task, "a.rs").await;
+    let r = env
+        .daemon
+        .review_file_contents(&file_contents(&task, id))
+        .await
+        .unwrap();
+    assert_eq!(r.old.as_deref(), Some("one\n"));
+}
+
+#[tokio::test]
+async fn file_contents_returns_none_for_binary() {
+    let env = setup();
+    let task = task(&env).await;
+    commit_file(&task, "b.bin", "a\0b", "first");
+    common::run_git(env.repo.path(), &["merge", "-q", &task.branch]);
+    commit_file(&task, "b.bin", "a\0c", "second");
+    let id = old_blob(&env, &task, "b.bin").await;
+    let r = env
+        .daemon
+        .review_file_contents(&file_contents(&task, id))
+        .await
+        .unwrap();
+    assert_eq!(r.old, None);
+}
+
+#[tokio::test]
+async fn file_contents_rejects_invalid_blob_ids() {
+    let env = setup();
+    let task = task(&env).await;
+    for id in ["../x", "zz12345", "--upload-pack=x", "abc"] {
+        let err = env
+            .daemon
+            .review_file_contents(&file_contents(&task, id.into()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::InvalidParams, "{id}: {}", err.message);
+    }
+}

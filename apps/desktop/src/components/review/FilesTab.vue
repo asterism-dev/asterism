@@ -27,6 +27,7 @@ const byFile = computed(() =>
 );
 const counts = computed(() => new Map([...byFile.value].map(([p, t]) => [p, t.length])));
 const viewed = computed(() => new Set(readOnly.value ? [] : props.review.viewed_files));
+const viewedCount = computed(() => files.value.filter((f) => viewed.value.has(f.path)).length);
 const openCount = computed(() => props.review.threads.filter((t) => !t.resolved).length);
 
 function open(path: string) {
@@ -44,6 +45,9 @@ function open(path: string) {
     </div>
     <div class="bar">
       <Checkbox v-model="split">Side by side</Checkbox>
+      <span v-if="!readOnly && files.length" class="muted"
+        >{{ viewedCount }} / {{ files.length }} viewed</span
+      >
       <span class="spacer" />
       <Button
         v-if="!readOnly"
@@ -56,13 +60,7 @@ function open(path: string) {
     </div>
     <p v-if="!files.length" class="muted message">No changes.</p>
     <div v-else class="body">
-      <FileTree
-        :files="files"
-        :viewed="viewed"
-        :counts="counts"
-        :hide-progress="readOnly"
-        @open="open"
-      />
+      <FileTree :files="files" :viewed="viewed" :counts="counts" @open="open" />
       <div class="files">
         <FileDiff
           v-for="(f, i) in files"

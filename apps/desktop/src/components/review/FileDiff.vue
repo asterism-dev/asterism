@@ -5,6 +5,7 @@ import '@git-diff-view/vue/styles/diff-view-pure.css';
 import { computed, ref, shallowRef, watch } from 'vue';
 import { api, errorMessage } from '../../api';
 import {
+  blobIds,
   editorButtons,
   extendDataFor,
   isLargeDiff,
@@ -36,8 +37,8 @@ const isViewed = ref(props.viewed);
 const viewedError = ref<string | null>(null);
 
 // The parser needs the `---`/`+++` header, so each file passes its whole `diff --git` chunk.
-const diffData = () => ({
-  oldFile: { fileName: props.file.path },
+const diffData = (oldContent?: string) => ({
+  oldFile: { fileName: props.file.path, content: oldContent },
   newFile: { fileName: props.file.path },
   hunks: [props.file.patch],
 });
@@ -47,6 +48,18 @@ watch(
   () => props.file.patch,
   () => (data.value = diffData()),
 );
+let contentsFor: string | null = null;
+// The old file content lets DiffView rebuild the new side from the hunks and expand the unchanged lines between them.
+async function loadContents() {
+  const patch = props.file.patch;
+  const ids = blobIds(patch);
+  if (!open.value || !ids || contentsFor === patch) return;
+  contentsFor = patch;
+  const c = await api.reviewFileContents(props.taskId, ids.old).catch(() => null);
+  if (props.file.patch !== patch || c?.old == null) return;
+  data.value = diffData(c.old);
+}
+watch([open, () => props.file.patch], loadContents, { immediate: true });
 const extend = computed(() => extendDataFor(props.readOnly ? [] : props.threads));
 const buttons = computed(() =>
   editorButtons(props.review.source, props.review.reviews_supported, !!props.review.pending_review),

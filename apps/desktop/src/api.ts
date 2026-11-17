@@ -34,6 +34,7 @@ import type {
   RemoteStatus,
   RemoteTarget,
   ReviewCommitsResult,
+  ReviewFileContentsResult,
   ReviewEvent,
   ReviewResult,
   ReviewSource,
@@ -263,6 +264,8 @@ export const api = {
     call<ReviewCommitsResult>('review.commits', { task_id: taskId, source }),
   reviewCommitDiff: (taskId: number, source: ReviewSource, sha: string | null) =>
     call<{ patch: string }>('review.commit_diff', { task_id: taskId, source, sha }),
+  reviewFileContents: (taskId: number, oldBlob: string) =>
+    call<ReviewFileContentsResult>('review.file_contents', { task_id: taskId, old_blob: oldBlob }),
   reviewAddComment: (taskId: number, body: string) =>
     call<null>('review.add_comment', { task_id: taskId, body }),
   reviewCheckLog: (taskId: number, checkId: string) =>

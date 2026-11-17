@@ -262,6 +262,27 @@ impl Daemon {
         .await
     }
 
+    pub async fn review_file_contents(
+        self: &Arc<Self>,
+        p: &ReviewFileContentsParams,
+    ) -> Result<ReviewFileContentsResult> {
+        let id = p.old_blob.clone();
+        if !(7..=40).contains(&id.len()) || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                format!("{id} is not a blob id"),
+            ));
+        }
+        let wt = PathBuf::from(&self.task(p.task_id)?.worktree_path);
+        // Only the old side: it is always in the object store, and the client derives the new side from it plus the hunks.
+        self.off_runtime(move |_| {
+            Ok(ReviewFileContentsResult {
+                old: git::blob(&wt, &id),
+            })
+        })
+        .await
+    }
+
     pub async fn review_set_viewed(self: &Arc<Self>, p: &ReviewViewedParams) -> Result<()> {
         if p.source == ReviewSource::Pr {
             let task = self.task(p.task_id)?;
