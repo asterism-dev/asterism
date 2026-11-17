@@ -37,9 +37,9 @@ const isViewed = ref(props.viewed);
 const viewedError = ref<string | null>(null);
 
 // The parser needs the `---`/`+++` header, so each file passes its whole `diff --git` chunk.
-const diffData = (oldContent?: string, newContent?: string) => ({
+const diffData = (oldContent?: string) => ({
   oldFile: { fileName: props.file.path, content: oldContent },
-  newFile: { fileName: props.file.path, content: newContent },
+  newFile: { fileName: props.file.path },
   hunks: [props.file.patch],
 });
 // DiffView rebuilds its DiffFile and closes open comment editors whenever `data` changes, so only a new patch replaces it.
@@ -49,17 +49,15 @@ watch(
   () => (data.value = diffData()),
 );
 let contentsFor: string | null = null;
-// Full file contents let DiffView expand the unchanged lines between hunks; without them it shows hunks only.
+// The old file content lets DiffView rebuild the new side from the hunks and expand the unchanged lines between them.
 async function loadContents() {
   const patch = props.file.patch;
   const ids = blobIds(patch);
   if (!open.value || !ids || contentsFor === patch) return;
   contentsFor = patch;
-  const c = await api
-    .reviewFileContents(props.taskId, props.file.path, ids.old, ids.new)
-    .catch(() => null);
-  if (props.file.patch !== patch || c?.old == null || c.new == null) return;
-  data.value = diffData(c.old, c.new);
+  const c = await api.reviewFileContents(props.taskId, ids.old).catch(() => null);
+  if (props.file.patch !== patch || c?.old == null) return;
+  data.value = diffData(c.old);
 }
 watch([open, () => props.file.patch], loadContents, { immediate: true });
 const extend = computed(() => extendDataFor(props.readOnly ? [] : props.threads));

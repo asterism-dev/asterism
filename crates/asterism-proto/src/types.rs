@@ -1405,17 +1405,14 @@ pub struct ReviewCommitDiffParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReviewFileContentsParams {
     pub task_id: i64,
-    pub path: String,
-    /// Blob ids from the patch's `index <old>..<new>` line.
+    /// The old blob id from the patch's `index <old>..<new>` line.
     pub old_blob: String,
-    pub new_blob: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReviewFileContentsResult {
     /// `None` when unavailable: missing, binary, not UTF-8 or too large.
     pub old: Option<String>,
-    pub new: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -423,13 +423,6 @@ pub fn blob(repo: &Path, id: &str) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-pub fn hash_object(repo: &Path, file: &Path) -> Result<String> {
-    let file = file.to_string_lossy();
-    Ok(git(repo, &["hash-object", "--no-filters", "--", &file])?
-        .trim()
-        .to_string())
-}
-
 pub type GitEnv = [(String, String)];
 
 const MESSAGE_LIMIT: usize = 2_000;

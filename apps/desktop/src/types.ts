@@ -511,7 +511,6 @@ export interface ReviewCommitsResult {
 }
 export interface ReviewFileContentsResult {
   old: string | null;
-  new: string | null;
 }
 export interface PendingReview {
   id: string;
