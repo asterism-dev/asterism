@@ -16,7 +16,6 @@ const props = defineProps<{
   files: Diff[];
   viewed: Set<string>;
   counts: Map<string, number>;
-  hideProgress?: boolean;
 }>();
 const emit = defineEmits<{ open: [path: string] }>();
 const query = ref('');
@@ -37,9 +36,6 @@ function toggle(path: string) {
 <template>
   <div class="tree">
     <TextInput v-model="query" class="filter" placeholder="Filter files…" />
-    <div v-if="!hideProgress" class="muted progress">
-      {{ files.filter((f) => viewed.has(f.path)).length }} / {{ files.length }} viewed
-    </div>
     <div
       v-for="{ node, depth } in rows"
       :key="node.kind + node.path"
@@ -76,9 +72,6 @@ function toggle(path: string) {
 .filter {
   width: 100%;
   margin-bottom: 6px;
-}
-.progress {
-  padding: 0 6px 6px;
 }
 .row {
   display: flex;
