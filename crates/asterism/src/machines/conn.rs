@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use asterism_proto::client::{Client, ClientError};
+use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::{
     method, ClientKind, Event, HelloParams, HelloResult, Machine, MachineState, Role, Session,
     SessionListParams, SessionStatus,
@@ -208,18 +209,6 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
         if hello.role != Role::Machine {
             return Failure::Blocked(NOT_A_MACHINE.into());
         }
-        // Calls the machine forwards before `peer::serve` starts wait in the client's request queue.
-        match tokio::time::timeout(
-            settings.health_timeout,
-            link.client
-                .call::<_, Value>(method::UPLINK_REGISTER, Value::Null),
-        )
-        .await
-        {
-            Ok(Ok(_)) => {}
-            Ok(Err(e)) => return link.failure(e).await,
-            Err(_) => return Failure::Offline("the machine daemon did not answer".into()),
-        }
         let mut update_available = false;
         if !runs_from(&hello.exe, &key) {
             let sessions = tokio::time::timeout(
@@ -256,6 +245,19 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
         let Some(requests) = client.take_requests() else {
             return Failure::Offline("the machine's request stream is gone".into());
         };
+        // Calls the machine forwards before `peer::serve` starts wait in the client's request queue.
+        match tokio::time::timeout(
+            settings.health_timeout,
+            client.call::<_, Value>(method::UPLINK_REGISTER, Value::Null),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {}
+            // An older daemon kept for its sessions does not forward, so it needs no uplink.
+            Ok(Err(ClientError::Rpc(e))) if e.kind() == ErrorKind::MethodNotFound => {}
+            Ok(Err(e)) => return link.failure(e).await,
+            Err(_) => return Failure::Offline("the machine daemon did not answer".into()),
+        }
         match tokio::time::timeout(
             settings.health_timeout,
             client.call::<_, Value>(method::SUBSCRIBE, Value::Null),

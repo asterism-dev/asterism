@@ -1007,6 +1007,119 @@ async fn sessions_present_reports_update_available() {
     old.wait().unwrap();
 }
 
+/// An older machine daemon that does not know `uplink.register`: the foreign daemon behind a relay that rejects it.
+async fn daemon_without_uplink(fake: &FakeSsh, kill: bool) -> std::process::Child {
+    let old = foreign_daemon_with_shell(fake, kill).await;
+    let socket = fake.machine_home().join("asterismd.sock");
+    // The daemon keeps listening on the renamed socket.
+    let upstream = fake.machine_home().join("old-asterismd.sock");
+    std::fs::rename(&socket, &upstream).unwrap();
+    let listener = UnixListener::bind(&socket).unwrap();
+    tokio::spawn(async move {
+        let gone = Arc::new(tokio::sync::Notify::new());
+        loop {
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let (client, _) = accepted.unwrap();
+                    tokio::spawn(relay_without_uplink(client, upstream.clone(), socket.clone(), gone.clone()));
+                }
+                _ = gone.notified() => break,
+            }
+        }
+    });
+    old
+}
+
+/// Stops listening once the daemon has gone, before closing the client, so the next `attach` starts a new daemon.
+async fn relay_without_uplink(
+    client: UnixStream,
+    upstream_path: PathBuf,
+    socket: PathBuf,
+    gone: Arc<tokio::sync::Notify>,
+) {
+    let Ok(upstream) = UnixStream::connect(&upstream_path).await else {
+        return;
+    };
+    let (client_read, mut client_write) = client.into_split();
+    let (upstream_read, mut upstream_write) = upstream.into_split();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    tokio::spawn(async move {
+        while let Some(line) = rx.recv().await {
+            if client_write
+                .write_all(format!("{line}\n").as_bytes())
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+    let down = {
+        let tx = tx.clone();
+        async move {
+            let mut lines = BufReader::new(upstream_read).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let _ = tx.send(line);
+            }
+        }
+    };
+    let up = async move {
+        let mut lines = BufReader::new(client_read).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let request: Value = serde_json::from_str(&line).unwrap();
+            if request["method"] == method::UPLINK_REGISTER {
+                let error = asterism_proto::rpc::RpcError::new(
+                    ErrorKind::MethodNotFound,
+                    "unknown method uplink.register",
+                );
+                let response =
+                    asterism_proto::rpc::Response::err(request["id"].as_u64().unwrap(), error);
+                let _ = tx.send(serde_json::to_string(&response).unwrap());
+                continue;
+            }
+            if upstream_write
+                .write_all(format!("{line}\n").as_bytes())
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    };
+    tokio::select! {
+        _ = down => {
+            if UnixStream::connect(&upstream_path).await.is_err() {
+                let _ = std::fs::remove_file(&socket);
+                gone.notify_one();
+            }
+        }
+        _ = up => {}
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_without_uplink_with_sessions_reports_update_available() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let mut old = daemon_without_uplink(&fake, false).await;
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    assert!(machine(&d, m.id).await.status.update_available);
+    assert!(old.try_wait().unwrap().is_none());
+    fake.stop_daemon();
+    old.wait().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn idle_daemon_without_uplink_is_replaced() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let mut old = daemon_without_uplink(&fake, true).await;
+    let m = add_machine(&d, "vm").await;
+    let exited = common::eventually_within(DEADLINE, || old.try_wait().unwrap().is_some()).await;
+    assert!(exited, "the old daemon was not replaced");
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    assert!(!machine(&d, m.id).await.status.update_available);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn attach_output_streams_remote_output() {
     let (daemon, d, fake) = hub(DEADLINE).await;
