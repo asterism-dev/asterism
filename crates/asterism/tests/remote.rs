@@ -377,6 +377,8 @@ async fn remote_peers_get_forbidden_for_local_only_methods() {
         "machine.list",
         "machine.add",
         "machine.remove",
+        "machine.forget",
+        "machine.tasks",
     ]
     .iter()
     .enumerate()

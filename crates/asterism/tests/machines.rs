@@ -732,6 +732,120 @@ async fn machine_with_active_tasks_cannot_be_removed() {
         .await;
 }
 
+async fn project_in(d: &D, repo: &Path) -> Project {
+    common::init_repo(repo);
+    d.call(
+        method::PROJECT_ADD,
+        ProjectAddParams {
+            path: repo.display().to_string(),
+            workspace_id: None,
+        },
+    )
+    .await
+}
+
+fn linked_task(d: &D, project_id: i64, machine_id: i64, remote_id: i64) -> i64 {
+    let store = hub_store(d);
+    let id = store.insert_task(project_id, "t", None, "").unwrap();
+    store.set_task_remote(id, machine_id, remote_id).unwrap();
+    id
+}
+
+async fn machine_gone_with_tasks() -> (D, FakeSsh, Vec<i64>) {
+    let (d, fake) = start_with_fake_ssh().await;
+    fake.fail_with("ssh: Could not resolve hostname vm", 255);
+    let m = add_machine(&d, "vm").await;
+    let repo = tempfile::tempdir().unwrap();
+    let project = project_in(&d, repo.path()).await;
+    let ids = vec![
+        linked_task(&d, project.id, m.id, 1),
+        linked_task(&d, project.id, m.id, 2),
+    ];
+    let listed: Vec<Task> = d
+        .call(method::MACHINE_TASKS, MachineIdParams { machine_id: m.id })
+        .await;
+    assert_eq!(listed.iter().map(|t| t.id).collect::<Vec<_>>(), ids);
+    let calls = fake.invocations();
+    let forgotten = tokio::time::timeout(
+        Duration::from_secs(1),
+        d.client.call::<_, MachineForgetResult>(
+            method::MACHINE_FORGET,
+            MachineIdParams { machine_id: m.id },
+        ),
+    )
+    .await
+    .expect("forget must not wait on the machine")
+    .unwrap();
+    assert_eq!(forgotten.archived_task_ids, ids);
+    assert!(
+        fake.invocations() <= calls + 1,
+        "ssh retry in flight at most"
+    );
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let after = fake.invocations();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(fake.invocations(), after);
+    (d, fake, ids)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn forget_offline_machine_archives_its_tasks() {
+    let (d, _fake, ids) = machine_gone_with_tasks().await;
+    let machines: Vec<Machine> = d.call(method::MACHINE_LIST, Value::Null).await;
+    assert!(machines.is_empty());
+    let store = hub_store(&d);
+    for id in ids {
+        assert!(store.task(id).unwrap().unwrap().archived);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn forgotten_machine_tasks_can_be_deleted_not_restored() {
+    let (d, _fake, ids) = machine_gone_with_tasks().await;
+    let err = d
+        .client
+        .call::<_, Task>(method::TASK_RESTORE, TaskIdParams { task_id: ids[0] })
+        .await
+        .unwrap_err();
+    match err {
+        ClientError::Rpc(e) => {
+            assert_eq!(e.kind(), ErrorKind::NotFound);
+            assert!(e.message.contains("machine is gone"), "{}", e.message);
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(hub_store(&d).task(ids[0]).unwrap().unwrap().archived);
+    let _: TaskDeleteResult = d
+        .call(
+            method::TASK_DELETE,
+            TaskDeleteParams {
+                task_id: ids[0],
+                delete_branch: false,
+            },
+        )
+        .await;
+    assert!(hub_store(&d).task(ids[0]).unwrap().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn archive_with_machine_gone_archives_locally() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let repo = tempfile::tempdir().unwrap();
+    let project = project_in(&d, repo.path()).await;
+    let task = linked_task(&d, project.id, 99, 1);
+    let archived: Task = d
+        .call(
+            method::TASK_ARCHIVE,
+            TaskArchiveParams {
+                task_id: task,
+                force: false,
+            },
+        )
+        .await;
+    assert!(archived.archived);
+    assert_eq!(fake.invocations(), 0);
+}
+
 /// A `file://` origin under an owner, as `project.ensure` needs.
 fn bare_origin(dir: &Path) -> String {
     let work = dir.join("work");

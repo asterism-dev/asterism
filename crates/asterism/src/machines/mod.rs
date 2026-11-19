@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex, Weak};
 use asterism_proto::client::Client;
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::{
-    method, Event, Machine, MachineSessionRef, MachineStatus, MachineTestResult,
-    MachineUpdatePreview, Role, Session, SessionListParams, SessionStatus,
+    method, Event, Machine, MachineForgetResult, MachineSessionRef, MachineStatus,
+    MachineTestResult, MachineUpdatePreview, Role, Session, SessionListParams, SessionStatus, Task,
 };
 use tokio::task::JoinHandle;
 
@@ -114,6 +114,21 @@ impl Machines {
         m
     }
 
+    fn remove_row_and_connection(&self, id: i64) -> Result<()> {
+        if !self.daemon()?.store().remove_machine(id)? {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                format!("no machine with id {id}"),
+            ));
+        }
+        // Aborting drops the task's ssh children, which are killed on drop.
+        if let Some(live) = lock(&self.live).remove(&id) {
+            live.shared.close();
+            live.task.abort();
+        }
+        Ok(())
+    }
+
     pub fn remove(&self, id: i64) -> Result<()> {
         let (active, name) = {
             let daemon = self.daemon()?;
@@ -129,22 +144,50 @@ impl Machines {
                 format!("machine {name} still has {} active tasks", active.len()),
             ));
         }
-        if !self.daemon()?.store().remove_machine(id)? {
-            return Err(Error::new(
-                ErrorKind::NotFound,
-                format!("no machine with id {id}"),
-            ));
-        }
-        // Aborting drops the task's ssh children, which are killed on drop.
-        if let Some(live) = lock(&self.live).remove(&id) {
-            live.shared.close();
-            live.task.abort();
-        }
+        self.remove_row_and_connection(id)?;
         let _ = self
             .settings
             .events
             .send(Event::MachineRemoved { machine_id: id });
         Ok(())
+    }
+
+    /// Removes a machine that is gone for good: its active tasks are archived on the hub without asking it.
+    pub async fn forget(&self, id: i64) -> Result<MachineForgetResult> {
+        let daemon = self.daemon()?;
+        let active = {
+            let store = daemon.store();
+            if store.machine(id)?.is_none() {
+                return Err(Error::new(
+                    ErrorKind::NotFound,
+                    format!("no machine with id {id}"),
+                ));
+            }
+            store.machine_active_tasks(id)?
+        };
+        self.remove_row_and_connection(id)?;
+        // With the row gone, archiving finds no machine to ask and archives locally.
+        for task_id in &active {
+            daemon.archive_task(*task_id).await?;
+        }
+        let _ = self
+            .settings
+            .events
+            .send(Event::MachineRemoved { machine_id: id });
+        Ok(MachineForgetResult {
+            archived_task_ids: active,
+        })
+    }
+
+    pub fn tasks(&self, id: i64) -> Result<Vec<Task>> {
+        let daemon = self.daemon()?;
+        let store = daemon.store();
+        store
+            .machine_active_tasks(id)?
+            .into_iter()
+            .filter_map(|task_id| store.task(task_id).transpose())
+            .collect::<std::result::Result<_, _>>()
+            .map_err(Into::into)
     }
 
     pub fn retry(&self, id: i64) -> Result<()> {

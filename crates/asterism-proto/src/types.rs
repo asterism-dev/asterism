@@ -113,6 +113,8 @@ pub mod method {
     pub const MACHINE_LIST: &str = "machine.list";
     pub const MACHINE_ADD: &str = "machine.add";
     pub const MACHINE_REMOVE: &str = "machine.remove";
+    pub const MACHINE_FORGET: &str = "machine.forget";
+    pub const MACHINE_TASKS: &str = "machine.tasks";
     pub const MACHINE_RETRY: &str = "machine.retry";
     pub const MACHINE_TEST: &str = "machine.test";
     pub const MACHINE_UPDATE: &str = "machine.update";
@@ -1833,6 +1835,11 @@ pub struct MachineAddParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MachineIdParams {
     pub machine_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MachineForgetResult {
+    pub archived_task_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

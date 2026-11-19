@@ -2426,10 +2426,15 @@ impl Daemon {
                 task_id: remote,
                 force: false,
             };
-            let _: Task = self
+            match self
                 .machines()
-                .call(machine, method::TASK_ARCHIVE, params)
-                .await?;
+                .call::<_, Task>(machine, method::TASK_ARCHIVE, params)
+                .await
+            {
+                // The machine was forgotten or no longer has the task, so only the hub's side is left.
+                Err(e) if e.kind != ErrorKind::NotFound => return Err(e),
+                _ => {}
+            }
             // The machine's exit events may never arrive if the link drops now, and reconcile skips archived tasks.
             let mirrors = self.store().sessions(Some(task_id))?;
             for stored in mirrors {
@@ -2514,6 +2519,9 @@ impl Daemon {
             return Ok(task);
         }
         if let Some((machine, remote)) = self.remote_task(task_id)? {
+            if self.store().machine(machine)?.is_none() {
+                return Err(Error::new(ErrorKind::NotFound, "machine is gone"));
+            }
             let params = TaskIdParams { task_id: remote };
             let _: Task = self
                 .machines()

@@ -402,6 +402,17 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
                 .remove(params::<MachineIdParams>(raw)?.machine_id)?;
             Ok(Value::Null)
         }
+        method::MACHINE_FORGET => to_value(
+            daemon
+                .machines()
+                .forget(params::<MachineIdParams>(raw)?.machine_id)
+                .await?,
+        ),
+        method::MACHINE_TASKS => to_value(
+            daemon
+                .machines()
+                .tasks(params::<MachineIdParams>(raw)?.machine_id)?,
+        ),
         method::MACHINE_RETRY => {
             daemon
                 .machines()
