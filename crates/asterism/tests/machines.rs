@@ -57,3 +57,24 @@ async fn ssh_failure_reports_the_last_stderr_line() {
     let err = install::probe(&fake.ssh("vm")).await.unwrap_err();
     assert!(matches!(err, InstallError::Ssh(ref line) if line == "Permission denied (publickey)."));
 }
+
+#[tokio::test]
+async fn interrupted_install_is_uploaded_again() {
+    let fake = FakeSsh::new();
+    let ssh = fake.ssh("vm");
+    let platform = install::probe(&ssh).await.unwrap();
+    let first = install::ensure_installed(&ssh, &platform, &fake.bins_dir())
+        .await
+        .unwrap();
+    let dir = fake.home().join(".asterism-machine/bin").join(&first.key);
+    std::fs::remove_file(dir.join("ok")).unwrap();
+    std::fs::write(dir.join("asterismd"), b"truncated").unwrap();
+    install::ensure_installed(&ssh, &platform, &fake.bins_dir())
+        .await
+        .unwrap();
+    assert!(dir.join("ok").is_file());
+    assert_eq!(
+        std::fs::read(dir.join("asterismd")).unwrap(),
+        std::fs::read(env!("CARGO_BIN_EXE_asterismd")).unwrap()
+    );
+}

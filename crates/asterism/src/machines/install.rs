@@ -150,9 +150,7 @@ pub async fn ensure_installed(
     }
     let key = hashes[0][..16].to_string();
 
-    let check = format!(
-        r#"{INSTALL_DIR}; test -x "$d/asterismd" && test -x "$d/asterism" && echo installed || true"#
-    );
+    let check = format!(r#"{INSTALL_DIR}; test -f "$d/ok" && echo installed || true"#);
     if run(ssh, &check, &[&key], None).await?.trim() == "installed" {
         return Ok(RemoteInstall { key });
     }
@@ -184,6 +182,14 @@ pub async fn ensure_installed(
         .await?;
         return Err(InstallError::Checksum);
     }
+    // Written only after verification, so an interrupted upload never counts as installed.
+    run(
+        ssh,
+        &format!(r#"{INSTALL_DIR}; touch "$d/ok""#),
+        &[&key],
+        None,
+    )
+    .await?;
     Ok(RemoteInstall { key })
 }
 
