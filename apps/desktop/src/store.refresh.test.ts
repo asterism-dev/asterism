@@ -13,7 +13,9 @@ vi.mock('./api', () => ({
     agents: async () => [],
     notifications: async () => [],
     activities: async () => [],
-    machines: async () => [],
+    machines: async () => {
+      throw new Error('forbidden');
+    },
     prList: async () => [],
     plugins: async () => [],
   },

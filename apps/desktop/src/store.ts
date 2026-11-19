@@ -378,7 +378,7 @@ export async function refreshPluginUpdates() {
 }
 
 export async function refresh() {
-  const [projects, workspaces, tasks, sessions, agents, notifications, activities, machines] =
+  const [projects, workspaces, tasks, sessions, agents, notifications, activities] =
     await Promise.all([
       api.projects(),
       api.workspaces(),
@@ -387,14 +387,12 @@ export async function refresh() {
       api.agents(),
       api.notifications(),
       api.activities(),
-      api.machines(),
     ]);
   state.notifications = notifications;
   state.activities = activities;
   state.agents = agents;
   state.projects = projects;
   state.workspaces = workspaces;
-  state.machines = machines;
   state.activeWorkspace = resolveWorkspace(workspaces, loadActiveWorkspace());
   state.workspaceTasks = loadWorkspaceTasks();
   state.tasks = tasks;

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Button, TextInput } from '@asterism-dev/lumen';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { api, errorMessage } from '../api';
 import { machineStatusLine } from '../machines';
 import { state, toast } from '../store';
@@ -14,6 +14,13 @@ const testResult = ref<{ ok: boolean; text: string } | null>(null);
 const report = (e: unknown) => toast(errorMessage(e));
 
 const canSubmit = () => !!name.value.trim() && !!destination.value.trim() && !busy.value;
+
+onMounted(() => {
+  api
+    .machines()
+    .then((machines) => (state.machines = machines))
+    .catch(report);
+});
 
 async function test() {
   busy.value = true;
@@ -80,7 +87,9 @@ async function remove(m: Machine) {
           spellcheck="false"
           aria-label="SSH destination"
         />
-        <Button :disabled="!destination.trim() || busy" @click="test">Test connection</Button>
+        <Button type="button" :disabled="!destination.trim() || busy" @click="test"
+          >Test connection</Button
+        >
         <Button type="submit" variant="accent" :disabled="!canSubmit()">Add</Button>
       </form>
       <p v-if="testResult" :class="testResult.ok ? 'muted' : 'error'">{{ testResult.text }}</p>

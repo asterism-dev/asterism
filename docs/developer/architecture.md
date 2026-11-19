@@ -98,12 +98,12 @@ The client is a second entry point of the desktop frontend: `mobile.html` and `s
 
 ## Machines
 
-Registered SSH machines; see [Machines](../guide/machines.md) for the user side. They are managed from a node only: `machine.add` and `machine.test` are denied to remote peers.
+Registered SSH machines; see [Machines](../guide/machines.md) for the user side. They are managed from a node only: every `machine.*` method is denied to remote peers, so the mobile app never loads them.
 
 - Machines are stored in the daemon's database. `machine.list`, `machine.add`, `machine.remove`, `machine.retry` and `machine.test` manage them; `machine.changed` (a full `Machine`) and `machine.removed` (`{machine_id}`) are the events.
 - `machines/install.rs` runs `ssh` with `BatchMode` on top of the user's `~/.ssh/config`, probes the platform and installs the machine daemon binaries into `~/.asterism-machine/bin/<build-key>/` over ssh. An install counts as complete only after its checksum is verified.
-- `machines/conn.rs` supervises one connection task per machine. State is `connecting`, `ready`, `offline` or `blocked`. Failures are `offline` and retried with a backoff of up to 30 s, except ssh exit 255 (auth or host key) and unsupported platforms, which are `blocked` until `machine.retry`.
-- The desktop keeps `state.machines` in sync from the events; `MachinesSettings.vue` renders them.
+- `machines/conn.rs` supervises one connection task per machine. State is `connecting`, `ready`, `offline` or `blocked`. Failures are `offline` and retried with a backoff of up to 30 s. A failure is `blocked` until `machine.retry` when ssh exits 255 with an auth or host-key message (`Permission denied`, `Host key verification failed`, `REMOTE HOST IDENTIFICATION HAS CHANGED`), the platform is unsupported or any other install error occurs, the machine does not run an Asterism machine daemon, or the build bundles no machine binaries.
+- The desktop loads `machine.list` when Settings → Machines opens and keeps `state.machines` in sync from the events; `MachinesSettings.vue` renders them.
 
 ## Where state lives
 

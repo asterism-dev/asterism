@@ -30,6 +30,6 @@ Everything lives in `~/.asterism-machine` on the machine. The binaries are under
 | Connecting | Asterism is connecting or installing. |
 | Connected | The daemon is running. The platform is shown, plus "update available" when a newer build exists. |
 | Offline, retrying | The connection dropped or the host is unreachable. Asterism retries automatically with a backoff of up to 30 s. |
-| Needs attention | Retrying cannot help: authentication or host key failure, or an unsupported platform. Fix the cause, then click **Retry**. |
+| Needs attention | Retrying cannot help: authentication or host key failure, an unsupported platform, a machine that does not run the Asterism daemon, or an install error. Fix the cause, then click **Retry**. |
 
 For a host key failure, connect once with `ssh <destination>` in a terminal to accept or fix the key in `known_hosts`.
