@@ -21,7 +21,7 @@ Asterism installs its daemon on the first connection and updates it when the mac
 
 ## What gets installed
 
-Everything lives in `~/.asterism-machine` on the machine. The binaries are under `~/.asterism-machine/bin/<build-key>/`, one directory per Asterism build. Remove the machine in Settings and delete that directory to clean up.
+Everything lives in `~/.asterism-machine` on the machine. The binaries are under `~/.asterism-machine/bin/<build-key>/`, one directory per Asterism build. To clean up, remove the machine in Settings, stop the machine daemon with `ASTERISM_HOME=~/.asterism-machine ~/.asterism-machine/bin/<build-key>/asterism daemon stop` on the machine, then delete `~/.asterism-machine`.
 
 ## Status
 

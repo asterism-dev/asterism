@@ -98,7 +98,7 @@ The client is a second entry point of the desktop frontend: `mobile.html` and `s
 
 ## Machines
 
-Registered SSH machines; see [Machines](../guide/machines.md) for the user side. They are managed from a node only: every `machine.*` method is denied to remote peers, so the mobile app never loads them.
+Registered SSH machines; see [Machines](../guide/machines.md) for the user side. They are managed from a node only: every `machine.*` method is denied to remote peers, but remote subscribers still receive the `machine.*` events.
 
 - Machines are stored in the daemon's database. `machine.list`, `machine.add`, `machine.remove`, `machine.retry` and `machine.test` manage them; `machine.changed` (a full `Machine`) and `machine.removed` (`{machine_id}`) are the events.
 - `machines/install.rs` runs `ssh` with `BatchMode` on top of the user's `~/.ssh/config`, probes the platform and installs the machine daemon binaries into `~/.asterism-machine/bin/<build-key>/` over ssh. An install counts as complete only after its checksum is verified.
