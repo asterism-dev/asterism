@@ -736,9 +736,9 @@ impl Store {
     }
 
     pub fn machines(&self) -> rusqlite::Result<Vec<StoredMachine>> {
-        let mut stmt = self
-            .conn
-            .prepare(&format!("SELECT {MACHINE_COLUMNS} FROM machines ORDER BY id"))?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {MACHINE_COLUMNS} FROM machines ORDER BY id"
+        ))?;
         let rows = stmt.query_map([], machine_row)?;
         rows.collect()
     }
@@ -754,7 +754,10 @@ impl Store {
     }
 
     pub fn remove_machine(&self, id: i64) -> rusqlite::Result<bool> {
-        Ok(self.conn.execute("DELETE FROM machines WHERE id = ?1", [id])? > 0)
+        Ok(self
+            .conn
+            .execute("DELETE FROM machines WHERE id = ?1", [id])?
+            > 0)
     }
 
     pub fn add_remote_device(
