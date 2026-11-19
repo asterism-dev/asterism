@@ -1,14 +1,21 @@
 <script setup lang="ts">
-import { Button, TextInput } from '@asterism-dev/lumen';
+import { Button, Checkbox, NumberInput, TextInput } from '@asterism-dev/lumen';
 import { open } from '@tauri-apps/plugin-dialog';
 import { computed, onMounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
 import { state, toast } from '../store';
-import type { PathSettings } from '../types';
+import type { ArchiveSettings, NodeConfig, PathSettings } from '../types';
 
 const drafts = ref<Record<number, PathSettings>>({});
 const baseline = ref<Record<number, PathSettings>>({});
 const globals = ref<PathSettings>({ repos: '', worktrees: '' });
+const node = ref<NodeConfig | null>(null);
+const archive = ref<ArchiveSettings>({
+  auto_delete_after_days: null,
+  delete_branch: false,
+  force: false,
+});
+const archiveBaseline = ref('');
 const loaded = ref(false);
 const error = ref<string | null>(null);
 const saving = ref(false);
@@ -20,7 +27,12 @@ const changed = computed(() =>
     return draft && base && (draft.repos !== base.repos || draft.worktrees !== base.worktrees);
   }),
 );
-const dirty = computed(() => changed.value.length > 0);
+const archiveDirty = computed(() => JSON.stringify(archive.value) !== archiveBaseline.value);
+const dirty = computed(() => changed.value.length > 0 || archiveDirty.value);
+const autoDelete = computed({
+  get: () => archive.value.auto_delete_after_days != null,
+  set: (on: boolean) => (archive.value.auto_delete_after_days = on ? 14 : null),
+});
 
 watch(dirty, (value) => (state.settingsDirty = value), { immediate: true });
 watch(() => state.workspaces, syncNew, { immediate: true, deep: true });
@@ -38,7 +50,14 @@ function syncNew() {
 async function load() {
   error.value = null;
   try {
-    globals.value = (await api.nodeConfig()).config.paths;
+    const { config } = await api.nodeConfig();
+    globals.value = config.paths;
+    node.value = config;
+    archive.value = {
+      ...config.archive,
+      auto_delete_after_days: config.archive.auto_delete_after_days ?? null,
+    };
+    archiveBaseline.value = JSON.stringify(archive.value);
     loaded.value = true;
   } catch (e) {
     error.value = errorMessage(e);
@@ -68,8 +87,16 @@ async function save() {
       break;
     }
   }
+  if (!error.value && archiveDirty.value && node.value) {
+    try {
+      await api.setNodeConfig({ ...node.value, archive: archive.value });
+      archiveBaseline.value = JSON.stringify(archive.value);
+    } catch (e) {
+      error.value = errorMessage(e);
+    }
+  }
   saving.value = false;
-  if (!error.value) toast('Saved paths');
+  if (!error.value) toast('Saved settings');
 }
 
 const fields: { key: keyof PathSettings; label: string }[] = [
@@ -102,6 +129,30 @@ const fields: { key: keyof PathSettings; label: string }[] = [
       Repositories are placed in &lt;owner&gt;/&lt;repo&gt;; worktrees in
       &lt;owner&gt;/&lt;repo&gt;/&lt;task&gt;.
     </p>
+    <section v-if="loaded">
+      <h3>Archived tasks</h3>
+      <div class="settings-row">
+        <Checkbox v-model="autoDelete">Delete automatically after</Checkbox>
+        <NumberInput
+          :model-value="archive.auto_delete_after_days ?? 14"
+          :disabled="!autoDelete"
+          min="1"
+          aria-label="Days"
+          @update:model-value="(v) => v !== null && (archive.auto_delete_after_days = v)"
+        />
+        <span>days</span>
+      </div>
+      <Checkbox v-model="archive.delete_branch" :disabled="!autoDelete">
+        Also delete the branch
+      </Checkbox>
+      <Checkbox v-model="archive.force" :disabled="!autoDelete">
+        Delete even if unsaved work would be lost
+      </Checkbox>
+      <p class="muted">
+        The worktree is always removed. Tasks with uncommitted changes are skipped, and branches
+        with unmerged commits kept, unless the last option is on.
+      </p>
+    </section>
     <div class="save-bar">
       <Button :variant="dirty ? 'accent' : 'default'" :disabled="saving || !dirty" @click="save">
         Save
