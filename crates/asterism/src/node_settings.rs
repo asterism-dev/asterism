@@ -67,8 +67,8 @@ pub fn load(paths: &Paths) -> Result<NodeConfigInfo> {
 
 /// Also creates both directories, so a successful validation leaves them in place.
 pub fn validate(config: &NodeConfig) -> Result<()> {
-    if config.archive.auto_delete_after_days == Some(0) {
-        return Err(invalid("auto-delete days must be at least 1".into()));
+    if config.archive.auto_delete_after_hours == Some(0) {
+        return Err(invalid("auto-delete hours must be at least 1".into()));
     }
     let mut resolved = Vec::new();
     for (label, value) in [
@@ -169,7 +169,7 @@ mod tests {
         let (_dir, paths) = temp_paths();
         let mut config = load(&paths).unwrap().config;
         config.archive = ArchiveSettings {
-            auto_delete_after_days: Some(14),
+            auto_delete_after_hours: Some(14),
             delete_branch: true,
             force: false,
         };
@@ -178,11 +178,11 @@ mod tests {
     }
 
     #[test]
-    fn archive_days_must_be_positive() {
+    fn archive_hours_must_be_positive() {
         let (_dir, paths) = temp_paths();
         let before = std::fs::read_to_string(paths.config()).ok();
         let mut config = load(&paths).unwrap().config;
-        config.archive.auto_delete_after_days = Some(0);
+        config.archive.auto_delete_after_hours = Some(0);
         assert_eq!(
             save(&paths, &config).unwrap_err().kind,
             ErrorKind::InvalidParams

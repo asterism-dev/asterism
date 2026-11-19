@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { Button, Checkbox, NumberInput, TextInput } from '@asterism-dev/lumen';
+import { Button, Checkbox, NumberInput, Select, TextInput } from '@asterism-dev/lumen';
 import { open } from '@tauri-apps/plugin-dialog';
 import { computed, onMounted, ref, watch } from 'vue';
 import { api, errorMessage } from '../api';
+import { AGE_UNITS, type AgeUnit, splitHours, toHours } from '../archiveSettings';
 import { state, toast } from '../store';
 import type { ArchiveSettings, NodeConfig, PathSettings } from '../types';
 
@@ -11,11 +12,13 @@ const baseline = ref<Record<number, PathSettings>>({});
 const globals = ref<PathSettings>({ repos: '', worktrees: '' });
 const node = ref<NodeConfig | null>(null);
 const archive = ref<ArchiveSettings>({
-  auto_delete_after_days: null,
+  auto_delete_after_hours: null,
   delete_branch: false,
   force: false,
 });
 const archiveBaseline = ref('');
+const amount = ref(14);
+const unit = ref<AgeUnit>('days');
 const loaded = ref(false);
 const error = ref<string | null>(null);
 const saving = ref(false);
@@ -30,8 +33,13 @@ const changed = computed(() =>
 const archiveDirty = computed(() => JSON.stringify(archive.value) !== archiveBaseline.value);
 const dirty = computed(() => changed.value.length > 0 || archiveDirty.value);
 const autoDelete = computed({
-  get: () => archive.value.auto_delete_after_days != null,
-  set: (on: boolean) => (archive.value.auto_delete_after_days = on ? 14 : null),
+  get: () => archive.value.auto_delete_after_hours != null,
+  set: (on: boolean) =>
+    (archive.value.auto_delete_after_hours = on ? toHours(amount.value, unit.value) : null),
+});
+
+watch([amount, unit], () => {
+  if (autoDelete.value) archive.value.auto_delete_after_hours = toHours(amount.value, unit.value);
 });
 
 watch(dirty, (value) => (state.settingsDirty = value), { immediate: true });
@@ -53,10 +61,9 @@ async function load() {
     const { config } = await api.nodeConfig();
     globals.value = config.paths;
     node.value = config;
-    archive.value = {
-      ...config.archive,
-      auto_delete_after_days: config.archive.auto_delete_after_days ?? null,
-    };
+    const hours = config.archive.auto_delete_after_hours ?? null;
+    if (hours != null) ({ amount: amount.value, unit: unit.value } = splitHours(hours));
+    archive.value = { ...config.archive, auto_delete_after_hours: hours };
     archiveBaseline.value = JSON.stringify(archive.value);
     loaded.value = true;
   } catch (e) {
@@ -129,18 +136,19 @@ const fields: { key: keyof PathSettings; label: string }[] = [
       Repositories are placed in &lt;owner&gt;/&lt;repo&gt;; worktrees in
       &lt;owner&gt;/&lt;repo&gt;/&lt;task&gt;.
     </p>
-    <section v-if="loaded">
+    <section v-if="loaded" class="archive">
       <h3>Archived tasks</h3>
-      <div class="settings-row">
+      <div class="settings-row days-row">
         <Checkbox v-model="autoDelete">Delete automatically after</Checkbox>
         <NumberInput
-          :model-value="archive.auto_delete_after_days ?? 14"
+          :model-value="amount"
+          class="days"
           :disabled="!autoDelete"
           min="1"
-          aria-label="Days"
-          @update:model-value="(v) => v !== null && (archive.auto_delete_after_days = v)"
+          aria-label="Age"
+          @update:model-value="(v) => v !== null && (amount = v)"
         />
-        <span>days</span>
+        <Select v-model="unit" :options="AGE_UNITS" :disabled="!autoDelete" aria-label="Unit" />
       </div>
       <Checkbox v-model="archive.delete_branch" :disabled="!autoDelete">
         Also delete the branch
@@ -165,3 +173,24 @@ const fields: { key: keyof PathSettings; label: string }[] = [
     <Button v-if="error && !loaded" @click="load">Retry</Button>
   </div>
 </template>
+
+<style scoped>
+/* Settings stack with breathing room; the global .settings-row margin would double up. */
+.archive {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+.archive > * {
+  margin: 0;
+}
+.days-row {
+  align-items: center;
+  white-space: nowrap;
+}
+.days {
+  width: 90px;
+  flex: none;
+}
+</style>

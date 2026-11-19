@@ -313,7 +313,7 @@ export interface PathSettings {
   worktrees: string;
 }
 export interface ArchiveSettings {
-  auto_delete_after_days?: number | null;
+  auto_delete_after_hours?: number | null;
   delete_branch: boolean;
   force: boolean;
 }

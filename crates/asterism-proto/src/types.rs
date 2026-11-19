@@ -331,7 +331,7 @@ pub struct NodeConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ArchiveSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auto_delete_after_days: Option<u32>,
+    pub auto_delete_after_hours: Option<u32>,
     #[serde(default)]
     pub delete_branch: bool,
     /// Also delete when uncommitted changes or unmerged commits would be lost.

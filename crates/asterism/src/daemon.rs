@@ -2358,10 +2358,10 @@ impl Daemon {
     /// Deletes archived tasks past the configured age; unsaved work is kept unless forced.
     pub fn sweep_archived(&self, now: i64) -> Result<()> {
         let settings = node_settings::load(&self.paths)?.config.archive;
-        let Some(days) = settings.auto_delete_after_days else {
+        let Some(hours) = settings.auto_delete_after_hours else {
             return Ok(());
         };
-        let due = self.store().archived_due(now - i64::from(days) * 86_400)?;
+        let due = self.store().archived_due(now - i64::from(hours) * 3600)?;
         for task in due {
             let check = match self.delete_check(task.id) {
                 Ok(check) => check,

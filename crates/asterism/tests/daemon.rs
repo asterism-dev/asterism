@@ -1221,18 +1221,18 @@ async fn reopening_the_daemon_resolves_waiting_entries_before_recover() {
     assert!(reopened.notifications().unwrap()[0].resolved_at.is_some());
 }
 
-fn later(days: i64) -> i64 {
+fn later(hours: i64) -> i64 {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64;
-    now + days * 86_400 + 60
+    now + hours * 3600 + 60
 }
 
-fn auto_delete(env: &Env, days: u32, delete_branch: bool, force: bool) {
+fn auto_delete(env: &Env, hours: u32, delete_branch: bool, force: bool) {
     let mut config = env.daemon.node_config().unwrap().config;
     config.archive = ArchiveSettings {
-        auto_delete_after_days: Some(days),
+        auto_delete_after_hours: Some(hours),
         delete_branch,
         force,
     };
@@ -1257,16 +1257,16 @@ fn branch_exists(env: &Env, task: &Task) -> bool {
 async fn sweep_does_nothing_when_disabled() {
     let env = setup();
     let task = archived_task(&env, "off").await;
-    env.daemon.sweep_archived(later(1000)).unwrap();
+    env.daemon.sweep_archived(later(1000 * 24)).unwrap();
     assert!(env.daemon.task(task.id).unwrap().archived);
 }
 
 #[tokio::test]
 async fn sweep_ignores_tasks_not_yet_due() {
     let env = setup();
-    auto_delete(&env, 14, true, false);
+    auto_delete(&env, 14 * 24, true, false);
     let task = archived_task(&env, "young").await;
-    env.daemon.sweep_archived(later(13)).unwrap();
+    env.daemon.sweep_archived(later(13 * 24)).unwrap();
     assert!(env.daemon.task(task.id).unwrap().archived);
     assert!(Path::new(&task.worktree_path).exists());
 }
@@ -1274,9 +1274,9 @@ async fn sweep_ignores_tasks_not_yet_due() {
 #[tokio::test]
 async fn sweep_deletes_task_worktree_and_branch() {
     let env = setup();
-    auto_delete(&env, 1, true, false);
+    auto_delete(&env, 24, true, false);
     let task = archived_task(&env, "old").await;
-    env.daemon.sweep_archived(later(1)).unwrap();
+    env.daemon.sweep_archived(later(24)).unwrap();
     assert!(gone(&env, &task));
     assert!(!branch_exists(&env, &task));
 }
@@ -1284,9 +1284,9 @@ async fn sweep_deletes_task_worktree_and_branch() {
 #[tokio::test]
 async fn sweep_keeps_branch_when_not_configured() {
     let env = setup();
-    auto_delete(&env, 1, false, false);
+    auto_delete(&env, 24, false, false);
     let task = archived_task(&env, "keep branch").await;
-    env.daemon.sweep_archived(later(1)).unwrap();
+    env.daemon.sweep_archived(later(24)).unwrap();
     assert!(gone(&env, &task));
     assert!(branch_exists(&env, &task));
 }
@@ -1294,13 +1294,13 @@ async fn sweep_keeps_branch_when_not_configured() {
 #[tokio::test]
 async fn sweep_skips_dirty_and_deletes_the_rest() {
     let env = setup();
-    auto_delete(&env, 1, true, false);
+    auto_delete(&env, 24, true, false);
     let dirty = new_task(&env, "dirty").await;
     let scratch = Path::new(&dirty.worktree_path).join("scratch.txt");
     std::fs::write(&scratch, "wip").unwrap();
     env.daemon.archive_task(dirty.id).unwrap();
     let clean = archived_task(&env, "clean").await;
-    env.daemon.sweep_archived(later(1)).unwrap();
+    env.daemon.sweep_archived(later(24)).unwrap();
     assert!(env.daemon.task(dirty.id).unwrap().archived);
     assert_eq!(std::fs::read_to_string(&scratch).unwrap(), "wip");
     assert!(gone(&env, &clean));
@@ -1309,23 +1309,23 @@ async fn sweep_skips_dirty_and_deletes_the_rest() {
 #[tokio::test]
 async fn sweep_keeps_unmerged_branch_unless_forced() {
     let env = setup();
-    auto_delete(&env, 1, true, false);
+    auto_delete(&env, 24, true, false);
     let task = new_task(&env, "unmerged").await;
     let wt = Path::new(&task.worktree_path);
     std::fs::write(wt.join("new.txt"), "x").unwrap();
     common::commit_all(wt, "work");
     env.daemon.archive_task(task.id).unwrap();
-    env.daemon.sweep_archived(later(1)).unwrap();
+    env.daemon.sweep_archived(later(24)).unwrap();
     assert!(gone(&env, &task));
     assert!(branch_exists(&env, &task));
 
-    auto_delete(&env, 1, true, true);
+    auto_delete(&env, 24, true, true);
     let forced = new_task(&env, "unmerged forced").await;
     let wt = Path::new(&forced.worktree_path);
     std::fs::write(wt.join("new.txt"), "x").unwrap();
     common::commit_all(wt, "work");
     env.daemon.archive_task(forced.id).unwrap();
-    env.daemon.sweep_archived(later(1)).unwrap();
+    env.daemon.sweep_archived(later(24)).unwrap();
     assert!(gone(&env, &forced));
     assert!(!branch_exists(&env, &forced));
 }
@@ -1333,23 +1333,34 @@ async fn sweep_keeps_unmerged_branch_unless_forced() {
 #[tokio::test]
 async fn sweep_force_deletes_dirty_worktree() {
     let env = setup();
-    auto_delete(&env, 1, false, true);
+    auto_delete(&env, 24, false, true);
     let task = new_task(&env, "dirty forced").await;
     std::fs::write(Path::new(&task.worktree_path).join("scratch.txt"), "wip").unwrap();
     env.daemon.archive_task(task.id).unwrap();
-    env.daemon.sweep_archived(later(1)).unwrap();
+    env.daemon.sweep_archived(later(24)).unwrap();
     assert!(gone(&env, &task));
 }
 
 #[tokio::test]
 async fn sweep_skips_worktree_whose_status_cannot_be_read() {
     let env = setup();
-    auto_delete(&env, 1, false, false);
+    auto_delete(&env, 24, false, false);
     let task = new_task(&env, "unreadable").await;
     let wt = Path::new(&task.worktree_path);
     let git_dir = run_git(wt, &["rev-parse", "--absolute-git-dir"]);
     std::fs::write(Path::new(git_dir.trim()).join("index"), "garbage").unwrap();
     env.daemon.archive_task(task.id).unwrap();
+    env.daemon.sweep_archived(later(24)).unwrap();
+    assert!(env.daemon.task(task.id).unwrap().archived);
+}
+
+#[tokio::test]
+async fn sweep_counts_hours() {
+    let env = setup();
+    auto_delete(&env, 2, false, false);
+    let task = archived_task(&env, "hours").await;
     env.daemon.sweep_archived(later(1)).unwrap();
     assert!(env.daemon.task(task.id).unwrap().archived);
+    env.daemon.sweep_archived(later(2)).unwrap();
+    assert!(gone(&env, &task));
 }
