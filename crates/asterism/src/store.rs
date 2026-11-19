@@ -1016,17 +1016,15 @@ fn task_row(row: &Row) -> rusqlite::Result<Task> {
 }
 
 fn session_row(row: &Row) -> rusqlite::Result<StoredSession> {
-    let kind: SessionKind = from_text(2, row.get(2)?)?;
-    let agent_ref: Option<String> = row.get(4)?;
     Ok(StoredSession {
         session: Session {
             id: row.get(0)?,
             task_id: row.get(1)?,
-            resumable: matches!(kind, SessionKind::Agent { .. }) && agent_ref.is_some(),
-            kind,
+            kind: from_text(2, row.get(2)?)?,
             status: from_text(3, row.get(3)?)?,
+            resumable: None,
         },
-        agent_ref,
+        agent_ref: row.get(4)?,
     })
 }
 

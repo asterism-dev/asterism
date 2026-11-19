@@ -3297,12 +3297,27 @@ impl Daemon {
     }
 
     pub fn sessions(&self, task_id: Option<i64>) -> Result<Vec<Session>> {
-        Ok(self
-            .store()
-            .sessions(task_id)?
-            .into_iter()
-            .map(|s| s.session)
-            .collect())
+        let store = self.store();
+        let mut sessions = Vec::new();
+        for crate::store::StoredSession {
+            mut session,
+            agent_ref,
+        } in store.sessions(task_id)?
+        {
+            // What `recover()` resumes; a mirror resumes on its machine, which knows better.
+            session.resumable = if store.session_remote(session.id)?.is_some() {
+                None
+            } else {
+                let archived = store.task(session.task_id)?.is_none_or(|t| t.archived);
+                Some(
+                    matches!(session.kind, SessionKind::Agent { .. })
+                        && agent_ref.is_some()
+                        && !archived,
+                )
+            };
+            sessions.push(session);
+        }
+        Ok(sessions)
     }
 
     pub fn agent_config(&self, agent: &str) -> Result<AgentConfig> {

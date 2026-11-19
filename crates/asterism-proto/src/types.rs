@@ -1566,9 +1566,9 @@ pub struct Session {
     pub task_id: i64,
     pub kind: SessionKind,
     pub status: SessionStatus,
-    /// An agent with a recorded `agent_ref`, which a daemon restart resumes.
+    /// Whether a daemon restart resumes it; `None` from daemons that do not say.
     #[serde(default)]
-    pub resumable: bool,
+    pub resumable: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1849,6 +1849,7 @@ pub struct MachineTestResult {
 pub struct MachineUpdatePreview {
     pub resume: Vec<MachineSessionRef>,
     pub end: Vec<MachineSessionRef>,
+    pub exact: bool,
 }
 
 /// A machine's session by its hub ids; `session_id` is 0 for a session the hub does not mirror.

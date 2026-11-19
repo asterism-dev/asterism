@@ -173,22 +173,43 @@ impl Machines {
     /// Which of the machine's running sessions an update resumes and which it ends.
     pub async fn update_preview(&self, id: i64) -> Result<MachineUpdatePreview> {
         self.require_node()?;
-        let sessions: Vec<Session> = self
-            .call(
+        let shared = self.shared(id)?;
+        let listed = match self
+            .call::<_, Vec<Session>>(
                 id,
                 method::SESSION_LIST,
                 SessionListParams { task_id: None },
             )
-            .await?;
+            .await
+        {
+            Ok(sessions) => Some(sessions),
+            Err(_) => conn::sessions_without_hello(&shared).await,
+        };
         let daemon = self.daemon()?;
         let store = daemon.store();
-        let mut preview = MachineUpdatePreview::default();
+        let mut entries = Vec::new();
+        let Some(sessions) = listed else {
+            // Unreachable: the hub's own mirrors, with unknown resumability.
+            for task_id in store.machine_active_tasks(id)? {
+                let Some(task) = store.task(task_id)? else {
+                    continue;
+                };
+                for stored in store.sessions(Some(task_id))? {
+                    if running(stored.session.status) {
+                        let entry = MachineSessionRef {
+                            session_id: stored.session.id,
+                            task_id,
+                            task_title: task.title.clone(),
+                            kind: stored.session.kind,
+                        };
+                        entries.push((entry, None));
+                    }
+                }
+            }
+            return Ok(split_preview(entries, false));
+        };
         for session in sessions {
-            // A hibernated session is not running, so a restart neither resumes nor ends it.
-            if matches!(
-                session.status,
-                SessionStatus::Exited | SessionStatus::Hibernated
-            ) {
+            if !running(session.status) {
                 continue;
             }
             let task = match store.task_by_remote(id, session.task_id)? {
@@ -201,13 +222,9 @@ impl Machines {
                 task_title: task.map(|t| t.title).unwrap_or_default(),
                 kind: session.kind,
             };
-            if session.resumable {
-                preview.resume.push(entry);
-            } else {
-                preview.end.push(entry);
-            }
+            entries.push((entry, session.resumable));
         }
-        Ok(preview)
+        Ok(split_preview(entries, true))
     }
 
     /// Restarts the machine daemon on the current build; returns once the machine is ready on it.
@@ -220,6 +237,33 @@ impl Machines {
     pub fn client(&self, id: i64) -> Option<Arc<Client>> {
         lock(&self.live).get(&id)?.shared.client()
     }
+}
+
+/// A hibernated session is not running, so a restart neither resumes nor ends it.
+fn running(status: SessionStatus) -> bool {
+    !matches!(status, SessionStatus::Exited | SessionStatus::Hibernated)
+}
+
+/// Sessions of unknown resumability are listed under `end`, which makes the preview inexact.
+fn split_preview(
+    entries: Vec<(MachineSessionRef, Option<bool>)>,
+    from_machine: bool,
+) -> MachineUpdatePreview {
+    let mut preview = MachineUpdatePreview {
+        exact: from_machine,
+        ..Default::default()
+    };
+    for (entry, resumable) in entries {
+        match resumable {
+            Some(true) => preview.resume.push(entry),
+            Some(false) => preview.end.push(entry),
+            None => {
+                preview.exact = false;
+                preview.end.push(entry);
+            }
+        }
+    }
+    preview
 }
 
 fn machine(stored: StoredMachine) -> Machine {
@@ -246,4 +290,40 @@ fn check_destination(destination: &str) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use asterism_proto::types::{MachineSessionRef, SessionKind};
+
+    use super::split_preview;
+
+    fn entry(session_id: i64) -> MachineSessionRef {
+        MachineSessionRef {
+            session_id,
+            task_id: 1,
+            task_title: "t".into(),
+            kind: SessionKind::Agent {
+                name: "claude".into(),
+            },
+        }
+    }
+
+    #[test]
+    fn unknown_resumability_ends_and_is_not_exact() {
+        let preview = split_preview(
+            vec![
+                (entry(1), Some(true)),
+                (entry(2), None),
+                (entry(3), Some(false)),
+            ],
+            true,
+        );
+        assert_eq!(preview.resume, vec![entry(1)]);
+        assert_eq!(preview.end, vec![entry(2), entry(3)]);
+        assert!(!preview.exact);
+        let known = split_preview(vec![(entry(1), Some(true)), (entry(3), Some(false))], true);
+        assert!(known.exact);
+        assert!(!split_preview(vec![(entry(1), Some(true))], false).exact);
+    }
 }

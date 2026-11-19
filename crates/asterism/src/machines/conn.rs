@@ -93,6 +93,7 @@ struct State {
     machine: Machine,
     client: Option<Arc<Client>>,
     closed: bool,
+    installed_key: Option<String>,
     /// The caller of a running Update now, answered once the machine is ready again or the update failed.
     update: Option<oneshot::Sender<Result<(), String>>>,
 }
@@ -123,6 +124,7 @@ impl Shared {
                 machine,
                 client: None,
                 closed: false,
+                installed_key: None,
                 update: None,
             }),
             retry: Notify::new(),
@@ -261,9 +263,11 @@ pub(crate) async fn run(shared: Arc<Shared>) {
 /// Until a retry, or an Update now that stopped the blocked machine daemon.
 async fn wait_blocked(shared: &Shared) {
     loop {
+        // Biased, so a retry that arrives together with an update cannot skip stopping the daemon.
         tokio::select! {
-            _ = shared.retry.notified() => return,
+            biased;
             _ = shared.update_requested.notified() => {}
+            _ = shared.retry.notified() => return,
         }
         if shared.updating() {
             match stop_blocked(shared).await {
@@ -272,6 +276,20 @@ async fn wait_blocked(shared: &Shared) {
             }
         }
     }
+}
+
+/// `session.list` from the machine daemon while there is no ready link; it answers without `hello`.
+pub(crate) async fn sessions_without_hello(shared: &Shared) -> Option<Vec<Session>> {
+    let settings = &shared.settings;
+    let key = lock(&shared.state).installed_key.clone()?;
+    let link = Link::spawn(settings, &shared.machine().destination, &key).ok()?;
+    let sessions = tokio::time::timeout(
+        settings.health_timeout,
+        link.client
+            .call(method::SESSION_LIST, SessionListParams { task_id: None }),
+    )
+    .await;
+    sessions.ok()?.ok()
 }
 
 async fn stop_blocked(shared: &Shared) -> Result<(), Failure> {
@@ -309,6 +327,7 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
     };
     let mut upgraded = false;
     loop {
+        lock(&shared.state).installed_key = Some(key.clone());
         let (link, hello) = match Link::open(settings, &destination, &key).await {
             Ok(opened) => opened,
             Err(failure) => return failure,

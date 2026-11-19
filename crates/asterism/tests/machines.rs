@@ -3297,3 +3297,56 @@ async fn old_keys_removed_after_restart() {
     assert!(eventually_state(&d, m.id, MachineState::Ready).await);
     assert!(!machine(&d, m.id).await.status.update_available);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn update_preview_on_blocked_machine() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, task, _shell, agent, _log) = task_with_shell_and_agent(&d, &fake, dir.path()).await;
+    // The restarted daemon resumes the agent but is too old for the hub.
+    fake.set_env(
+        "ASTERISM_TEST_PROTO_VERSION",
+        &(PROTO_VERSION - 2).to_string(),
+    );
+    fake.stop_daemon();
+    assert!(eventually_state(&d, m.id, MachineState::Blocked).await);
+
+    let preview: MachineUpdatePreview = d
+        .call(
+            method::MACHINE_UPDATE_PREVIEW,
+            MachineIdParams { machine_id: m.id },
+        )
+        .await;
+
+    assert!(preview.exact, "{preview:?}");
+    assert_eq!(preview.resume, vec![session_ref(&agent, &task)]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn update_preview_of_unreachable_machine_uses_mirrors() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, task, shell, agent, _log) = task_with_shell_and_agent(&d, &fake, dir.path()).await;
+    fake.fail_with("ssh: connect to host vm port 22: Connection refused", 255);
+    fake.drop_link();
+    assert!(eventually_state(&d, m.id, MachineState::Offline).await);
+
+    let preview: MachineUpdatePreview = d
+        .call(
+            method::MACHINE_UPDATE_PREVIEW,
+            MachineIdParams { machine_id: m.id },
+        )
+        .await;
+
+    assert!(!preview.exact);
+    assert!(preview.resume.is_empty(), "{preview:?}");
+    assert!(
+        preview.end.contains(&session_ref(&shell, &task)),
+        "{preview:?}"
+    );
+    assert!(
+        preview.end.contains(&session_ref(&agent, &task)),
+        "{preview:?}"
+    );
+    fake.recover();
+}
