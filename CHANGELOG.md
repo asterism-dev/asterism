@@ -1,3 +1,9 @@
+## v0.29.0 (2026-11-19)
+
+### Feat
+
+- auto-delete archived tasks after a configurable age (#35)
+
 ## v0.28.0 (2026-11-19)
 
 ### Feat
