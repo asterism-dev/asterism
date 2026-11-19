@@ -83,6 +83,8 @@ pub struct DaemonOptions {
     /// The Tailscale CLI used for `tailscale serve`; tests inject a fake.
     pub tailscale_bin: Option<PathBuf>,
     pub role: Role,
+    pub ssh_bin: PathBuf,
+    pub machine_bins_dir: Option<PathBuf>,
 }
 
 impl Default for DaemonOptions {
@@ -101,6 +103,8 @@ impl Default for DaemonOptions {
             remote_retry: Duration::from_secs(30),
             tailscale_bin: Some(crate::remote::tailscale::default_bin()),
             role: Role::default(),
+            ssh_bin: crate::machines::install::default_ssh_bin(),
+            machine_bins_dir: crate::machines::install::default_bins_dir(),
         }
     }
 }

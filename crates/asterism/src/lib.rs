@@ -11,6 +11,7 @@ pub mod error;
 pub mod files;
 pub mod git;
 pub mod hibernate;
+pub mod machines;
 pub mod node_settings;
 pub mod paths;
 pub mod plugins;
