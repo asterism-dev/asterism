@@ -104,6 +104,32 @@ async fn clone_places_repo_under_owner_and_registers_it() {
 }
 
 #[tokio::test]
+async fn ensure_clones_once_and_reuses() {
+    let env = setup(false);
+    let url = bare_origin(env.home.path());
+    let first = env.daemon.ensure_project(&url).await.unwrap();
+    let marker = env.home.path().join("h/repos/acme/demo/marker");
+    std::fs::write(&marker, "x").unwrap();
+    let second = env.daemon.ensure_project(&url).await.unwrap();
+    assert_eq!(first.id, second.id);
+    assert!(marker.exists());
+    assert_eq!(env.daemon.projects().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn ensure_reports_unreachable_origin() {
+    let env = setup(false);
+    let err = env
+        .daemon
+        .ensure_project("file:///definitely/missing/acme/nothing.git")
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::Git);
+    assert!(env.daemon.projects().unwrap().is_empty());
+    assert!(!env.home.path().join("h/repos/acme/nothing").exists());
+}
+
+#[tokio::test]
 async fn failed_clone_removes_partial_target() {
     let env = setup(false);
     let err = env

@@ -34,7 +34,11 @@ pub enum Peer {
     Remote { device_id: i64 },
 }
 
-const REMOTE_DENIED: &[&str] = &[method::SHUTDOWN, method::SESSION_HOOK];
+const REMOTE_DENIED: &[&str] = &[
+    method::SHUTDOWN,
+    method::SESSION_HOOK,
+    method::PROJECT_ENSURE,
+];
 
 /// A leaked device token must not be able to stop the daemon, rotate itself or reach other hosts.
 fn remote_denied(method_name: &str) -> bool {
@@ -458,6 +462,11 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
                     .await?,
             )
         }
+        method::PROJECT_ENSURE => to_value(
+            daemon
+                .ensure_project(&params::<ProjectEnsureParams>(raw)?.url)
+                .await?,
+        ),
         method::PROJECT_INITIALIZE => to_value(
             daemon
                 .initialize_project(params::<ProjectIdParams>(raw)?.project_id)

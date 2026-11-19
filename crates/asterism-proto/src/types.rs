@@ -62,6 +62,7 @@ pub mod method {
     pub const NODE_CONFIG_GET: &str = "node_config.get";
     pub const NODE_CONFIG_SET: &str = "node_config.set";
     pub const PROJECT_CLONE: &str = "project.clone";
+    pub const PROJECT_ENSURE: &str = "project.ensure";
     pub const PROJECT_CREATE: &str = "project.create";
     pub const PROJECT_INITIALIZE: &str = "project.initialize";
     pub const NODE_STATS: &str = "node.stats";
@@ -805,6 +806,11 @@ pub struct ProjectCloneParams {
     pub workspace_id: Option<i64>,
     #[serde(default)]
     pub activity_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectEnsureParams {
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

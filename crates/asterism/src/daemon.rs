@@ -1639,6 +1639,25 @@ impl Daemon {
         Ok(project)
     }
 
+    fn project_with_origin(&self, url: &str) -> Result<Option<Project>> {
+        Ok(self
+            .projects()?
+            .into_iter()
+            .find(|p| git::remote_url(Path::new(&p.path), "origin").as_deref() == Some(url)))
+    }
+
+    pub async fn ensure_project(self: &Arc<Self>, url: &str) -> Result<Project> {
+        let url = url.trim();
+        if let Some(project) = self.project_with_origin(url)? {
+            return Ok(project);
+        }
+        match self.clone_project(url, None, None, None).await {
+            // A concurrent ensure may have claimed the target and registered it meanwhile.
+            Err(e) if e.kind == ErrorKind::InvalidParams => self.project_with_origin(url)?.ok_or(e),
+            result => result,
+        }
+    }
+
     pub async fn clone_copy(self: &Arc<Self>, p: ProjectCloneCopyParams) -> Result<Project> {
         let project = self
             .store()
