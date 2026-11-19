@@ -89,6 +89,7 @@ pub struct DaemonOptions {
     pub machine_health_timeout: Duration,
     pub machine_backoff_max: Duration,
     pub machine_open_deadline: Duration,
+    pub machine_call_timeout: Duration,
 }
 
 impl Default for DaemonOptions {
@@ -114,6 +115,7 @@ impl Default for DaemonOptions {
             machine_backoff_max: Duration::from_secs(30),
             // Covers a fresh ssh handshake plus `attach` spawning the daemon, which the health deadline does not.
             machine_open_deadline: Duration::from_secs(30),
+            machine_call_timeout: Duration::from_secs(30),
         }
     }
 }
@@ -257,6 +259,8 @@ impl Daemon {
                     health_timeout: options.machine_health_timeout,
                     backoff_max: options.machine_backoff_max,
                     open_deadline: options.machine_open_deadline,
+                    call_timeout: options.machine_call_timeout,
+                    daemon: daemon.clone(),
                     events: events.clone(),
                     installs: Mutex::default(),
                 },
@@ -374,7 +378,7 @@ impl Daemon {
         lock(&self.store)
     }
 
-    fn emit(&self, event: Event) {
+    pub(crate) fn emit(&self, event: Event) {
         let _ = self.events.send(event);
     }
 
@@ -2878,7 +2882,6 @@ impl Daemon {
         ));
 
         let daemon = self.clone();
-        let task_id = task.id;
         tokio::spawn(async move {
             while status_rx.changed().await.is_ok() {
                 let mut status = *status_rx.borrow_and_update();
@@ -2904,19 +2907,25 @@ impl Daemon {
                     }
                     daemon.end_subagents(id);
                 }
-                let _ = daemon.store().set_session_status(id, status);
-                daemon.emit(Event::SessionStatusChanged {
-                    session_id: id,
-                    status,
-                });
-                daemon.track_waiting(id, task_id, status);
-                daemon.touch_task(task_id);
+                daemon.apply_session_status(id, status);
                 if matches!(status, SessionStatus::Exited | SessionStatus::Hibernated) {
                     break;
                 }
             }
         });
         Ok(())
+    }
+
+    /// Records a session's new status and tells clients; shared by local sessions and machine mirrors.
+    pub(crate) fn apply_session_status(&self, session_id: i64, status: SessionStatus) {
+        let Ok(Some(stored)) = self.store().session(session_id) else {
+            return;
+        };
+        let task_id = stored.session.task_id;
+        let _ = self.store().set_session_status(session_id, status);
+        self.emit(Event::SessionStatusChanged { session_id, status });
+        self.track_waiting(session_id, task_id, status);
+        self.touch_task(task_id);
     }
 
     pub fn notifications(&self) -> Result<Vec<NotificationEntry>> {

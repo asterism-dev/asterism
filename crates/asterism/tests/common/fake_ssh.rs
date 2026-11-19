@@ -100,6 +100,23 @@ exec env -i HOME={home} PATH="$PATH" sh -c "$*"
         self.home.join(".asterism-machine")
     }
 
+    /// Stops the `asterism attach` relays of open connections, like a link that went silent.
+    pub fn pause_link(&self) {
+        self.signal_link("-STOP");
+    }
+
+    pub fn resume_link(&self) {
+        self.signal_link("-CONT");
+    }
+
+    fn signal_link(&self, signal: &str) {
+        let pattern = format!("{}/bin/.*/asterism attach", self.machine_home().display());
+        std::process::Command::new("pkill")
+            .args([signal, "-f", &pattern])
+            .status()
+            .unwrap();
+    }
+
     /// Sends `shutdown` to the machine daemon, if one is listening.
     pub fn stop_daemon(&self) {
         let socket = self.machine_home().join("asterismd.sock");

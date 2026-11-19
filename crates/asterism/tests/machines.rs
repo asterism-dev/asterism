@@ -1,10 +1,13 @@
 mod common;
 
+use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use asterism_core::daemon::DaemonOptions;
+use asterism_core::daemon::{Daemon, DaemonOptions};
 use asterism_core::machines::install::{self, InstallError};
 use asterism_core::paths::Paths;
+use asterism_core::store::Store;
 use asterism_proto::client::{Client, ClientError};
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::{method, *};
@@ -14,7 +17,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
 use tempfile::TempDir;
-use tokio::net::UnixStream;
+use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 const DEADLINE: Duration = Duration::from_secs(30);
@@ -42,14 +45,8 @@ async fn start_with_role(role: Role) -> (D, FakeSsh) {
     start(role, Duration::from_secs(30)).await
 }
 
-async fn start(role: Role, open_deadline: Duration) -> (D, FakeSsh) {
-    let fake = FakeSsh::new();
-    let home = tempfile::tempdir().unwrap();
-    let paths = Paths {
-        home: home.path().to_path_buf(),
-    };
-    let socket = paths.socket();
-    let options = DaemonOptions {
+fn options(fake: &FakeSsh, role: Role, open_deadline: Duration) -> DaemonOptions {
+    DaemonOptions {
         ssh_bin: fake.bin(),
         machine_bins_dir: Some(fake.bins_dir()),
         machine_health_interval: Duration::from_millis(200),
@@ -58,15 +55,10 @@ async fn start(role: Role, open_deadline: Duration) -> (D, FakeSsh) {
         machine_open_deadline: open_deadline,
         role,
         ..common::daemon_options()
-    };
-    tokio::spawn(asterism_core::run_with_options(paths, options));
-    for _ in 0..100 {
-        if UnixStream::connect(&socket).await.is_ok() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    let client = Client::connect_unix(&socket).await.unwrap();
+}
+
+async fn hello(client: &Client) {
     let _: HelloResult = client
         .call(
             method::HELLO,
@@ -77,7 +69,32 @@ async fn start(role: Role, open_deadline: Duration) -> (D, FakeSsh) {
         )
         .await
         .unwrap();
+}
+
+async fn subscribed_client(socket: &Path) -> Client {
+    for _ in 0..100 {
+        if UnixStream::connect(socket).await.is_ok() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let client = Client::connect_unix(socket).await.unwrap();
+    hello(&client).await;
     let _: Value = client.call(method::SUBSCRIBE, Value::Null).await.unwrap();
+    client
+}
+
+async fn start(role: Role, open_deadline: Duration) -> (D, FakeSsh) {
+    let fake = FakeSsh::new();
+    let home = tempfile::tempdir().unwrap();
+    let paths = Paths {
+        home: home.path().to_path_buf(),
+    };
+    tokio::spawn(asterism_core::run_with_options(
+        paths.clone(),
+        options(&fake, role, open_deadline),
+    ));
+    let client = subscribed_client(&paths.socket()).await;
     (
         D {
             _home: home,
@@ -85,6 +102,38 @@ async fn start(role: Role, open_deadline: Duration) -> (D, FakeSsh) {
         },
         fake,
     )
+}
+
+/// An in-process node, so tests can reach `Machines` directly.
+async fn hub(call_timeout: Duration) -> (Arc<Daemon>, D, FakeSsh) {
+    let fake = FakeSsh::new();
+    let home = tempfile::tempdir().unwrap();
+    let paths = Paths {
+        home: home.path().to_path_buf(),
+    };
+    let options = DaemonOptions {
+        machine_call_timeout: call_timeout,
+        ..options(&fake, Role::Node, DEADLINE)
+    };
+    let daemon = Daemon::with_options(paths.clone(), options).unwrap();
+    let listener = UnixListener::bind(paths.socket()).unwrap();
+    tokio::spawn(asterism_core::rpc::serve(daemon.clone(), listener));
+    let client = subscribed_client(&paths.socket()).await;
+    (
+        daemon,
+        D {
+            _home: home,
+            client,
+        },
+        fake,
+    )
+}
+
+fn hub_store(d: &D) -> Store {
+    let paths = Paths {
+        home: d._home.path().to_path_buf(),
+    };
+    Store::open(&paths.db()).unwrap()
 }
 
 async fn add_machine(d: &D, name: &str) -> Machine {
@@ -149,6 +198,7 @@ fn start_foreign_daemon(fake: &FakeSsh, role: &str) -> std::process::Child {
         .env("HOME", fake.home())
         .env("ASTERISM_HOME", fake.machine_home())
         .env("ASTERISM_ROLE", role)
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .spawn()
         .unwrap();
     let socket = fake.machine_home().join("asterismd.sock");
@@ -565,4 +615,326 @@ async fn machine_with_active_tasks_cannot_be_removed() {
     let _: Value = d
         .call(method::MACHINE_REMOVE, MachineIdParams { machine_id: m.id })
         .await;
+}
+
+/// A `file://` origin under an owner, as `project.ensure` needs.
+fn bare_origin(dir: &Path) -> String {
+    let work = dir.join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    common::init_repo(&work);
+    let bare = dir.join("remotes/acme/demo.git");
+    std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
+    common::run_git(
+        dir,
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            &work.display().to_string(),
+            &bare.display().to_string(),
+        ],
+    );
+    format!("file://{}", bare.display())
+}
+
+/// A task and a running shell created over the machine daemon's own socket; returns their ids.
+async fn remote_shell(fake: &FakeSsh, origin: &str) -> (Client, i64, i64) {
+    let client = Client::connect_unix(&fake.machine_home().join("asterismd.sock"))
+        .await
+        .unwrap();
+    hello(&client).await;
+    let project: Project = client
+        .call(
+            method::PROJECT_ENSURE,
+            ProjectEnsureParams { url: origin.into() },
+        )
+        .await
+        .unwrap();
+    let created: TaskCreateResult = client
+        .call(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id: project.id,
+                title: "remote".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let session: Session = client
+        .call(
+            method::SESSION_START,
+            SessionStartParams {
+                task_id: created.task.id,
+                kind: SessionKind::Shell,
+                prompt: None,
+            },
+        )
+        .await
+        .unwrap();
+    (client, created.task.id, session.id)
+}
+
+async fn local_project(d: &D, repo: &Path) -> i64 {
+    common::init_repo(repo);
+    let project: Project = d
+        .call(
+            method::PROJECT_ADD,
+            ProjectAddParams {
+                path: repo.display().to_string(),
+                workspace_id: None,
+            },
+        )
+        .await;
+    project.id
+}
+
+async fn hub_task(d: &D, project_id: i64, title: &str) -> i64 {
+    let created: TaskCreateResult = d
+        .call(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id,
+                title: title.into(),
+                ..Default::default()
+            },
+        )
+        .await;
+    created.task.id
+}
+
+fn session_status(d: &D, id: i64) -> SessionStatus {
+    hub_store(d).session(id).unwrap().unwrap().session.status
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn call_to_offline_machine_fails_fast() {
+    let (daemon, d, fake) = hub(DEADLINE).await;
+    fake.hang();
+    let m = daemon.machines().add("vm", "vm").unwrap();
+    let started = Instant::now();
+    let err = daemon
+        .machines()
+        .call::<_, Vec<Session>>(m.id, method::SESSION_LIST, SessionListParams::default())
+        .await
+        .unwrap_err();
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(err.kind, ErrorKind::MachineOffline);
+    assert_eq!(err.message, "machine vm is offline");
+    hello(&d.client).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hung_machine_call_times_out() {
+    let (daemon, d, fake) = hub(Duration::from_millis(500)).await;
+    let m = daemon.machines().add("vm", "vm").unwrap();
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    fake.hang();
+    fake.pause_link();
+    let started = Instant::now();
+    let result = daemon
+        .machines()
+        .call::<_, Vec<Session>>(m.id, method::SESSION_LIST, SessionListParams::default())
+        .await;
+    fake.resume_link();
+    let err = result.unwrap_err();
+    assert_eq!(err.kind, ErrorKind::Timeout, "{err}");
+    assert!(started.elapsed() < Duration::from_secs(2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn remote_status_reaches_local_mirror_with_colliding_ids() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    let dir = tempfile::tempdir().unwrap();
+    let (remote, remote_task, remote_session) = remote_shell(&fake, &bare_origin(dir.path())).await;
+    let repo = tempfile::tempdir().unwrap();
+    let project = local_project(&d, repo.path()).await;
+    let local_task = hub_task(&d, project, "local").await;
+    let local: Session = d
+        .call(
+            method::SESSION_START,
+            SessionStartParams {
+                task_id: local_task,
+                kind: SessionKind::Shell,
+                prompt: None,
+            },
+        )
+        .await;
+    assert_eq!((local.id, remote_session), (1, 1));
+    let task = hub_task(&d, project, "mirror").await;
+    let store = hub_store(&d);
+    store.set_task_remote(task, m.id, remote_task).unwrap();
+    let mirror = store
+        .insert_remote_session(
+            task,
+            remote_session,
+            &SessionKind::Shell,
+            SessionStatus::Working,
+        )
+        .unwrap();
+    let mut events = d.events();
+
+    let _: Value = remote
+        .call(
+            method::SESSION_KILL,
+            SessionIdParams {
+                session_id: remote_session,
+            },
+        )
+        .await
+        .unwrap();
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match event {
+            Event::SessionStatusChanged { session_id, status } if session_id == mirror => {
+                if status == SessionStatus::Exited {
+                    break;
+                }
+            }
+            Event::SessionStatusChanged { session_id, status } => {
+                assert!(
+                    session_id != local.id || status != SessionStatus::Exited,
+                    "local session {session_id} got {status:?}"
+                );
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(session_status(&d, mirror), SessionStatus::Exited);
+    assert_ne!(session_status(&d, local.id), SessionStatus::Exited);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reconcile_marks_vanished_sessions_exited() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    let dir = tempfile::tempdir().unwrap();
+    let (_remote, remote_task, remote_session) =
+        remote_shell(&fake, &bare_origin(dir.path())).await;
+    let repo = tempfile::tempdir().unwrap();
+    let project = local_project(&d, repo.path()).await;
+    let task = hub_task(&d, project, "mirror").await;
+    let store = hub_store(&d);
+    store.set_task_remote(task, m.id, remote_task).unwrap();
+    let mirror = store
+        .insert_remote_session(
+            task,
+            remote_session,
+            &SessionKind::Shell,
+            SessionStatus::Working,
+        )
+        .unwrap();
+    // No remote row at all: only reconcile can end it.
+    let vanished = store
+        .insert_remote_session(
+            task,
+            remote_session + 100,
+            &SessionKind::Shell,
+            SessionStatus::Idle,
+        )
+        .unwrap();
+
+    fake.stop_daemon();
+    assert!(
+        common::eventually_within(DEADLINE, || {
+            session_status(&d, mirror) == SessionStatus::Exited
+                && session_status(&d, vanished) == SessionStatus::Exited
+        })
+        .await
+    );
+}
+
+/// A daemon in the machine's home from an older install, with one shell that exits if `kill`.
+async fn foreign_daemon_with_shell(fake: &FakeSsh, kill: bool) -> std::process::Child {
+    let old = start_foreign_daemon(fake, "machine");
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _, session) = remote_shell(fake, &bare_origin(dir.path())).await;
+    if kill {
+        let _: Value = client
+            .call(
+                method::SESSION_KILL,
+                SessionIdParams {
+                    session_id: session,
+                },
+            )
+            .await
+            .unwrap();
+        let mut exited = false;
+        for _ in 0..250 {
+            let sessions: Vec<Session> = client
+                .call(method::SESSION_LIST, SessionListParams::default())
+                .await
+                .unwrap();
+            if sessions.iter().all(|s| s.status == SessionStatus::Exited) {
+                exited = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(exited);
+    }
+    old
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn idle_upgrade_ignores_exited_sessions() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let mut old = foreign_daemon_with_shell(&fake, true).await;
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    let exited = common::eventually_within(DEADLINE, || old.try_wait().unwrap().is_some()).await;
+    assert!(exited, "the old daemon was not replaced");
+    assert!(old.wait().unwrap().success());
+    assert!(!machine(&d, m.id).await.status.update_available);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sessions_present_reports_update_available() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let mut old = foreign_daemon_with_shell(&fake, false).await;
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    assert!(machine(&d, m.id).await.status.update_available);
+    assert!(old.try_wait().unwrap().is_none());
+    fake.stop_daemon();
+    old.wait().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn attach_output_streams_remote_output() {
+    let (daemon, d, fake) = hub(DEADLINE).await;
+    let m = daemon.machines().add("vm", "vm").unwrap();
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    let dir = tempfile::tempdir().unwrap();
+    let (remote, _, session) = remote_shell(&fake, &bare_origin(dir.path())).await;
+    let (_, mut output) = daemon
+        .machines()
+        .attach_output(m.id, session)
+        .await
+        .unwrap();
+    let _: Value = remote
+        .call(
+            method::SESSION_SEND,
+            SessionSendParams {
+                session_id: session,
+                text: "echo mirrored-$((40+2))".into(),
+                submit: true,
+            },
+        )
+        .await
+        .unwrap();
+    let mut seen = Vec::new();
+    while !String::from_utf8_lossy(&seen).contains("mirrored-42") {
+        let chunk = tokio::time::timeout(Duration::from_secs(10), output.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        seen.extend(chunk);
+    }
 }
