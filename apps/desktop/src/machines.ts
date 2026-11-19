@@ -1,4 +1,4 @@
-import type { Machine } from './types';
+import type { Machine, Task } from './types';
 
 export function machineStatusLine(m: Machine): string {
   const { state, platform, error, update_available } = m.status;
@@ -14,4 +14,13 @@ export function machineStatusLine(m: Machine): string {
     case 'blocked':
       return `Needs attention: ${error ?? 'unknown error'}`;
   }
+}
+
+export function taskMachine(
+  task: Task,
+  machines: Machine[],
+): { name: string; ready: boolean } | null {
+  if (task.machine_id == null) return null;
+  const m = machines.find((x) => x.id === task.machine_id);
+  return { name: m?.name ?? `machine ${task.machine_id}`, ready: m?.status.state === 'ready' };
 }

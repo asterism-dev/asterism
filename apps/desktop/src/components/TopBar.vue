@@ -26,13 +26,16 @@ import {
 } from '../dock/main';
 import { sidebar } from '../dock/sidebar';
 import { isTreeOpen, setTreeOpen } from '../fileTreeBar';
+import { taskMachine } from '../machines';
 import { withHint } from '../shortcuts';
 import { showMenu, state, taskStatus, toast } from '../store';
 import ActivityMenu from './ActivityMenu.vue';
 import OpenInButton from './OpenInButton.vue';
+import MachineBadge from './MachineBadge.vue';
 import PrBadge from './PrBadge.vue';
 
 const task = computed(() => state.tasks.find((t) => t.id === state.selectedTaskId) ?? null);
+const machine = computed(() => (task.value ? taskMachine(task.value, state.machines) : null));
 const pageProject = computed(() =>
   state.projectPage === null
     ? null
@@ -124,6 +127,7 @@ function moreMenu(e: MouseEvent) {
           >{{ task.issue.key }}</a
         >
         <PrBadge v-if="state.prs[task.id]" class="chip" :pr="state.prs[task.id]!" />
+        <MachineBadge v-if="machine" v-bind="machine" />
       </template>
     </div>
     <Popover v-model:open="activityOpen" align="end" aria-label="Activity">
@@ -133,7 +137,7 @@ function moreMenu(e: MouseEvent) {
       <template #content><ActivityMenu /></template>
     </Popover>
     <template v-if="state.projectPage === null">
-      <OpenInButton v-if="task" :path="task.worktree_path" />
+      <OpenInButton v-if="task && !machine" :path="task.worktree_path" />
       <Button
         v-if="task"
         variant="ghost"
