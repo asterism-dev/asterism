@@ -1232,30 +1232,6 @@ async fn unreachable_origin_leaves_no_task() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn agent_on_machine_is_rejected() {
-    let (d, fake) = start_with_fake_ssh().await;
-    let dir = tempfile::tempdir().unwrap();
-    let (m, project_id, _origin) = machine_and_project(&d, dir.path()).await;
-
-    let e = create_error(
-        &d,
-        TaskCreateParams {
-            project_id,
-            title: "t".into(),
-            agent: Some("claude".into()),
-            machine_id: Some(m.id),
-            ..Default::default()
-        },
-    )
-    .await;
-
-    assert_eq!(e.kind(), ErrorKind::InvalidParams);
-    assert_eq!(e.message, "agents on machines are not supported yet");
-    assert!(hub_store(&d).tasks(None, true).unwrap().is_empty());
-    assert!(machine_tasks(&fake).await.is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn slow_remote_create_within_clone_deadline_succeeds() {
     let (_daemon, d, fake) = hub(Duration::from_millis(300)).await;
     let dir = tempfile::tempdir().unwrap();
@@ -1733,31 +1709,6 @@ async fn remote_session_calls_fail_fast_when_offline() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn agent_session_on_machine_is_rejected() {
-    let (d, fake) = start_with_fake_ssh().await;
-    let dir = tempfile::tempdir().unwrap();
-    let (_m, task, _worktree) = remote_task(&d, &fake, dir.path()).await;
-
-    let e = rpc_error(
-        d.client
-            .call::<_, Session>(
-                method::SESSION_START,
-                SessionStartParams {
-                    task_id: task.id,
-                    kind: SessionKind::Agent {
-                        name: "claude".into(),
-                    },
-                    prompt: None,
-                },
-            )
-            .await,
-    );
-
-    assert_eq!(e.kind(), ErrorKind::InvalidParams);
-    assert!(hub_store(&d).sessions(Some(task.id)).unwrap().is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn unbounded_remote_wait_times_out_on_the_machine_first() {
     let (_daemon, d, fake) = hub(Duration::from_secs(2)).await;
     let dir = tempfile::tempdir().unwrap();
@@ -2162,4 +2113,226 @@ async fn agent_settings_are_pushed_to_machine() {
     let secrets =
         std::fs::read_to_string(fake.machine_home().join("secrets.toml")).unwrap_or_default();
     assert_eq!(secrets.trim(), "");
+}
+
+/// Gives the machine a login PATH with `agents` (true: a fake `claude`); returns the file the fake appends its argv to.
+fn machine_login_path(fake: &FakeSsh, dir: &Path, agents: bool) -> PathBuf {
+    let agentbin = dir.join("agentbin");
+    std::fs::create_dir_all(&agentbin).unwrap();
+    let log = dir.join("claude-argv");
+    if agents {
+        // Like Claude's own hooks: report through the machine's CLI, the stop carrying the conversation ref.
+        write_script(
+            &agentbin.join("claude"),
+            &format!(
+                "printf '%s\\n' \"$*\" >> '{}'\n\"$ASTERISM_CLI\" hook prompt-submit\nsleep 1\n\"$ASTERISM_CLI\" hook stop --agent-ref ref-1\nexec sleep 300\n",
+                log.display()
+            ),
+        );
+    }
+    let shell = dir.join("login-shell");
+    write_script(
+        &shell,
+        &format!(
+            "if [ \"$1\" = -l ]; then\n  shift\n  PATH='{}':/usr/bin:/bin\n  export PATH\nfi\nexec /bin/sh \"$@\"\n",
+            agentbin.display()
+        ),
+    );
+    fake.set_login_shell(&shell);
+    log
+}
+
+fn launches(log: &Path) -> Vec<String> {
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .map(String::from)
+        .collect()
+}
+
+fn machine_store(fake: &FakeSsh) -> Store {
+    Store::open(
+        &Paths {
+            home: fake.machine_home(),
+        }
+        .db(),
+    )
+    .unwrap()
+}
+
+async fn start_remote_agent(d: &D, task_id: i64) -> Session {
+    d.call(
+        method::SESSION_START,
+        SessionStartParams {
+            task_id,
+            kind: SessionKind::Agent {
+                name: "claude".into(),
+            },
+            prompt: None,
+        },
+    )
+    .await
+}
+
+fn machine_agent_ref(fake: &FakeSsh) -> Option<String> {
+    machine_store(fake)
+        .sessions(None)
+        .unwrap()
+        .into_iter()
+        .find_map(|s| s.agent_ref)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_session_on_machine_uses_pushed_settings() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let log = machine_login_path(&fake, &dir.path().join("login"), true);
+    let (_m, task, _worktree) = remote_task(&d, &fake, dir.path()).await;
+    let () = d
+        .call(
+            method::AGENT_CONFIG_SET,
+            AgentConfigSetParams {
+                agent: "claude".into(),
+                config: AgentConfig {
+                    args: vec!["--foo".into()],
+                    ..Default::default()
+                },
+            },
+        )
+        .await;
+
+    let session = start_remote_agent(&d, task.id).await;
+
+    assert_eq!(session.status, SessionStatus::Working);
+    assert!(common::eventually_within(DEADLINE, || !launches(&log).is_empty()).await);
+    let argv = &launches(&log)[0];
+    let settings = fake
+        .machine_home()
+        .join("plugins/data/claude/claude-settings.json");
+    assert!(argv.contains("--foo"), "{argv}");
+    assert!(
+        argv.contains(&format!("--settings {}", settings.display())),
+        "{argv}"
+    );
+    assert!(
+        common::eventually_within(DEADLINE, || session_status(&d, session.id)
+            == SessionStatus::Idle)
+        .await
+    );
+    // Only the stop hook carries the ref, so it proves the hooks drove the status.
+    assert_eq!(machine_agent_ref(&fake).as_deref(), Some("ref-1"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn task_with_agent_and_prompt_on_machine() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let log = machine_login_path(&fake, &dir.path().join("login"), true);
+    let (m, project_id, _origin) = machine_and_project(&d, dir.path()).await;
+
+    let created: TaskCreateResult = d
+        .call(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id,
+                title: "agent".into(),
+                agent: Some("claude".into()),
+                prompt: Some("hi".into()),
+                machine_id: Some(m.id),
+                issue: Some(TaskIssue {
+                    source: "linear".into(),
+                    key: "TRA-1".into(),
+                    title: "Fix parser".into(),
+                    url: "u".into(),
+                    branch: None,
+                }),
+                ..Default::default()
+            },
+        )
+        .await;
+
+    let session = created.session.expect("agent session");
+    let sessions = hub_store(&d).sessions(Some(created.task.id)).unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].session.id, session.id);
+    assert!(hub_store(&d).session_remote(session.id).unwrap().is_some());
+    assert_eq!(machine_tasks(&fake).await.len(), 1);
+    assert!(common::eventually_within(DEADLINE, || !launches(&log).is_empty()).await);
+    let argv = &launches(&log)[0];
+    assert!(argv.ends_with("-- hi"), "{argv}");
+    assert!(argv.contains("--name TRA-1 agent"), "{argv}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn machine_restart_resumes_agent() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let log = machine_login_path(&fake, &dir.path().join("login"), true);
+    let (m, task, _worktree) = remote_task(&d, &fake, dir.path()).await;
+    let session = start_remote_agent(&d, task.id).await;
+    assert!(common::eventually_within(DEADLINE, || machine_agent_ref(&fake).is_some()).await);
+
+    fake.stop_daemon();
+
+    assert!(
+        common::eventually_within(DEADLINE, || launches(&log)
+            .iter()
+            .any(|l| l.ends_with("--resume ref-1")))
+        .await,
+        "{:?}",
+        launches(&log)
+    );
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    // The resumed fake reports again; an exited mirror would never get there.
+    assert!(
+        common::eventually_within(DEADLINE, || session_status(&d, session.id)
+            == SessionStatus::Idle)
+        .await,
+        "{:?}",
+        session_status(&d, session.id)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unavailable_agent_on_machine_is_rejected() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    machine_login_path(&fake, &dir.path().join("login"), false);
+    let (m, task, _worktree) = remote_task(&d, &fake, dir.path()).await;
+    let (_, remote_id) = hub_store(&d).task_remote(task.id).unwrap().unwrap();
+
+    for agent in ["claude", "nope"] {
+        let e = rpc_error(
+            d.client
+                .call::<_, Session>(
+                    method::SESSION_START,
+                    SessionStartParams {
+                        task_id: task.id,
+                        kind: SessionKind::Agent { name: agent.into() },
+                        prompt: None,
+                    },
+                )
+                .await,
+        );
+        assert_eq!(e.kind(), ErrorKind::AgentUnavailable);
+        assert!(e.message.contains("vm"), "{}", e.message);
+
+        let e = create_error(
+            &d,
+            TaskCreateParams {
+                project_id: task.project_id,
+                title: "t".into(),
+                agent: Some(agent.into()),
+                machine_id: Some(m.id),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(e.kind(), ErrorKind::AgentUnavailable);
+        assert!(e.message.contains("vm"), "{}", e.message);
+    }
+    assert!(hub_store(&d).sessions(Some(task.id)).unwrap().is_empty());
+    assert!(machine_sessions(&fake, remote_id).await.is_empty());
+    assert_eq!(hub_store(&d).tasks(None, true).unwrap().len(), 3);
+    assert_eq!(machine_tasks(&fake).await.len(), 2);
 }
