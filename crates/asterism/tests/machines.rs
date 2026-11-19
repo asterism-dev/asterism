@@ -3134,3 +3134,166 @@ async fn uplink_register_forbidden_on_node() {
     );
     assert_eq!(err.kind(), ErrorKind::Forbidden);
 }
+
+/// Makes the hub's bundled build differ from the one the machine runs, as an app update does.
+fn new_build(fake: &FakeSsh) {
+    let plugin = fake
+        .bins_dir()
+        .join(host_platform())
+        .join("asterism-plugin-claude");
+    std::fs::remove_file(&plugin).unwrap();
+    write_script(
+        &plugin,
+        &format!(
+            "exec '{}' \"$@\"\n",
+            env!("CARGO_BIN_EXE_asterism-plugin-claude")
+        ),
+    );
+}
+
+fn installed_keys(fake: &FakeSsh) -> Vec<String> {
+    let mut keys: Vec<String> = std::fs::read_dir(fake.machine_home().join("bin"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    keys.sort();
+    keys
+}
+
+async fn eventually_update_available(d: &D, id: i64) -> bool {
+    let deadline = Instant::now() + DEADLINE;
+    while Instant::now() < deadline {
+        let status = machine(d, id).await.status;
+        if status.state == MachineState::Ready && status.update_available {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    false
+}
+
+/// A remote task with a shell and an agent whose stop hook recorded `ref-1`; returns the fake claude's argv log.
+async fn task_with_shell_and_agent(
+    d: &D,
+    fake: &FakeSsh,
+    dir: &Path,
+) -> (Machine, Task, Session, Session, PathBuf) {
+    let log = machine_login_path(fake, &dir.join("login"), true);
+    let (m, task, _worktree) = remote_task(d, fake, dir).await;
+    let shell = start_remote_shell(d, task.id).await;
+    let agent = start_remote_agent(d, task.id).await;
+    assert!(common::eventually_within(DEADLINE, || machine_agent_ref(fake).is_some()).await);
+    (m, task, shell, agent, log)
+}
+
+fn session_ref(session: &Session, task: &Task) -> MachineSessionRef {
+    MachineSessionRef {
+        session_id: session.id,
+        task_id: task.id,
+        task_title: task.title.clone(),
+        kind: session.kind.clone(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn update_preview_lists_resume_and_end() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, task, shell, agent, _log) = task_with_shell_and_agent(&d, &fake, dir.path()).await;
+
+    let preview: MachineUpdatePreview = d
+        .call(
+            method::MACHINE_UPDATE_PREVIEW,
+            MachineIdParams { machine_id: m.id },
+        )
+        .await;
+
+    assert_eq!(preview.resume, vec![session_ref(&agent, &task)]);
+    assert!(
+        preview.end.contains(&session_ref(&shell, &task)),
+        "{preview:?}"
+    );
+    // `remote_task` also started a shell directly on the machine, which the hub does not mirror.
+    assert!(preview.end.iter().any(|s| s.session_id == 0), "{preview:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn update_now_restarts_and_resumes() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, _task, shell, agent, log) = task_with_shell_and_agent(&d, &fake, dir.path()).await;
+    let old_keys = installed_keys(&fake);
+    new_build(&fake);
+    fake.drop_link();
+    assert!(eventually_update_available(&d, m.id).await);
+
+    let () = d
+        .call(method::MACHINE_UPDATE, MachineIdParams { machine_id: m.id })
+        .await;
+
+    let status = machine(&d, m.id).await.status;
+    assert_eq!(status.state, MachineState::Ready);
+    assert!(!status.update_available);
+    assert!(
+        common::eventually_within(DEADLINE, || launches(&log)
+            .iter()
+            .any(|l| l.ends_with("--resume ref-1")))
+        .await,
+        "{:?}",
+        launches(&log)
+    );
+    assert!(
+        common::eventually_within(DEADLINE, || session_status(&d, shell.id)
+            == SessionStatus::Exited)
+        .await
+    );
+    assert_ne!(session_status(&d, agent.id), SessionStatus::Exited);
+    let keys = installed_keys(&fake);
+    assert_eq!(keys.len(), 1, "{keys:?}");
+    assert!(!old_keys.contains(&keys[0]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn update_now_on_incompatible_machine() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let mut old = start_foreign_daemon_with(
+        &fake,
+        "machine",
+        &[(
+            "ASTERISM_TEST_PROTO_VERSION",
+            (PROTO_VERSION - 2).to_string(),
+        )],
+    );
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Blocked).await);
+
+    let () = d
+        .call(method::MACHINE_UPDATE, MachineIdParams { machine_id: m.id })
+        .await;
+
+    assert!(old.wait().unwrap().success());
+    let status = machine(&d, m.id).await.status;
+    assert_eq!(status.state, MachineState::Ready);
+    assert!(!status.update_available);
+    assert_eq!(status.protocol, Some(PROTO_VERSION));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn old_keys_removed_after_restart() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    let old_keys = installed_keys(&fake);
+    new_build(&fake);
+    fake.drop_link();
+
+    // Idle, so the hub restarts the machine daemon onto the new key by itself.
+    let replaced = common::eventually_within(DEADLINE, || {
+        let keys = installed_keys(&fake);
+        keys.len() == 1 && !old_keys.contains(&keys[0])
+    })
+    .await;
+    assert!(replaced, "{:?}", installed_keys(&fake));
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    assert!(!machine(&d, m.id).await.status.update_available);
+}

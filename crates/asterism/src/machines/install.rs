@@ -210,6 +210,18 @@ pub async fn ensure_installed(
     Ok(RemoteInstall { key })
 }
 
+/// Removes every install under `bin/` except `key`; only safe once no daemon or session runs from them.
+pub async fn remove_other_installs(
+    ssh: &Ssh,
+    key: &str,
+    deadline: Duration,
+) -> Result<(), InstallError> {
+    let script = r#"cd "$HOME/.asterism-machine/bin" && for d in *; do [ "$d" = "$1" ] || rm -rf "./$d"; done"#;
+    run(ssh, script, &[key], None, Some(deadline))
+        .await
+        .map(drop)
+}
+
 /// Hashes are cached per directory and recomputed only when a binary's size or mtime changes, e.g. after a dev rebuild.
 fn local_hashes(dir: &Path) -> Result<Vec<String>, InstallError> {
     type Stamps = Vec<(SystemTime, u64)>;

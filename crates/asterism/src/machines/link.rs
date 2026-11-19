@@ -22,7 +22,7 @@ use crate::lock;
 const OUTPUT_QUEUE: usize = 1024;
 
 impl Machines {
-    fn shared(&self, machine_id: i64) -> Result<Arc<Shared>> {
+    pub(super) fn shared(&self, machine_id: i64) -> Result<Arc<Shared>> {
         lock(&self.live)
             .get(&machine_id)
             .map(|live| live.shared.clone())

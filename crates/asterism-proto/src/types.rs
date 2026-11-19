@@ -115,6 +115,8 @@ pub mod method {
     pub const MACHINE_REMOVE: &str = "machine.remove";
     pub const MACHINE_RETRY: &str = "machine.retry";
     pub const MACHINE_TEST: &str = "machine.test";
+    pub const MACHINE_UPDATE: &str = "machine.update";
+    pub const MACHINE_UPDATE_PREVIEW: &str = "machine.update_preview";
     pub const UPLINK_REGISTER: &str = "uplink.register";
 }
 
@@ -1564,6 +1566,9 @@ pub struct Session {
     pub task_id: i64,
     pub kind: SessionKind,
     pub status: SessionStatus,
+    /// An agent with a recorded `agent_ref`, which a daemon restart resumes.
+    #[serde(default)]
+    pub resumable: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1838,6 +1843,21 @@ pub struct MachineTestParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MachineTestResult {
     pub platform: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MachineUpdatePreview {
+    pub resume: Vec<MachineSessionRef>,
+    pub end: Vec<MachineSessionRef>,
+}
+
+/// A machine's session by its hub ids; `session_id` is 0 for a session the hub does not mirror.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MachineSessionRef {
+    pub session_id: i64,
+    pub task_id: i64,
+    pub task_title: String,
+    pub kind: SessionKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

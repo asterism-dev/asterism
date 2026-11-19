@@ -8,7 +8,10 @@ use std::sync::{Arc, Mutex, Weak};
 
 use asterism_proto::client::Client;
 use asterism_proto::rpc::ErrorKind;
-use asterism_proto::types::{Event, Machine, MachineStatus, MachineTestResult, Role};
+use asterism_proto::types::{
+    method, Event, Machine, MachineSessionRef, MachineStatus, MachineTestResult,
+    MachineUpdatePreview, Role, Session, SessionListParams, SessionStatus,
+};
 use tokio::task::JoinHandle;
 
 use crate::daemon::Daemon;
@@ -165,6 +168,52 @@ impl Machines {
             .await
             .map_err(|failure| Error::new(ErrorKind::Internal, failure.message()))?;
         Ok(MachineTestResult { platform })
+    }
+
+    /// Which of the machine's running sessions an update resumes and which it ends.
+    pub async fn update_preview(&self, id: i64) -> Result<MachineUpdatePreview> {
+        self.require_node()?;
+        let sessions: Vec<Session> = self
+            .call(
+                id,
+                method::SESSION_LIST,
+                SessionListParams { task_id: None },
+            )
+            .await?;
+        let daemon = self.daemon()?;
+        let store = daemon.store();
+        let mut preview = MachineUpdatePreview::default();
+        for session in sessions {
+            // A hibernated session is not running, so a restart neither resumes nor ends it.
+            if matches!(
+                session.status,
+                SessionStatus::Exited | SessionStatus::Hibernated
+            ) {
+                continue;
+            }
+            let task = match store.task_by_remote(id, session.task_id)? {
+                Some(task_id) => store.task(task_id)?,
+                None => None,
+            };
+            let entry = MachineSessionRef {
+                session_id: store.session_by_remote(id, session.id)?.unwrap_or(0),
+                task_id: task.as_ref().map_or(0, |t| t.id),
+                task_title: task.map(|t| t.title).unwrap_or_default(),
+                kind: session.kind,
+            };
+            if session.resumable {
+                preview.resume.push(entry);
+            } else {
+                preview.end.push(entry);
+            }
+        }
+        Ok(preview)
+    }
+
+    /// Restarts the machine daemon on the current build; returns once the machine is ready on it.
+    pub async fn update(&self, id: i64) -> Result<()> {
+        self.require_node()?;
+        self.shared(id)?.request_update().await
     }
 
     /// The machine's connection while it is ready.

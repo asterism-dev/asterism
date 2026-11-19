@@ -427,6 +427,19 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
             daemon.set_uplink(uplink);
             Ok(Value::Null)
         }
+        method::MACHINE_UPDATE_PREVIEW => to_value(
+            daemon
+                .machines()
+                .update_preview(params::<MachineIdParams>(raw)?.machine_id)
+                .await?,
+        ),
+        method::MACHINE_UPDATE => {
+            daemon
+                .machines()
+                .update(params::<MachineIdParams>(raw)?.machine_id)
+                .await?;
+            Ok(Value::Null)
+        }
         method::MACHINE_TEST => to_value(
             daemon
                 .machines()
@@ -918,6 +931,8 @@ mod tests {
             method::REMOTE_CONFIG_SET,
             method::MACHINE_ADD,
             method::MACHINE_TEST,
+            method::MACHINE_UPDATE,
+            method::MACHINE_UPDATE_PREVIEW,
         ] {
             assert!(remote_denied(name), "{name}");
         }
