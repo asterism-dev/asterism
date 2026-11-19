@@ -1,6 +1,6 @@
 mod common;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -1182,4 +1182,376 @@ async fn slow_remote_create_within_clone_deadline_succeeds() {
     let task = created.unwrap().task;
     assert_eq!(task.machine_id, Some(m.id));
     assert_eq!(machine_tasks(&fake).await.len(), 1);
+}
+
+/// A task created on the machine; the hub's copy of its worktree path is broken so any local git/file/PTY use fails.
+async fn remote_task(d: &D, fake: &FakeSsh, dir: &Path) -> (Machine, Task, PathBuf) {
+    let (m, project_id, _origin) = machine_and_project(d, dir).await;
+    let created: TaskCreateResult = d
+        .call(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id,
+                title: "Remote".into(),
+                machine_id: Some(m.id),
+                ..Default::default()
+            },
+        )
+        .await;
+    let task = created.task;
+    let worktree = PathBuf::from(&machine_tasks(fake).await[0].worktree_path);
+    hub_store(d)
+        .set_task_location(task.id, &task.slug, &task.branch, "/nonexistent/hub-copy")
+        .unwrap();
+    (m, task, worktree)
+}
+
+async fn start_remote_shell(d: &D, task_id: i64) -> Session {
+    d.call(
+        method::SESSION_START,
+        SessionStartParams {
+            task_id,
+            kind: SessionKind::Shell,
+            prompt: None,
+        },
+    )
+    .await
+}
+
+async fn read_text(d: &D, session_id: i64) -> String {
+    let read: SessionReadResult = d
+        .call(
+            method::SESSION_READ,
+            SessionReadParams {
+                session_id,
+                lines: 50,
+            },
+        )
+        .await;
+    read.text
+}
+
+fn rpc_error<T: std::fmt::Debug>(result: Result<T, ClientError>) -> asterism_proto::rpc::RpcError {
+    match result.unwrap_err() {
+        ClientError::Rpc(e) => e,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn remote_diff_and_files_are_forwarded() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_m, task, worktree) = remote_task(&d, &fake, dir.path()).await;
+    std::fs::write(worktree.join("README.md"), "hello\nfrom-machine\n").unwrap();
+    let id = task.id;
+
+    let diff: TaskDiffResult = d
+        .call(method::TASK_DIFF, TaskIdParams { task_id: id })
+        .await;
+    assert!(diff.patch.contains("+from-machine"), "{}", diff.patch);
+    let stat: DiffStat = d
+        .call(method::TASK_DIFF_STAT, TaskIdParams { task_id: id })
+        .await;
+    assert_eq!((stat.added, stat.removed), (1, 0));
+    let entries: Vec<DirEntry> = d
+        .call(
+            method::TASK_LIST_DIR,
+            TaskListDirParams {
+                task_id: id,
+                path: String::new(),
+            },
+        )
+        .await;
+    assert!(entries.iter().any(|e| e.name == "README.md" && e.changed));
+    let file: TaskFileResult = d
+        .call(
+            method::TASK_FILE,
+            TaskFileParams {
+                task_id: id,
+                path: "README.md".into(),
+                known_mtime: None,
+            },
+        )
+        .await;
+    assert_eq!(file.content.as_deref(), Some("hello\nfrom-machine\n"));
+    let review: ReviewResult = d
+        .call(
+            method::REVIEW_GET,
+            ReviewGetParams {
+                task_id: id,
+                source: ReviewSource::Local,
+            },
+        )
+        .await;
+    assert!(review.patch.contains("+from-machine"), "{}", review.patch);
+    let commits: ReviewCommitsResult = d
+        .call(
+            method::REVIEW_COMMITS,
+            ReviewCommitsParams {
+                task_id: id,
+                source: ReviewSource::Local,
+            },
+        )
+        .await;
+    assert!(commits.uncommitted);
+    let uncommitted: TaskDiffResult = d
+        .call(
+            method::REVIEW_COMMIT_DIFF,
+            ReviewCommitDiffParams {
+                task_id: id,
+                source: ReviewSource::Local,
+                sha: None,
+            },
+        )
+        .await;
+    assert!(uncommitted.patch.contains("+from-machine"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn remote_shell_round_trip() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_m, task, _worktree) = remote_task(&d, &fake, dir.path()).await;
+    let mut events = d.events();
+
+    let session = start_remote_shell(&d, task.id).await;
+    assert_eq!(session.task_id, task.id);
+    let sessions: Vec<Session> = d
+        .call(
+            method::SESSION_LIST,
+            SessionListParams {
+                task_id: Some(task.id),
+            },
+        )
+        .await;
+    assert_eq!(
+        sessions.iter().map(|s| s.id).collect::<Vec<_>>(),
+        [session.id]
+    );
+    let remote_id = hub_store(&d).session_remote(session.id).unwrap().unwrap();
+    assert_eq!(
+        machine_client(&fake)
+            .await
+            .call::<_, Vec<Session>>(method::SESSION_LIST, SessionListParams::default())
+            .await
+            .unwrap()[0]
+            .id,
+        remote_id
+    );
+
+    let attached: SessionAttachResult = d
+        .call(
+            method::SESSION_ATTACH,
+            SessionIdParams {
+                session_id: session.id,
+            },
+        )
+        .await;
+    assert!(attached.rows > 0);
+    let waited: SessionWaitResult = d
+        .call(
+            method::SESSION_WAIT,
+            SessionWaitParams {
+                session_id: session.id,
+                until: SessionStatus::Idle,
+                timeout_ms: Some(10_000),
+            },
+        )
+        .await;
+    assert_eq!(waited.status, SessionStatus::Idle);
+    let _: Value = d
+        .call(
+            method::SESSION_SEND,
+            SessionSendParams {
+                session_id: session.id,
+                text: "echo hi-from-$((1+1))-machine".into(),
+                submit: true,
+            },
+        )
+        .await;
+    let mut seen = String::new();
+    while !seen.contains("hi-from-2-machine") {
+        let event = tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let Event::SessionOutput { session_id, data } = event {
+            assert_eq!(session_id, session.id);
+            seen.push_str(&String::from_utf8_lossy(
+                &base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data).unwrap(),
+            ));
+        }
+    }
+    assert!(read_text(&d, session.id)
+        .await
+        .contains("hi-from-2-machine"));
+    let _: Value = d
+        .call(
+            method::SESSION_RESIZE,
+            SessionResizeParams {
+                session_id: session.id,
+                rows: 30,
+                cols: 100,
+            },
+        )
+        .await;
+    let subagents: Vec<Subagent> = d
+        .call(
+            method::SESSION_SUBAGENTS,
+            SessionSubagentsParams {
+                session_id: session.id,
+            },
+        )
+        .await;
+    assert!(subagents.is_empty());
+    let _: Value = d
+        .call(
+            method::SESSION_DETACH,
+            SessionIdParams {
+                session_id: session.id,
+            },
+        )
+        .await;
+
+    let _: Value = d
+        .call(
+            method::SESSION_KILL,
+            SessionIdParams {
+                session_id: session.id,
+            },
+        )
+        .await;
+    assert!(
+        common::eventually_within(DEADLINE, || session_status(&d, session.id)
+            == SessionStatus::Exited)
+        .await
+    );
+
+    let _: Value = d
+        .call(
+            method::SESSION_REMOVE,
+            SessionIdParams {
+                session_id: session.id,
+            },
+        )
+        .await;
+    assert!(hub_store(&d).session(session.id).unwrap().is_none());
+    assert!(machine_client(&fake)
+        .await
+        .call::<_, Vec<Session>>(method::SESSION_LIST, SessionListParams::default())
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn removed_on_machine_drops_the_mirror() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_m, task, _worktree) = remote_task(&d, &fake, dir.path()).await;
+    let session = start_remote_shell(&d, task.id).await;
+    let remote_id = hub_store(&d).session_remote(session.id).unwrap().unwrap();
+
+    let _: Value = machine_client(&fake)
+        .await
+        .call(
+            method::SESSION_REMOVE,
+            SessionIdParams {
+                session_id: remote_id,
+            },
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        common::eventually_within(DEADLINE, || hub_store(&d)
+            .session(session.id)
+            .unwrap()
+            .is_none())
+        .await
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn remote_session_calls_fail_fast_when_offline() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, task, _worktree) = remote_task(&d, &fake, dir.path()).await;
+    let session = start_remote_shell(&d, task.id).await;
+
+    fake.hang();
+    fake.drop_link();
+    let deadline = Instant::now() + DEADLINE;
+    while machine(&d, m.id).await.status.state == MachineState::Ready {
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let started = Instant::now();
+    let e = rpc_error(
+        d.client
+            .call::<_, Value>(
+                method::SESSION_SEND,
+                SessionSendParams {
+                    session_id: session.id,
+                    text: "echo never-$((1+1))-sent".into(),
+                    submit: true,
+                },
+            )
+            .await,
+    );
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(e.kind(), ErrorKind::MachineOffline);
+
+    fake.recover();
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    // A loaded host can drop the fresh link on a health timeout; only the text matters here.
+    let deadline = Instant::now() + DEADLINE;
+    let text = loop {
+        let read = d
+            .client
+            .call::<_, SessionReadResult>(
+                method::SESSION_READ,
+                SessionReadParams {
+                    session_id: session.id,
+                    lines: 50,
+                },
+            )
+            .await;
+        match read {
+            Ok(read) => break read.text,
+            Err(e) if Instant::now() < deadline => {
+                eprintln!("retrying read: {e}");
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Err(e) => panic!("{e}"),
+        }
+    };
+    assert!(!text.contains("never-2-sent"), "{text}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_session_on_machine_is_rejected() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_m, task, _worktree) = remote_task(&d, &fake, dir.path()).await;
+
+    let e = rpc_error(
+        d.client
+            .call::<_, Session>(
+                method::SESSION_START,
+                SessionStartParams {
+                    task_id: task.id,
+                    kind: SessionKind::Agent {
+                        name: "claude".into(),
+                    },
+                    prompt: None,
+                },
+            )
+            .await,
+    );
+
+    assert_eq!(e.kind(), ErrorKind::InvalidParams);
+    assert!(hub_store(&d).sessions(Some(task.id)).unwrap().is_empty());
 }

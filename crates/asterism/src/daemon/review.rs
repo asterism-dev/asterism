@@ -44,7 +44,7 @@ impl ReviewCache {
 
 impl Daemon {
     /// Runs blocking work (git, mostly) off the async runtime.
-    async fn off_runtime<T: Send + 'static>(
+    pub(super) async fn off_runtime<T: Send + 'static>(
         self: &Arc<Self>,
         f: impl FnOnce(&Daemon) -> Result<T> + Send + 'static,
     ) -> Result<T> {
@@ -116,6 +116,7 @@ impl Daemon {
         let reviews_supported = pr.as_ref().is_some_and(|(_, r)| *r);
         let local_comments = self.store().review_comments(task.id)?;
         if let (ReviewSource::Pr, Some((pr, true))) = (p.source, pr.clone()) {
+            let remote = self.remote_task(task.id)?.is_some();
             let forge = self.forge_review(task.id, &pr).await?;
             let (head_sha, head_ref, base_sha) = (
                 forge.head_sha.clone(),
@@ -128,8 +129,9 @@ impl Daemon {
                     let (repo, base) = pr_range(d, &task, &head_sha, &head_ref, &base_sha)?;
                     let patch = git::diff_range(&repo, &base, &head_sha)?;
                     let wt = PathBuf::from(&task.worktree_path);
-                    let local_ahead =
-                        git::is_dirty(&wt)? || !git::resolves_to(&wt, "HEAD", &head_sha);
+                    // ponytail: a machine's worktree is not checked; forward this if remote tasks need the hint.
+                    let local_ahead = !remote
+                        && (git::is_dirty(&wt)? || !git::resolves_to(&wt, "HEAD", &head_sha));
                     Ok((patch, local_ahead))
                 })
                 .await?;
@@ -155,10 +157,7 @@ impl Daemon {
                 commit_checks,
             });
         }
-        let task_id = task.id;
-        let patch = self
-            .off_runtime(move |d| Ok(d.diff(task_id)?.patch))
-            .await?;
+        let patch = self.diff(task.id).await?.patch;
         let viewed = self.store().review_viewed(task.id)?;
         let files = review::split_patch(&patch);
         let viewed_files = viewed
@@ -207,6 +206,16 @@ impl Daemon {
                 })
                 .await;
         }
+        if let Some((machine, remote)) = self.remote_task(task.id)? {
+            let params = ReviewCommitsParams {
+                task_id: remote,
+                source: ReviewSource::Local,
+            };
+            return self
+                .machines()
+                .call(machine, method::REVIEW_COMMITS, params)
+                .await;
+        }
         self.off_runtime(move |d| {
             let wt = PathBuf::from(&task.worktree_path);
             let base = d.effective_base(&d.project_path(task.project_id)?, &task);
@@ -223,7 +232,28 @@ impl Daemon {
         p: &ReviewCommitDiffParams,
     ) -> Result<TaskDiffResult> {
         let task = self.task(p.task_id)?;
-        let wt = PathBuf::from(&task.worktree_path);
+        let remote = self.remote_task(task.id)?;
+        if let Some((machine, remote_id)) = remote {
+            let pr_backed = p.sha.is_some()
+                && p.source == ReviewSource::Pr
+                && matches!(self.review_pr(&task).await?, Some((_, true)));
+            if !pr_backed {
+                let params = ReviewCommitDiffParams {
+                    task_id: remote_id,
+                    source: ReviewSource::Local,
+                    sha: p.sha.clone(),
+                };
+                return self
+                    .machines()
+                    .call(machine, method::REVIEW_COMMIT_DIFF, params)
+                    .await;
+            }
+        }
+        // A pull request's commits are fetched into the hub's clone, which is all a machine's task has locally.
+        let wt = match remote {
+            Some(_) => self.project_path(task.project_id)?,
+            None => PathBuf::from(&task.worktree_path),
+        };
         let Some(sha) = p.sha.as_deref().map(str::to_ascii_lowercase) else {
             return self
                 .off_runtime(move |_| {
@@ -273,7 +303,26 @@ impl Daemon {
                 format!("{id} is not a blob id"),
             ));
         }
-        let wt = PathBuf::from(&self.task(p.task_id)?.worktree_path);
+        let task = self.task(p.task_id)?;
+        if let Some((machine, remote)) = self.remote_task(task.id)? {
+            let repo = self.project_path(task.project_id)?;
+            let lookup = id.clone();
+            if let Some(old) = self
+                .off_runtime(move |_| Ok(git::blob(&repo, &lookup)))
+                .await?
+            {
+                return Ok(ReviewFileContentsResult { old: Some(old) });
+            }
+            let params = ReviewFileContentsParams {
+                task_id: remote,
+                old_blob: id,
+            };
+            return self
+                .machines()
+                .call(machine, method::REVIEW_FILE_CONTENTS, params)
+                .await;
+        }
+        let wt = PathBuf::from(&task.worktree_path);
         // Only the old side: it is always in the object store, and the client derives the new side from it plus the hunks.
         self.off_runtime(move |_| {
             Ok(ReviewFileContentsResult {
@@ -302,10 +351,7 @@ impl Daemon {
                 .await;
         }
         let task = self.task(p.task_id)?;
-        let task_id = task.id;
-        let patch = self
-            .off_runtime(move |d| Ok(d.diff(task_id)?.patch))
-            .await?;
+        let patch = self.diff(task.id).await?.patch;
         let hash = review::split_patch(&patch)
             .into_iter()
             .find(|f| f.path == p.path)

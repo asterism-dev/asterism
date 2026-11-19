@@ -2,8 +2,9 @@ use std::path::Path;
 
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::{
-    method, ActivityKind, Event, IssueRef, Project, ProjectEnsureParams, Task, TaskCreateParams,
-    TaskCreateResult, TaskDeleteParams,
+    method, ActivityKind, Event, IssueRef, Project, ProjectEnsureParams, Session, SessionKind,
+    SessionStartParams, SessionStatus, SessionWaitParams, SessionWaitResult, Task,
+    TaskCreateParams, TaskCreateResult, TaskDeleteParams,
 };
 
 use super::{activity, issue_name, not_found, slugify, Daemon};
@@ -19,6 +20,102 @@ fn trimmed(value: &Option<String>) -> Option<String> {
 }
 
 impl Daemon {
+    /// The machine a task lives on and the task's id there; `None` for a local task.
+    pub(super) fn remote_task(&self, task_id: i64) -> Result<Option<(i64, i64)>> {
+        Ok(self.store().task_remote(task_id)?)
+    }
+
+    /// The machine a session runs on and the session's id there; `None` for a local session.
+    pub(crate) fn remote_session(&self, session_id: i64) -> Result<Option<(i64, i64)>> {
+        let store = self.store();
+        let Some(remote_id) = store.session_remote(session_id)? else {
+            return Ok(None);
+        };
+        let Some(stored) = store.session(session_id)? else {
+            return Ok(None);
+        };
+        Ok(store
+            .task_remote(stored.session.task_id)?
+            .map(|(machine_id, _)| (machine_id, remote_id)))
+    }
+
+    pub(super) async fn start_remote_session(
+        &self,
+        machine_id: i64,
+        remote_task: i64,
+        task_id: i64,
+        params: SessionStartParams,
+    ) -> Result<Session> {
+        if matches!(params.kind, SessionKind::Agent { .. }) {
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                "agents on machines are not supported yet",
+            ));
+        }
+        let kind = params.kind.clone();
+        let remote: Session = self
+            .machines()
+            .call(
+                machine_id,
+                method::SESSION_START,
+                SessionStartParams {
+                    task_id: remote_task,
+                    ..params
+                },
+            )
+            .await?;
+        // ponytail: a status event that beats this insert is dropped by the pump; reconcile on reconnect catches it.
+        let id = self
+            .store()
+            .insert_remote_session(task_id, remote.id, &kind, remote.status)?;
+        let session = self.session(id)?;
+        self.emit(Event::SessionChanged(session.clone()));
+        self.touch_task(task_id);
+        Ok(session)
+    }
+
+    /// `session.wait` on a machine, bounded by `machine_call_timeout`.
+    pub(super) async fn wait_remote(
+        &self,
+        machine_id: i64,
+        remote_id: i64,
+        params: SessionWaitParams,
+    ) -> Result<SessionStatus> {
+        let cap = self.options.machine_call_timeout;
+        let wait = params
+            .timeout_ms
+            .map_or(cap, |ms| std::time::Duration::from_millis(ms).min(cap));
+        let result: SessionWaitResult = self
+            .machines()
+            .call(
+                machine_id,
+                method::SESSION_WAIT,
+                SessionWaitParams {
+                    session_id: remote_id,
+                    until: params.until,
+                    timeout_ms: Some(u64::try_from(wait.as_millis()).unwrap_or(u64::MAX)),
+                },
+            )
+            .await?;
+        Ok(result.status)
+    }
+
+    /// Drops a machine session's mirror; `session.remove` and the machine's own removal event race, so only the first emits.
+    pub(crate) fn forget_remote_session(&self, id: i64) {
+        let task_id = {
+            let store = self.store();
+            let Ok(Some(stored)) = store.session(id) else {
+                return;
+            };
+            if store.delete_session(id).is_err() {
+                return;
+            }
+            stored.session.task_id
+        };
+        self.track_waiting(id, task_id, SessionStatus::Exited);
+        self.emit(Event::SessionRemoved { session_id: id });
+    }
+
     /// `task.create` for a machine: the machine clones origin, creates and pushes the branch; the hub keeps a linked row.
     pub(super) async fn create_remote_task(
         &self,

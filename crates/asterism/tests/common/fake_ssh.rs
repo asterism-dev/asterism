@@ -84,6 +84,7 @@ exec env -i HOME={home} PATH="$PATH" sh -c "$*"
 
     pub fn recover(&self) {
         let _ = std::fs::remove_file(self.root.path().join("fail"));
+        let _ = std::fs::remove_file(self.root.path().join("hang"));
     }
 
     /// Every later invocation sleeps forever, like an unreachable host.
@@ -103,6 +104,11 @@ exec env -i HOME={home} PATH="$PATH" sh -c "$*"
     /// Stops the `asterism attach` relays of open connections, like a link that went silent.
     pub fn pause_link(&self) {
         self.signal_link("-STOP");
+    }
+
+    /// Kills the relays of open connections; the machine daemon and its sessions keep running.
+    pub fn drop_link(&self) {
+        self.signal_link("-KILL");
     }
 
     pub fn resume_link(&self) {

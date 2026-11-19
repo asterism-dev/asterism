@@ -354,7 +354,13 @@ async fn worktrees_are_grouped_by_owner_and_root_changes_keep_existing_tasks() {
     );
 
     std::fs::write(Path::new(&first.worktree_path).join("new.txt"), "x\n").unwrap();
-    assert!(env.daemon.diff(first.id).unwrap().patch.contains("+x"));
+    assert!(env
+        .daemon
+        .diff(first.id)
+        .await
+        .unwrap()
+        .patch
+        .contains("+x"));
     env.daemon.delete_task(first.id, false).unwrap();
     assert!(!Path::new(&first.worktree_path).exists());
 }
@@ -842,7 +848,7 @@ async fn pruned_base_still_counts_unmerged_commits() {
         env.daemon.delete_check(task.id).unwrap().unmerged_commits,
         1
     );
-    assert!(env.daemon.diff(task.id).is_ok());
+    assert!(env.daemon.diff(task.id).await.is_ok());
 }
 
 #[tokio::test]

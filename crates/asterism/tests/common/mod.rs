@@ -34,6 +34,18 @@ pub async fn eventually(f: impl FnMut() -> bool) -> bool {
     eventually_within(Duration::from_secs(5), f).await
 }
 
+/// Like `eventually`, for checks that await.
+pub async fn eventually_async(mut f: impl AsyncFnMut() -> bool) -> bool {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline {
+        if f().await {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    f().await
+}
+
 pub async fn eventually_within(limit: Duration, mut f: impl FnMut() -> bool) -> bool {
     let deadline = tokio::time::Instant::now() + limit;
     while tokio::time::Instant::now() < deadline {

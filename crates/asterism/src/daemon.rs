@@ -2611,26 +2611,59 @@ impl Daemon {
         Ok(PathBuf::from(project.path))
     }
 
-    pub fn diff(&self, task_id: i64) -> Result<TaskDiffResult> {
-        let task = self.task(task_id)?;
-        let base = self.effective_base(&self.project_path(task.project_id)?, &task);
-        Ok(TaskDiffResult {
-            patch: git::diff(Path::new(&task.worktree_path), &base)?,
+    pub async fn diff(self: &Arc<Self>, task_id: i64) -> Result<TaskDiffResult> {
+        if let Some((machine, remote)) = self.remote_task(task_id)? {
+            let params = TaskIdParams { task_id: remote };
+            return self
+                .machines()
+                .call(machine, method::TASK_DIFF, params)
+                .await;
+        }
+        self.off_runtime(move |d| {
+            let task = d.task(task_id)?;
+            let base = d.effective_base(&d.project_path(task.project_id)?, &task);
+            Ok(TaskDiffResult {
+                patch: git::diff(Path::new(&task.worktree_path), &base)?,
+            })
         })
+        .await
     }
 
-    pub fn list_dir(&self, params: TaskListDirParams) -> Result<Vec<DirEntry>> {
-        let task = self.task(params.task_id)?;
-        let worktree = Path::new(&task.worktree_path);
-        let base = self.effective_base(&self.project_path(task.project_id)?, &task);
-        let changed = git::changed_paths(worktree, &base).unwrap_or_default();
-        files::list_dir(worktree, &params.path, &changed)
+    pub async fn list_dir(self: &Arc<Self>, params: TaskListDirParams) -> Result<Vec<DirEntry>> {
+        if let Some((machine, remote)) = self.remote_task(params.task_id)? {
+            let params = TaskListDirParams {
+                task_id: remote,
+                ..params
+            };
+            return self
+                .machines()
+                .call(machine, method::TASK_LIST_DIR, params)
+                .await;
+        }
+        self.off_runtime(move |d| {
+            let task = d.task(params.task_id)?;
+            let worktree = Path::new(&task.worktree_path);
+            let base = d.effective_base(&d.project_path(task.project_id)?, &task);
+            let changed = git::changed_paths(worktree, &base).unwrap_or_default();
+            files::list_dir(worktree, &params.path, &changed)
+        })
+        .await
     }
 
-    pub fn diff_stat(&self, task_id: i64) -> Result<DiffStat> {
-        let task = self.task(task_id)?;
-        let base = self.effective_base(&self.project_path(task.project_id)?, &task);
-        git::diff_stat(Path::new(&task.worktree_path), &base)
+    pub async fn diff_stat(self: &Arc<Self>, task_id: i64) -> Result<DiffStat> {
+        if let Some((machine, remote)) = self.remote_task(task_id)? {
+            let params = TaskIdParams { task_id: remote };
+            return self
+                .machines()
+                .call(machine, method::TASK_DIFF_STAT, params)
+                .await;
+        }
+        self.off_runtime(move |d| {
+            let task = d.task(task_id)?;
+            let base = d.effective_base(&d.project_path(task.project_id)?, &task);
+            git::diff_stat(Path::new(&task.worktree_path), &base)
+        })
+        .await
     }
 
     /// The task's base, or the project's default once that base is gone (e.g. a pruned remote branch).
@@ -2644,15 +2677,28 @@ impl Daemon {
             .unwrap_or_else(|| task.base_branch.clone())
     }
 
-    pub fn file(&self, params: TaskFileParams) -> Result<TaskFileResult> {
-        let task = self.task(params.task_id)?;
-        let home = std::env::var_os("HOME").map(PathBuf::from);
-        files::read(
-            Path::new(&task.worktree_path),
-            home.as_deref(),
-            &params.path,
-            params.known_mtime,
-        )
+    pub async fn file(self: &Arc<Self>, params: TaskFileParams) -> Result<TaskFileResult> {
+        if let Some((machine, remote)) = self.remote_task(params.task_id)? {
+            let params = TaskFileParams {
+                task_id: remote,
+                ..params
+            };
+            return self
+                .machines()
+                .call(machine, method::TASK_FILE, params)
+                .await;
+        }
+        self.off_runtime(move |d| {
+            let task = d.task(params.task_id)?;
+            let home = std::env::var_os("HOME").map(PathBuf::from);
+            files::read(
+                Path::new(&task.worktree_path),
+                home.as_deref(),
+                &params.path,
+                params.known_mtime,
+            )
+        })
+        .await
     }
 
     pub fn agent_infos(&self) -> Vec<AgentInfo> {
@@ -2759,6 +2805,11 @@ impl Daemon {
                 ErrorKind::InvalidParams,
                 format!("task {} is archived", task.id),
             ));
+        }
+        if let Some((machine, remote)) = self.remote_task(task.id)? {
+            return self
+                .start_remote_session(machine, remote, task.id, params)
+                .await;
         }
         let (argv, extra_env) = match &params.kind {
             SessionKind::Agent { name } => {
@@ -3070,6 +3121,15 @@ impl Daemon {
 
     /// Stops the session if it still runs, then forgets it entirely.
     pub async fn remove_session(&self, id: i64) -> Result<()> {
+        if let Some((machine, remote)) = self.remote_session(id)? {
+            let params = SessionIdParams { session_id: remote };
+            let () = self
+                .machines()
+                .call(machine, method::SESSION_REMOVE, params)
+                .await?;
+            self.forget_remote_session(id);
+            return Ok(());
+        }
         let _waking = self.waking.lock().await;
         let task_id = self.session(id)?.task_id;
         // Taken out first so the status forwarder sees it gone and reports nothing after `session.removed`.
@@ -3094,13 +3154,30 @@ impl Daemon {
         Ok(())
     }
 
-    pub fn kill_session(&self, id: i64) -> Result<()> {
+    pub async fn kill_session(&self, id: i64) -> Result<()> {
+        if let Some((machine, remote)) = self.remote_session(id)? {
+            let params = SessionIdParams { session_id: remote };
+            return self
+                .machines()
+                .call(machine, method::SESSION_KILL, params)
+                .await;
+        }
         let live = self.live(id)?;
         live.stopping.store(true, Ordering::Relaxed);
         Ok(live.pty.kill()?)
     }
 
     pub async fn send(self: &Arc<Self>, params: SessionSendParams) -> Result<()> {
+        if let Some((machine, remote)) = self.remote_session(params.session_id)? {
+            let params = SessionSendParams {
+                session_id: remote,
+                ..params
+            };
+            return self
+                .machines()
+                .call(machine, method::SESSION_SEND, params)
+                .await;
+        }
         let woke = self.live(params.session_id).is_err();
         let live = self.live_or_wake(params.session_id).await?;
         if woke {
@@ -3130,12 +3207,22 @@ impl Daemon {
         Ok(())
     }
 
-    pub fn resize(&self, params: SessionResizeParams) -> Result<()> {
+    pub async fn resize(&self, params: SessionResizeParams) -> Result<()> {
         if params.rows == 0 || params.cols == 0 {
             return Err(Error::new(
                 ErrorKind::InvalidParams,
                 "rows and cols must be at least 1",
             ));
+        }
+        if let Some((machine, remote)) = self.remote_session(params.session_id)? {
+            let params = SessionResizeParams {
+                session_id: remote,
+                ..params
+            };
+            return self
+                .machines()
+                .call(machine, method::SESSION_RESIZE, params)
+                .await;
         }
         Ok(self
             .live(params.session_id)?
@@ -3143,7 +3230,17 @@ impl Daemon {
             .resize(params.rows, params.cols)?)
     }
 
-    pub fn read(&self, params: SessionReadParams) -> Result<SessionReadResult> {
+    pub async fn read(&self, params: SessionReadParams) -> Result<SessionReadResult> {
+        if let Some((machine, remote)) = self.remote_session(params.session_id)? {
+            let params = SessionReadParams {
+                session_id: remote,
+                ..params
+            };
+            return self
+                .machines()
+                .call(machine, method::SESSION_READ, params)
+                .await;
+        }
         let id = params.session_id;
         let text = match self.live(id) {
             Ok(live) => live.pty.history(),
@@ -3166,6 +3263,9 @@ impl Daemon {
     }
 
     pub async fn wait(&self, params: SessionWaitParams) -> Result<SessionStatus> {
+        if let Some((machine, remote)) = self.remote_session(params.session_id)? {
+            return self.wait_remote(machine, remote, params).await;
+        }
         let mut rx = match self.live(params.session_id) {
             Ok(live) => live.status.subscribe(),
             Err(_) => return Ok(self.session(params.session_id)?.status),
@@ -3451,11 +3551,18 @@ impl Daemon {
         }
     }
 
-    pub fn subagents(&self, session_id: i64) -> Vec<Subagent> {
-        lock(&self.subagents)
+    pub async fn subagents(&self, session_id: i64) -> Result<Vec<Subagent>> {
+        if let Some((machine, remote)) = self.remote_session(session_id)? {
+            let params = SessionSubagentsParams { session_id: remote };
+            return self
+                .machines()
+                .call(machine, method::SESSION_SUBAGENTS, params)
+                .await;
+        }
+        Ok(lock(&self.subagents)
             .get(&session_id)
             .map(|s| s.list.clone())
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
 
     fn subagent_hook(&self, session_id: i64, event: HookEvent, hook: SubagentHook) {

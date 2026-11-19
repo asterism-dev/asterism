@@ -215,7 +215,7 @@ pub(super) async fn pump(
             }
             Event::SessionRemoved { session_id } => {
                 if let Some(id) = local(session_id) {
-                    daemon.emit(Event::SessionRemoved { session_id: id });
+                    daemon.forget_remote_session(id);
                 }
             }
             Event::SubagentStarted {

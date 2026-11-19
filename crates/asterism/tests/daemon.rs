@@ -7,7 +7,7 @@ use asterism_core::daemon::Daemon;
 use asterism_core::paths::Paths;
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
-use common::{eventually, init_repo, run_git};
+use common::{eventually, eventually_async, init_repo, run_git};
 use tempfile::TempDir;
 
 struct Env {
@@ -147,17 +147,18 @@ async fn session_send_read_wait_and_kill() {
         })
         .await
         .unwrap();
-    let read = |d: &Daemon| {
+    let read = async |d: &Daemon| {
         d.read(SessionReadParams {
             session_id: session.id,
             lines: 5,
         })
+        .await
         .unwrap()
         .text
     };
-    assert!(eventually(|| read(&env.daemon).contains("ping")).await);
+    assert!(eventually_async(async || read(&env.daemon).await.contains("ping")).await);
 
-    env.daemon.kill_session(session.id).unwrap();
+    env.daemon.kill_session(session.id).await.unwrap();
     let status = env
         .daemon
         .wait(SessionWaitParams {
@@ -173,7 +174,7 @@ async fn session_send_read_wait_and_kill() {
             .await
     );
     assert_eq!(
-        env.daemon.kill_session(session.id).unwrap_err().kind,
+        env.daemon.kill_session(session.id).await.unwrap_err().kind,
         ErrorKind::NotFound
     );
 }
@@ -238,14 +239,17 @@ async fn async_subagents_finish_through_their_alias() {
     ] {
         env.daemon.hook(params).unwrap();
     }
-    assert_eq!(env.daemon.subagents(id)[0].status, SubagentStatus::Running);
+    assert_eq!(
+        env.daemon.subagents(id).await.unwrap()[0].status,
+        SubagentStatus::Running
+    );
     for stop in ["unknown", "a1", "a1"] {
         env.daemon
             .hook(subagent_hook(id, HookEvent::SubagentStop, stop, false))
             .unwrap();
     }
 
-    let list = env.daemon.subagents(id);
+    let list = env.daemon.subagents(id).await.unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].id, "t1");
     assert_eq!(list[0].status, SubagentStatus::Done);
@@ -286,7 +290,7 @@ async fn subagents_are_tracked_per_session() {
         .hook(subagent_hook(id, HookEvent::SubagentStop, "nope", false))
         .unwrap();
 
-    let list = env.daemon.subagents(id);
+    let list = env.daemon.subagents(id).await.unwrap();
     assert_eq!(list.len(), 2);
     assert_eq!(list[0].status, SubagentStatus::Done);
     assert!(list[0].ended_at.is_some());
@@ -301,7 +305,7 @@ async fn subagents_are_tracked_per_session() {
         }
     }
     assert_eq!((started, updated), (2, 2));
-    assert!(env.daemon.subagents(999_999).is_empty());
+    assert!(env.daemon.subagents(999_999).await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -318,15 +322,17 @@ async fn running_subagents_end_with_their_session_and_go_with_it() {
         ))
         .unwrap();
     assert!(
-        eventually(|| env
+        eventually_async(async || env
             .daemon
             .subagents(session.id)
+            .await
+            .unwrap()
             .first()
             .is_some_and(|s| s.status == SubagentStatus::Ended))
         .await
     );
     env.daemon.remove_session(session.id).await.unwrap();
-    assert!(env.daemon.subagents(session.id).is_empty());
+    assert!(env.daemon.subagents(session.id).await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -478,7 +484,7 @@ async fn diff_shows_worktree_changes() {
         "new line\n",
     )
     .unwrap();
-    let patch = env.daemon.diff(task.id).unwrap().patch;
+    let patch = env.daemon.diff(task.id).await.unwrap().patch;
     assert!(patch.contains("+new line"), "{patch}");
 }
 
@@ -548,7 +554,7 @@ async fn restart_marks_non_resumable_sessions_exited() {
         );
     }
     assert!(announced, "recover did not announce the exited session");
-    env.daemon.kill_session(session.id).unwrap();
+    env.daemon.kill_session(session.id).await.unwrap();
 }
 
 #[tokio::test]
@@ -556,25 +562,34 @@ async fn zero_sized_resize_is_rejected() {
     let env = setup();
     let task = new_task(&env, "resize").await;
     let session = start(&env, &task, sh("echo alive; cat")).await;
-    let resize = |rows, cols| {
-        env.daemon.resize(SessionResizeParams {
-            session_id: session.id,
-            rows,
-            cols,
-        })
+    let resize = async |rows, cols| {
+        env.daemon
+            .resize(SessionResizeParams {
+                session_id: session.id,
+                rows,
+                cols,
+            })
+            .await
     };
-    assert_eq!(resize(0, 80).unwrap_err().kind, ErrorKind::InvalidParams);
-    assert_eq!(resize(24, 0).unwrap_err().kind, ErrorKind::InvalidParams);
-    let read = || {
+    assert_eq!(
+        resize(0, 80).await.unwrap_err().kind,
+        ErrorKind::InvalidParams
+    );
+    assert_eq!(
+        resize(24, 0).await.unwrap_err().kind,
+        ErrorKind::InvalidParams
+    );
+    let read = async || {
         env.daemon
             .read(SessionReadParams {
                 session_id: session.id,
                 lines: 5,
             })
+            .await
             .unwrap()
             .text
     };
-    assert!(eventually(|| read().contains("alive")).await);
+    assert!(eventually_async(async || read().await.contains("alive")).await);
 }
 
 #[tokio::test]
@@ -593,6 +608,7 @@ async fn read_includes_scrollback() {
             rows: 24,
             cols: 80,
         })
+        .await
         .unwrap();
     env.daemon
         .send(SessionSendParams {
@@ -602,17 +618,18 @@ async fn read_includes_scrollback() {
         })
         .await
         .unwrap();
-    let read = || {
+    let read = async || {
         env.daemon
             .read(SessionReadParams {
                 session_id: session.id,
                 lines: 60,
             })
+            .await
             .unwrap()
             .text
     };
-    assert!(eventually(|| read().contains("line100")).await);
-    let text = read();
+    assert!(eventually_async(async || read().await.contains("line100")).await);
+    let text = read().await;
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines.len(), 60, "{text}");
     assert_eq!(lines[0], "line41");
@@ -634,19 +651,24 @@ async fn exited_sessions_stay_readable() {
         .await
         .unwrap();
     assert_eq!(status, SessionStatus::Exited);
-    let read = || {
-        env.daemon.read(SessionReadParams {
-            session_id: session.id,
-            lines: 10,
-        })
+    let read = async || {
+        env.daemon
+            .read(SessionReadParams {
+                session_id: session.id,
+                lines: 10,
+            })
+            .await
     };
-    assert!(eventually(|| read().is_ok_and(|r| r.text.contains("done-marker"))).await);
+    assert!(
+        eventually_async(async || read().await.is_ok_and(|r| r.text.contains("done-marker"))).await
+    );
     let missing = env
         .daemon
         .read(SessionReadParams {
             session_id: session.id + 100,
             lines: 10,
         })
+        .await
         .unwrap_err();
     assert_eq!(missing.kind, ErrorKind::NotFound);
 }
@@ -699,22 +721,23 @@ async fn agent_env_policy_from_node_config_applies_to_sessions() {
         sh("echo \"foo=$FOO home=[$HOME] base=$ANTHROPIC_BASE_URL task=$ASTERISM_TASK\"; sleep 30"),
     )
     .await;
-    let read = || {
+    let read = async || {
         env.daemon
             .read(SessionReadParams {
                 session_id: session.id,
                 lines: 5,
             })
+            .await
             .unwrap()
             .text
     };
     let expected = format!("foo=bar home=[] base=http://proxy task={}", task.id);
     assert!(
-        eventually(|| read().contains(&expected)).await,
+        eventually_async(async || read().await.contains(&expected)).await,
         "{}",
-        read()
+        read().await
     );
-    env.daemon.kill_session(session.id).unwrap();
+    env.daemon.kill_session(session.id).await.unwrap();
 }
 
 #[tokio::test]
@@ -769,19 +792,20 @@ async fn shell_env_settings_reach_new_sessions() {
     env.daemon.set_agent_config("command", &config).unwrap();
     let task = new_task(&env, "settings env").await;
     let session = start(&env, &task, sh("echo \"value=$FROM_SETTINGS\"; sleep 30")).await;
-    let read = || {
+    let read = async || {
         env.daemon
             .read(SessionReadParams {
                 session_id: session.id,
                 lines: 5,
             })
+            .await
             .unwrap()
             .text
     };
     assert!(
-        eventually(|| read().contains("value=yes")).await,
+        eventually_async(async || read().await.contains("value=yes")).await,
         "{}",
-        read()
+        read().await
     );
     env.daemon.remove_session(session.id).await.unwrap();
 }
@@ -836,17 +860,18 @@ async fn remove_force_kills_stubborn_sessions() {
         sh("trap '' HUP TERM INT; echo pid=$$; while true; do sleep 1; done"),
     )
     .await;
-    let read = || {
+    let read = async || {
         env.daemon
             .read(SessionReadParams {
                 session_id: session.id,
                 lines: 5,
             })
+            .await
             .unwrap()
             .text
     };
-    assert!(eventually(|| read().contains("pid=")).await);
-    let text = read();
+    assert!(eventually_async(async || read().await.contains("pid=")).await);
+    let text = read().await;
     let pid = text
         .split("pid=")
         .nth(1)
@@ -893,7 +918,7 @@ async fn stats_cover_running_sessions_and_requested_pids() {
     assert!(entry.stats.memory_bytes > 0);
     assert_eq!(stats.processes.len(), 1);
     assert_eq!(stats.processes[0].pid, me);
-    env.daemon.kill_session(session.id).ok();
+    env.daemon.kill_session(session.id).await.ok();
 }
 
 #[tokio::test]

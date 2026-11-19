@@ -177,11 +177,21 @@ async fn handle_line(daemon: Arc<Daemon>, conn: Arc<Conn>, line: String) {
 async fn attach(daemon: &Arc<Daemon>, conn: &Conn, id: u64, raw: Value) {
     let result = async {
         let p = params::<SessionIdParams>(raw)?;
-        let (snapshot, rx) = daemon.attach(p.session_id).await?;
-        let result = SessionAttachResult {
-            snapshot: BASE64.encode(&snapshot.screen),
-            rows: snapshot.rows,
-            cols: snapshot.cols,
+        // Each attach subscribes on its own, so one connection's detach never ends another's stream.
+        let (result, rx) = match daemon.remote_session(p.session_id)? {
+            Some((machine, remote)) => {
+                let (result, rx) = daemon.machines().attach_output(machine, remote).await?;
+                (result, Output::Remote(rx))
+            }
+            None => {
+                let (snapshot, rx) = daemon.attach(p.session_id).await?;
+                let result = SessionAttachResult {
+                    snapshot: BASE64.encode(&snapshot.screen),
+                    rows: snapshot.rows,
+                    cols: snapshot.cols,
+                };
+                (result, Output::Local(rx))
+            }
         };
         Ok::<_, Error>((p.session_id, to_value(result)?, rx))
     }
@@ -533,7 +543,7 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             let p: TaskDeleteParams = params(raw)?;
             blocking(move || to_value(daemon.delete_task(p.task_id, p.delete_branch)?)).await
         }
-        method::TASK_DIFF => to_value(daemon.diff(params::<TaskIdParams>(raw)?.task_id)?),
+        method::TASK_DIFF => to_value(daemon.diff(params::<TaskIdParams>(raw)?.task_id).await?),
         method::ACTIVITY_LIST => to_value(daemon.activities()),
         method::REVIEW_GET => to_value(daemon.review_get(&params(raw)?).await?),
         method::REVIEW_SET_VIEWED => {
@@ -573,30 +583,26 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
         method::REVIEW_COMMITS => to_value(daemon.review_commits(&params(raw)?).await?),
         method::REVIEW_COMMIT_DIFF => to_value(daemon.review_commit_diff(&params(raw)?).await?),
         method::REVIEW_FILE_CONTENTS => to_value(daemon.review_file_contents(&params(raw)?).await?),
-        method::TASK_FILE => {
-            let daemon = daemon.clone();
-            let params = params::<TaskFileParams>(raw)?;
-            blocking(move || to_value(daemon.file(params)?)).await
-        }
-        method::TASK_LIST_DIR => {
-            let daemon = daemon.clone();
-            let params = params::<TaskListDirParams>(raw)?;
-            blocking(move || to_value(daemon.list_dir(params)?)).await
-        }
-        method::TASK_DIFF_STAT => {
-            let daemon = daemon.clone();
-            let task_id = params::<TaskIdParams>(raw)?.task_id;
-            blocking(move || to_value(daemon.diff_stat(task_id)?)).await
-        }
+        method::TASK_FILE => to_value(daemon.file(params(raw)?).await?),
+        method::TASK_LIST_DIR => to_value(daemon.list_dir(params(raw)?).await?),
+        method::TASK_DIFF_STAT => to_value(
+            daemon
+                .diff_stat(params::<TaskIdParams>(raw)?.task_id)
+                .await?,
+        ),
         method::SESSION_LIST => {
             to_value(daemon.sessions(params::<SessionListParams>(raw)?.task_id)?)
         }
-        method::SESSION_SUBAGENTS => {
-            to_value(daemon.subagents(params::<SessionSubagentsParams>(raw)?.session_id))
-        }
+        method::SESSION_SUBAGENTS => to_value(
+            daemon
+                .subagents(params::<SessionSubagentsParams>(raw)?.session_id)
+                .await?,
+        ),
         method::SESSION_START => to_value(daemon.start_session(params(raw)?).await?),
         method::SESSION_KILL => {
-            daemon.kill_session(params::<SessionIdParams>(raw)?.session_id)?;
+            daemon
+                .kill_session(params::<SessionIdParams>(raw)?.session_id)
+                .await?;
             Ok(Value::Null)
         }
         method::SESSION_SEND => {
@@ -604,10 +610,10 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             Ok(Value::Null)
         }
         method::SESSION_RESIZE => {
-            daemon.resize(params(raw)?)?;
+            daemon.resize(params(raw)?).await?;
             Ok(Value::Null)
         }
-        method::SESSION_READ => to_value(daemon.read(params(raw)?)?),
+        method::SESSION_READ => to_value(daemon.read(params(raw)?).await?),
         method::SESSION_WAIT => to_value(SessionWaitResult {
             status: daemon.wait(params(raw)?).await?,
         }),
@@ -674,22 +680,41 @@ async fn forward_events(mut rx: broadcast::Receiver<Event>, out: mpsc::Sender<St
     }
 }
 
-async fn forward_output(
-    session_id: i64,
-    mut rx: broadcast::Receiver<Vec<u8>>,
-    out: mpsc::Sender<String>,
-) {
-    loop {
-        let mut frame = match rx.recv().await {
-            Ok(chunk) => chunk,
-            // ponytail: lagging drops bytes and garbles the client screen until it re-attaches.
-            Err(RecvError::Lagged(_)) => continue,
-            Err(RecvError::Closed) => break,
-        };
+/// A session's output: the local PTY, or this attach's own subscriber on the session's machine.
+enum Output {
+    Local(broadcast::Receiver<Vec<u8>>),
+    Remote(mpsc::Receiver<Vec<u8>>),
+}
+
+impl Output {
+    async fn recv(&mut self) -> Option<Vec<u8>> {
+        match self {
+            Output::Local(rx) => loop {
+                match rx.recv().await {
+                    Ok(chunk) => return Some(chunk),
+                    // ponytail: lagging drops bytes and garbles the client screen until it re-attaches.
+                    Err(RecvError::Lagged(_)) => continue,
+                    Err(RecvError::Closed) => return None,
+                }
+            },
+            Output::Remote(rx) => rx.recv().await,
+        }
+    }
+
+    fn try_recv(&mut self) -> Option<Vec<u8>> {
+        match self {
+            Output::Local(rx) => rx.try_recv().ok(),
+            Output::Remote(rx) => rx.try_recv().ok(),
+        }
+    }
+}
+
+async fn forward_output(session_id: i64, mut rx: Output, out: mpsc::Sender<String>) {
+    while let Some(mut frame) = rx.recv().await {
         while frame.len() < MAX_OUTPUT_FRAME {
             match rx.try_recv() {
-                Ok(more) => frame.extend_from_slice(&more),
-                Err(_) => break,
+                Some(more) => frame.extend_from_slice(&more),
+                None => break,
             }
         }
         let event = Event::SessionOutput {
