@@ -361,7 +361,7 @@ async fn worktrees_are_grouped_by_owner_and_root_changes_keep_existing_tasks() {
         .unwrap()
         .patch
         .contains("+x"));
-    env.daemon.delete_task(first.id, false).unwrap();
+    env.daemon.delete_task(first.id, false).await.unwrap();
     assert!(!Path::new(&first.worktree_path).exists());
 }
 
@@ -845,7 +845,11 @@ async fn pruned_base_still_counts_unmerged_commits() {
     assert!(!git::resolves(Path::new(&project.path), "origin/feature"));
 
     assert_eq!(
-        env.daemon.delete_check(task.id).unwrap().unmerged_commits,
+        env.daemon
+            .delete_check(task.id)
+            .await
+            .unwrap()
+            .unmerged_commits,
         1
     );
     assert!(env.daemon.diff(task.id).await.is_ok());

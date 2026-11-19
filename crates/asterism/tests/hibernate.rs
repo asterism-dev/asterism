@@ -243,7 +243,7 @@ async fn concurrent_wakes_spawn_one_process() {
 async fn archived_task_does_not_wake() {
     let f = hibernated().await;
     let task = f.daemon.session(f.session).unwrap().task_id;
-    f.daemon.archive_task(task).unwrap();
+    f.daemon.archive_task(task).await.unwrap();
     assert!(f.daemon.attach(f.session).await.is_err());
     assert_eq!(
         f.daemon.session(f.session).unwrap().status,

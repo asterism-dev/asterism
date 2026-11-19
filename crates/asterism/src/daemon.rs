@@ -2387,23 +2387,35 @@ impl Daemon {
     }
 
     /// Stops the task's sessions; worktree, uncommitted changes and branch stay.
-    pub fn archive_task(&self, task_id: i64) -> Result<Task> {
+    pub async fn archive_task(&self, task_id: i64) -> Result<Task> {
         let task = self.task(task_id)?;
         if task.archived {
             return Ok(task);
         }
-        let sessions = self.store().sessions(Some(task_id))?;
-        for stored in sessions {
-            if let Ok(live) = self.live(stored.session.id) {
-                live.stopping.store(true, Ordering::Relaxed);
-                let _ = live.pty.kill();
-            } else if stored.session.status == SessionStatus::Hibernated {
-                self.store()
-                    .set_session_status(stored.session.id, SessionStatus::Exited)?;
-                self.emit(Event::SessionStatusChanged {
-                    session_id: stored.session.id,
-                    status: SessionStatus::Exited,
-                });
+        if let Some((machine, remote)) = self.remote_task(task_id)? {
+            // The machine kills its sessions; their mirrors turn exited through the pump.
+            let params = TaskArchiveParams {
+                task_id: remote,
+                force: false,
+            };
+            let _: Task = self
+                .machines()
+                .call(machine, method::TASK_ARCHIVE, params)
+                .await?;
+        } else {
+            let sessions = self.store().sessions(Some(task_id))?;
+            for stored in sessions {
+                if let Ok(live) = self.live(stored.session.id) {
+                    live.stopping.store(true, Ordering::Relaxed);
+                    let _ = live.pty.kill();
+                } else if stored.session.status == SessionStatus::Hibernated {
+                    self.store()
+                        .set_session_status(stored.session.id, SessionStatus::Exited)?;
+                    self.emit(Event::SessionStatusChanged {
+                        session_id: stored.session.id,
+                        status: SessionStatus::Exited,
+                    });
+                }
             }
         }
         self.store().set_task_archived(task_id)?;
@@ -2413,11 +2425,32 @@ impl Daemon {
         Ok(task)
     }
 
-    pub fn restore_task(self: &Arc<Self>, task_id: i64) -> Result<Task> {
+    pub async fn restore_task(self: &Arc<Self>, task_id: i64) -> Result<Task> {
         let task = self.task(task_id)?;
         if !task.archived {
             return Ok(task);
         }
+        if let Some((machine, remote)) = self.remote_task(task_id)? {
+            let params = TaskIdParams { task_id: remote };
+            let _: Task = self
+                .machines()
+                .call(machine, method::TASK_RESTORE, params)
+                .await?;
+        } else {
+            self.off_runtime(move |d| d.restore_worktree(&task)).await?;
+        }
+        self.store().set_task_active(task_id)?;
+        let task = self.task(task_id)?;
+        self.emit(Event::TaskChanged(task.clone()));
+        let daemon = self.clone();
+        let project_id = task.project_id;
+        tokio::spawn(async move {
+            let _ = daemon.refresh_prs(project_id).await;
+        });
+        Ok(task)
+    }
+
+    fn restore_worktree(&self, task: &Task) -> Result<()> {
         let worktree = PathBuf::from(&task.worktree_path);
         let repo = self.project_path(task.project_id)?;
         if worktree.exists() {
@@ -2442,18 +2475,22 @@ impl Daemon {
             // Tasks archived before archiving kept worktrees get theirs back from the branch.
             git::add_existing_worktree(&repo, &worktree, &task.branch)?;
         }
-        self.store().set_task_active(task_id)?;
-        let task = self.task(task_id)?;
-        self.emit(Event::TaskChanged(task.clone()));
-        let daemon = self.clone();
-        let project_id = task.project_id;
-        tokio::spawn(async move {
-            let _ = daemon.refresh_prs(project_id).await;
-        });
-        Ok(task)
+        Ok(())
     }
 
-    pub fn delete_check(&self, task_id: i64) -> Result<TaskDeleteCheck> {
+    pub async fn delete_check(self: &Arc<Self>, task_id: i64) -> Result<TaskDeleteCheck> {
+        if let Some((machine, remote)) = self.remote_task(task_id)? {
+            let params = TaskIdParams { task_id: remote };
+            return self
+                .machines()
+                .call(machine, method::TASK_DELETE_CHECK, params)
+                .await;
+        }
+        self.off_runtime(move |d| d.local_delete_check(task_id))
+            .await
+    }
+
+    fn local_delete_check(&self, task_id: i64) -> Result<TaskDeleteCheck> {
         let task = self.task(task_id)?;
         let repo = self.project_path(task.project_id)?;
         let worktree = Path::new(&task.worktree_path);
@@ -2472,7 +2509,28 @@ impl Daemon {
         })
     }
 
-    pub fn delete_task(&self, task_id: i64, delete_branch: bool) -> Result<TaskDeleteResult> {
+    pub async fn delete_task(
+        self: &Arc<Self>,
+        task_id: i64,
+        delete_branch: bool,
+    ) -> Result<TaskDeleteResult> {
+        if let Some((machine, remote)) = self.remote_task(task_id)? {
+            let params = TaskDeleteParams {
+                task_id: remote,
+                delete_branch,
+            };
+            let result: TaskDeleteResult = self
+                .machines()
+                .call(machine, method::TASK_DELETE, params)
+                .await?;
+            self.forget_task(task_id)?;
+            return Ok(result);
+        }
+        self.off_runtime(move |d| d.delete_local_task(task_id, delete_branch))
+            .await
+    }
+
+    fn delete_local_task(&self, task_id: i64, delete_branch: bool) -> Result<TaskDeleteResult> {
         let task = self.task(task_id)?;
         let repo = self.project_path(task.project_id)?;
         let sessions = self.store().sessions(Some(task_id))?;
@@ -2498,11 +2556,20 @@ impl Daemon {
                 }
             }
         }
-        let removed_notifications = {
+        self.forget_task(task_id)?;
+        Ok(TaskDeleteResult {
+            warning: (!warnings.is_empty()).then(|| warnings.join("; ")),
+        })
+    }
+
+    /// Deletes the task's rows, its sessions and notifications, and announces it.
+    fn forget_task(&self, task_id: i64) -> Result<()> {
+        let (sessions, removed_notifications) = {
             let store = self.store();
+            let sessions = store.sessions(Some(task_id))?;
             store.delete_task_sessions(task_id)?;
             store.delete_task(task_id)?;
-            store.delete_task_notifications(task_id)?
+            (sessions, store.delete_task_notifications(task_id)?)
         };
         for id in removed_notifications {
             self.emit(Event::NotificationRemoved { id });
@@ -2515,9 +2582,7 @@ impl Daemon {
         }
         self.drop_pr(task_id);
         self.emit(Event::TaskRemoved { task_id });
-        Ok(TaskDeleteResult {
-            warning: (!warnings.is_empty()).then(|| warnings.join("; ")),
-        })
+        Ok(())
     }
 
     fn worktree_sharers(&self, task: &Task) -> Result<Vec<i64>> {
@@ -3657,6 +3722,10 @@ impl Daemon {
                 session.status,
                 SessionStatus::Exited | SessionStatus::Hibernated
             ) {
+                continue;
+            }
+            // A machine session keeps running there; its mirror is reconciled when the machine reconnects.
+            if self.store().session_remote(session.id)?.is_some() {
                 continue;
             }
             let resumed = match self.task(session.task_id) {

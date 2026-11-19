@@ -368,11 +368,11 @@ async fn archive_keeps_worktree_changes_and_restore_brings_the_task_back() {
     let scratch = Path::new(&task.worktree_path).join("scratch.txt");
     std::fs::write(&scratch, "wip").unwrap();
 
-    let archived = env.daemon.archive_task(task.id).unwrap();
+    let archived = env.daemon.archive_task(task.id).await.unwrap();
     assert!(archived.archived);
     assert_eq!(std::fs::read_to_string(&scratch).unwrap(), "wip");
 
-    let restored = env.daemon.restore_task(task.id).unwrap();
+    let restored = env.daemon.restore_task(task.id).await.unwrap();
     assert!(!restored.archived);
     assert_eq!(std::fs::read_to_string(&scratch).unwrap(), "wip");
 }
@@ -381,13 +381,13 @@ async fn archive_keeps_worktree_changes_and_restore_brings_the_task_back() {
 async fn restore_recreates_a_removed_worktree_from_its_branch() {
     let env = setup();
     let task = new_task(&env, "legacy").await;
-    env.daemon.archive_task(task.id).unwrap();
+    env.daemon.archive_task(task.id).await.unwrap();
     run_git(
         env.repo.path(),
         &["worktree", "remove", "--force", &task.worktree_path],
     );
 
-    env.daemon.restore_task(task.id).unwrap();
+    env.daemon.restore_task(task.id).await.unwrap();
     assert!(Path::new(&task.worktree_path).join("README.md").exists());
 }
 
@@ -395,7 +395,7 @@ async fn restore_recreates_a_removed_worktree_from_its_branch() {
 async fn restore_fails_cleanly_without_the_branch() {
     let env = setup();
     let task = new_task(&env, "gone").await;
-    env.daemon.archive_task(task.id).unwrap();
+    env.daemon.archive_task(task.id).await.unwrap();
     run_git(
         env.repo.path(),
         &["worktree", "remove", "--force", &task.worktree_path],
@@ -403,7 +403,7 @@ async fn restore_fails_cleanly_without_the_branch() {
     run_git(env.repo.path(), &["branch", "-D", &task.branch]);
 
     assert_eq!(
-        env.daemon.restore_task(task.id).unwrap_err().kind,
+        env.daemon.restore_task(task.id).await.unwrap_err().kind,
         ErrorKind::NotFound
     );
     assert!(env.daemon.task(task.id).unwrap().archived);
@@ -413,7 +413,7 @@ async fn restore_fails_cleanly_without_the_branch() {
 async fn delete_check_reports_dirty_and_unmerged_work() {
     let env = setup();
     let task = new_task(&env, "check").await;
-    let clean = env.daemon.delete_check(task.id).unwrap();
+    let clean = env.daemon.delete_check(task.id).await.unwrap();
     assert_eq!(
         clean,
         TaskDeleteCheck {
@@ -430,7 +430,7 @@ async fn delete_check_reports_dirty_and_unmerged_work() {
     run_git(wt, &["add", "."]);
     run_git(wt, &["commit", "-qm", "work"]);
     std::fs::write(wt.join("more.txt"), "y").unwrap();
-    let busy = env.daemon.delete_check(task.id).unwrap();
+    let busy = env.daemon.delete_check(task.id).await.unwrap();
     assert!(busy.dirty);
     assert_eq!(busy.unmerged_commits, 1);
 }
@@ -442,7 +442,7 @@ async fn delete_removes_sessions_worktree_and_optionally_the_branch() {
     let session = start(&env, &keep, sh("sleep 30")).await;
     let mut events = env.daemon.subscribe();
     assert_eq!(
-        env.daemon.delete_task(keep.id, false).unwrap(),
+        env.daemon.delete_task(keep.id, false).await.unwrap(),
         TaskDeleteResult { warning: None }
     );
     assert!(!Path::new(&keep.worktree_path).exists());
@@ -460,7 +460,7 @@ async fn delete_removes_sessions_worktree_and_optionally_the_branch() {
     assert_eq!(saw, (true, true));
 
     let drop = new_task(&env, "drop branch").await;
-    env.daemon.delete_task(drop.id, true).unwrap();
+    env.daemon.delete_task(drop.id, true).await.unwrap();
     let out = std::process::Command::new("git")
         .args([
             "-C",
@@ -508,7 +508,7 @@ async fn project_with_active_tasks_cannot_be_removed() {
         env.daemon.remove_project(task.project_id).unwrap_err().kind,
         ErrorKind::InvalidParams
     );
-    env.daemon.archive_task(task.id).unwrap();
+    env.daemon.archive_task(task.id).await.unwrap();
     env.daemon.remove_project(task.project_id).unwrap();
 }
 
@@ -516,7 +516,7 @@ async fn project_with_active_tasks_cannot_be_removed() {
 async fn task_ids_are_not_reused_after_project_removal() {
     let env = setup();
     let first = new_task(&env, "again").await;
-    env.daemon.archive_task(first.id).unwrap();
+    env.daemon.archive_task(first.id).await.unwrap();
     env.daemon.remove_project(first.project_id).unwrap();
     let second = new_task(&env, "again").await;
     assert_ne!(first.branch, second.branch);
@@ -1021,14 +1021,14 @@ async fn worktree_remove_only_takes_unlinked_listed_worktrees() {
 async fn restore_refuses_an_occupied_worktree_path() {
     let env = setup();
     let task = new_task(&env, "occupied").await;
-    env.daemon.archive_task(task.id).unwrap();
+    env.daemon.archive_task(task.id).await.unwrap();
     run_git(
         env.repo.path(),
         &["worktree", "remove", "--force", &task.worktree_path],
     );
     std::fs::create_dir_all(&task.worktree_path).unwrap();
 
-    let err = env.daemon.restore_task(task.id).unwrap_err();
+    let err = env.daemon.restore_task(task.id).await.unwrap_err();
     assert_eq!(err.kind, ErrorKind::InvalidParams);
     assert!(err.message.contains(&task.worktree_path), "{}", err.message);
     assert!(env.daemon.task(task.id).unwrap().archived);
@@ -1254,7 +1254,7 @@ async fn deleting_a_task_deletes_its_notifications() {
     hook(&env, &session, HookEvent::Notification);
     let id = wait_for_entries(&env, 1).await[0].id;
     let mut events = env.daemon.subscribe();
-    env.daemon.delete_task(task.id, false).unwrap();
+    env.daemon.delete_task(task.id, false).await.unwrap();
     assert!(env.daemon.notifications().unwrap().is_empty());
     let mut removed = false;
     while let Ok(event) = events.try_recv() {

@@ -603,15 +603,11 @@ async fn machine_with_active_tasks_cannot_be_removed() {
         other => panic!("{other:?}"),
     }
 
-    let _: Task = d
-        .call(
-            method::TASK_ARCHIVE,
-            TaskArchiveParams {
-                task_id,
-                force: false,
-            },
-        )
-        .await;
+    // Archiving through the hub would ask the (fake-linked) machine; only the hub row matters here.
+    asterism_core::store::Store::open(&paths.db())
+        .unwrap()
+        .set_task_archived(task_id)
+        .unwrap();
     let _: Value = d
         .call(method::MACHINE_REMOVE, MachineIdParams { machine_id: m.id })
         .await;
@@ -1612,4 +1608,199 @@ async fn agent_session_on_machine_is_rejected() {
 
     assert_eq!(e.kind(), ErrorKind::InvalidParams);
     assert!(hub_store(&d).sessions(Some(task.id)).unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn archive_restore_delete_remote_task() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_m, task, worktree) = remote_task(&d, &fake, dir.path()).await;
+    let session = start_remote_shell(&d, task.id).await;
+    let (_, remote_id) = hub_store(&d).task_remote(task.id).unwrap().unwrap();
+    let mut events = d.events();
+
+    let archived: Task = d
+        .call(
+            method::TASK_ARCHIVE,
+            TaskArchiveParams {
+                task_id: task.id,
+                force: false,
+            },
+        )
+        .await;
+    assert!(archived.archived);
+    assert!(
+        common::eventually_within(DEADLINE, || session_status(&d, session.id)
+            == SessionStatus::Exited)
+        .await
+    );
+    let on_machine: Vec<Task> = machine_client(&fake)
+        .await
+        .call(
+            method::TASK_LIST,
+            TaskListParams {
+                include_archived: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        on_machine
+            .iter()
+            .find(|t| t.id == remote_id)
+            .unwrap()
+            .archived
+    );
+
+    let common_dir = common::run_git(&worktree, &["rev-parse", "--git-common-dir"]);
+    let repo = Path::new(common_dir.trim()).parent().unwrap().to_path_buf();
+    common::run_git(
+        &repo,
+        &[
+            "worktree",
+            "remove",
+            "--force",
+            &worktree.display().to_string(),
+        ],
+    );
+    let restored: Task = d
+        .call(method::TASK_RESTORE, TaskIdParams { task_id: task.id })
+        .await;
+    assert!(!restored.archived);
+    assert!(worktree.join("README.md").exists());
+
+    let check: TaskDeleteCheck = d
+        .call(method::TASK_DELETE_CHECK, TaskIdParams { task_id: task.id })
+        .await;
+    assert_eq!(check.branch, task.branch);
+    assert!(check.branch_exists);
+    let _: TaskDeleteResult = d
+        .call(
+            method::TASK_DELETE,
+            TaskDeleteParams {
+                task_id: task.id,
+                delete_branch: true,
+            },
+        )
+        .await;
+    assert!(!machine_tasks(&fake).await.iter().any(|t| t.id == remote_id));
+    assert!(!worktree.exists());
+    assert!(hub_store(&d).task(task.id).unwrap().is_none());
+    assert!(hub_store(&d).session(session.id).unwrap().is_none());
+    let (mut session_removed, mut task_removed) = (false, false);
+    while !(session_removed && task_removed) {
+        match tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            Event::SessionRemoved { session_id } if session_id == session.id => {
+                session_removed = true
+            }
+            Event::TaskRemoved { task_id } => {
+                assert_eq!(task_id, task.id);
+                task_removed = true;
+            }
+            _ => {}
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn lifecycle_fails_when_machine_offline() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, task, _worktree) = remote_task(&d, &fake, dir.path()).await;
+
+    fake.hang();
+    fake.drop_link();
+    let deadline = Instant::now() + DEADLINE;
+    while machine(&d, m.id).await.status.state == MachineState::Ready {
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let archive = rpc_error(
+        d.client
+            .call::<_, Task>(
+                method::TASK_ARCHIVE,
+                TaskArchiveParams {
+                    task_id: task.id,
+                    force: false,
+                },
+            )
+            .await,
+    );
+    assert_eq!(archive.kind(), ErrorKind::MachineOffline);
+    let delete = rpc_error(
+        d.client
+            .call::<_, TaskDeleteResult>(
+                method::TASK_DELETE,
+                TaskDeleteParams {
+                    task_id: task.id,
+                    delete_branch: true,
+                },
+            )
+            .await,
+    );
+    assert_eq!(delete.kind(), ErrorKind::MachineOffline);
+    let stored = hub_store(&d).task(task.id).unwrap().unwrap();
+    assert!(!stored.archived);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hub_restart_does_not_spawn_remote_sessions_locally() {
+    let (_daemon, d, fake) = hub(DEADLINE).await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_m, task, worktree) = remote_task(&d, &fake, dir.path()).await;
+    // The real machine path, so a wrongly resumed session could spawn locally.
+    hub_store(&d)
+        .set_task_location(
+            task.id,
+            &task.slug,
+            &task.branch,
+            &worktree.display().to_string(),
+        )
+        .unwrap();
+    let session = start_remote_shell(&d, task.id).await;
+    assert!(
+        common::eventually_within(DEADLINE, || session_status(&d, session.id)
+            == SessionStatus::Idle)
+        .await
+    );
+    hub_store(&d)
+        .set_session_status(session.id, SessionStatus::Working)
+        .unwrap();
+
+    let restarted = Daemon::with_options(
+        Paths {
+            home: d._home.path().to_path_buf(),
+        },
+        options(&fake, Role::Node, DEADLINE),
+    )
+    .unwrap();
+    let mut events = restarted.subscribe();
+    restarted.recover().await.unwrap();
+    assert!(restarted
+        .stats(NodeStatsParams::default())
+        .sessions
+        .is_empty());
+    assert_eq!(
+        restarted.session(session.id).unwrap().status,
+        SessionStatus::Working
+    );
+    while let Ok(event) = events.try_recv() {
+        assert!(
+            !matches!(event, Event::SessionStatusChanged { session_id, .. } if session_id == session.id),
+            "{event:?}"
+        );
+    }
+
+    restarted.machines().start_stored().unwrap();
+    assert!(
+        common::eventually_within(DEADLINE, || restarted.session(session.id).unwrap().status
+            == SessionStatus::Idle)
+        .await
+    );
 }
