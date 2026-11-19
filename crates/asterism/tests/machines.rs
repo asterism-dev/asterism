@@ -505,3 +505,64 @@ async fn machine_role_daemon_refuses_to_manage_machines() {
     assert!(matches!(retry, ClientError::Rpc(ref e) if e.kind() == ErrorKind::Forbidden));
     assert_eq!(fake.invocations(), 0);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn machine_with_active_tasks_cannot_be_removed() {
+    let (d, _fake) = start_with_fake_ssh().await;
+    let m = add_machine(&d, "vm").await;
+    let repo = tempfile::tempdir().unwrap();
+    common::init_repo(repo.path());
+    let project: Project = d
+        .call(
+            method::PROJECT_ADD,
+            ProjectAddParams {
+                path: repo.path().display().to_string(),
+                workspace_id: None,
+            },
+        )
+        .await;
+    let created: TaskCreateResult = d
+        .call(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id: project.id,
+                title: "t".into(),
+                ..Default::default()
+            },
+        )
+        .await;
+    let task_id = created.task.id;
+    let paths = Paths {
+        home: d._home.path().to_path_buf(),
+    };
+    asterism_core::store::Store::open(&paths.db())
+        .unwrap()
+        .set_task_remote(task_id, m.id, 1)
+        .unwrap();
+
+    let err = d
+        .client
+        .call::<_, Value>(method::MACHINE_REMOVE, MachineIdParams { machine_id: m.id })
+        .await
+        .unwrap_err();
+    match err {
+        ClientError::Rpc(e) => {
+            assert_eq!(e.kind(), ErrorKind::InvalidParams);
+            assert!(e.message.contains("tasks"), "{}", e.message);
+        }
+        other => panic!("{other:?}"),
+    }
+
+    let _: Task = d
+        .call(
+            method::TASK_ARCHIVE,
+            TaskArchiveParams {
+                task_id,
+                force: false,
+            },
+        )
+        .await;
+    let _: Value = d
+        .call(method::MACHINE_REMOVE, MachineIdParams { machine_id: m.id })
+        .await;
+}

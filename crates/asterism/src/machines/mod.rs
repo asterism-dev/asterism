@@ -110,6 +110,13 @@ impl Machines {
     }
 
     pub fn remove(&self, id: i64) -> Result<()> {
+        let active = self.daemon()?.store().machine_active_tasks(id)?;
+        if !active.is_empty() {
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                format!("machine {id} still has {} active tasks", active.len()),
+            ));
+        }
         if !self.daemon()?.store().remove_machine(id)? {
             return Err(Error::new(
                 ErrorKind::NotFound,

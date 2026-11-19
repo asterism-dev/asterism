@@ -106,12 +106,15 @@ const MIGRATIONS: &[&str] = &[
         destination TEXT NOT NULL,
         created_at INTEGER NOT NULL DEFAULT 0
      );",
+    "ALTER TABLE tasks ADD COLUMN machine_id INTEGER;
+     ALTER TABLE tasks ADD COLUMN remote_id INTEGER;
+     ALTER TABLE sessions ADD COLUMN remote_id INTEGER;",
 ];
 
 const PROJECT_COLUMNS: &str = "id, name, path, created_at, default_base, workspace_id";
 const WORKSPACE_COLUMNS: &str = "id, name, label, position, repos, worktrees, color";
 const TASK_COLUMNS: &str =
-    "id, project_id, title, slug, branch, base_branch, worktree_path, prompt, archived, created_at, last_activity_at, issue_source, issue_key, issue_url";
+    "id, project_id, title, slug, branch, base_branch, worktree_path, prompt, archived, created_at, last_activity_at, issue_source, issue_key, issue_url, machine_id";
 const SESSION_COLUMNS: &str = "id, task_id, kind, status, agent_ref";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -348,6 +351,52 @@ impl Store {
         Ok(self.conn.last_insert_rowid())
     }
 
+    pub fn set_task_remote(
+        &self,
+        task_id: i64,
+        machine_id: i64,
+        remote_id: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE tasks SET machine_id = ?2, remote_id = ?3 WHERE id = ?1",
+            params![task_id, machine_id, remote_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn task_remote(&self, task_id: i64) -> rusqlite::Result<Option<(i64, i64)>> {
+        let linked = self
+            .conn
+            .query_row(
+                "SELECT machine_id, remote_id FROM tasks WHERE id = ?1",
+                [task_id],
+                |row| Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, Option<i64>>(1)?)),
+            )
+            .optional()?;
+        Ok(match linked {
+            Some((Some(machine_id), Some(remote_id))) => Some((machine_id, remote_id)),
+            _ => None,
+        })
+    }
+
+    pub fn task_by_remote(&self, machine_id: i64, remote_id: i64) -> rusqlite::Result<Option<i64>> {
+        self.conn
+            .query_row(
+                "SELECT id FROM tasks WHERE machine_id = ?1 AND remote_id = ?2",
+                [machine_id, remote_id],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    pub fn machine_active_tasks(&self, machine_id: i64) -> rusqlite::Result<Vec<i64>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM tasks WHERE machine_id = ?1 AND archived = 0 ORDER BY id")?;
+        let rows = stmt.query_map([machine_id], |row| row.get(0))?;
+        rows.collect()
+    }
+
     pub fn set_task_issue(&self, id: i64, issue: &IssueRef) -> rusqlite::Result<()> {
         self.conn.execute(
             "UPDATE tasks SET issue_source = ?2, issue_key = ?3, issue_url = ?4 WHERE id = ?1",
@@ -560,6 +609,47 @@ impl Store {
             params![task_id, to_text(kind), to_text(&status)],
         )?;
         Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn insert_remote_session(
+        &self,
+        task_id: i64,
+        remote_id: i64,
+        kind: &SessionKind,
+        status: SessionStatus,
+    ) -> rusqlite::Result<i64> {
+        self.conn.execute(
+            "INSERT INTO sessions (task_id, kind, status, remote_id) VALUES (?1, ?2, ?3, ?4)",
+            params![task_id, to_text(kind), to_text(&status), remote_id],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn session_remote(&self, session_id: i64) -> rusqlite::Result<Option<i64>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT remote_id FROM sessions WHERE id = ?1",
+                [session_id],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    pub fn session_by_remote(
+        &self,
+        machine_id: i64,
+        remote_id: i64,
+    ) -> rusqlite::Result<Option<i64>> {
+        self.conn
+            .query_row(
+                "SELECT sessions.id FROM sessions JOIN tasks ON tasks.id = sessions.task_id
+                 WHERE tasks.machine_id = ?1 AND sessions.remote_id = ?2",
+                [machine_id, remote_id],
+                |row| row.get(0),
+            )
+            .optional()
     }
 
     pub fn set_session_status(&self, id: i64, status: SessionStatus) -> rusqlite::Result<()> {
@@ -881,6 +971,7 @@ fn task_row(row: &Row) -> rusqlite::Result<Task> {
             (Some(source), Some(key), Some(url)) => Some(IssueRef { source, key, url }),
             _ => None,
         },
+        machine_id: row.get(14)?,
     })
 }
 
@@ -949,6 +1040,26 @@ mod tests {
         store
             .insert_notification("test", Some(task_id), None, None, None)
             .unwrap()
+    }
+
+    #[test]
+    fn remote_links_round_trip() {
+        let store = Store::open_in_memory().unwrap();
+        let t = store.insert_task(1, "t", None, "main").unwrap();
+        assert_eq!(store.task_remote(t).unwrap(), None);
+        store.set_task_remote(t, 7, 42).unwrap();
+        assert_eq!(store.task_remote(t).unwrap(), Some((7, 42)));
+        assert_eq!(store.task_by_remote(7, 42).unwrap(), Some(t));
+        assert_eq!(store.task_by_remote(8, 42).unwrap(), None);
+        assert_eq!(store.machine_active_tasks(7).unwrap(), vec![t]);
+        let s = store
+            .insert_remote_session(t, 3, &SessionKind::Shell, SessionStatus::Working)
+            .unwrap();
+        assert_eq!(store.session_by_remote(7, 3).unwrap(), Some(s));
+        assert_eq!(store.session_by_remote(8, 3).unwrap(), None);
+        assert_eq!(store.session_remote(s).unwrap(), Some(3));
+        store.set_task_archived(t).unwrap();
+        assert!(store.machine_active_tasks(7).unwrap().is_empty());
     }
 
     #[test]

@@ -848,6 +848,8 @@ pub struct Task {
     pub last_activity_at: i64,
     #[serde(default)]
     pub issue: Option<IssueRef>,
+    #[serde(default)]
+    pub machine_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -893,6 +895,8 @@ pub struct TaskCreateParams {
     pub on_conflict: Option<OnConflict>,
     #[serde(default)]
     pub activity_token: Option<String>,
+    #[serde(default)]
+    pub machine_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
