@@ -258,6 +258,7 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
             state.machine.status.state = MachineState::Ready;
             state.machine.status.error = None;
             state.machine.status.update_available = update_available;
+            state.machine.status.agents = hello.agents;
             state.client = Some(client);
         });
         return link.supervise(settings).await;

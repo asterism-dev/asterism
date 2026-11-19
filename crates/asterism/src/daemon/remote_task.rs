@@ -1,15 +1,20 @@
+use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::{
-    method, ActivityKind, Event, IssueRef, Project, ProjectEnsureParams, Session, SessionKind,
-    SessionListParams, SessionStartParams, SessionStatus, SessionWaitParams, SessionWaitResult,
-    Task, TaskCreateParams, TaskCreateResult, TaskDeleteParams,
+    method, ActivityKind, AgentConfigSetParams, Event, IssueRef, PluginSetSettingsParams, Project,
+    ProjectEnsureParams, Session, SessionKind, SessionListParams, SessionStartParams,
+    SessionStatus, SessionWaitParams, SessionWaitResult, Task, TaskCreateParams, TaskCreateResult,
+    TaskDeleteParams,
 };
 
 use super::{activity, issue_name, not_found, slugify, Daemon};
 use crate::error::{Error, Result};
 use crate::git;
+use crate::plugins::settings;
+use serde_json::Value;
 
 fn trimmed(value: &Option<String>) -> Option<String> {
     value
@@ -20,6 +25,40 @@ fn trimmed(value: &Option<String>) -> Option<String> {
 }
 
 impl Daemon {
+    /// Copies the hub's settings for `agent` to the machine; secret plugin settings stay behind.
+    pub async fn push_agent_settings(self: &Arc<Self>, machine_id: i64, agent: &str) -> Result<()> {
+        let plugin = self
+            .agent_infos()
+            .into_iter()
+            .find(|a| a.name == agent)
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::NotFound,
+                    format!("agent {agent} is not installed"),
+                )
+            })?
+            .plugin;
+        let values: BTreeMap<String, Value> =
+            settings::non_secret_values(self.paths(), &plugin, &self.plugin_schema(&plugin)?)?
+                .into_iter()
+                .collect();
+        let params = AgentConfigSetParams {
+            agent: agent.into(),
+            config: self.agent_config(agent)?,
+        };
+        let () = self
+            .machines()
+            .call(machine_id, method::AGENT_CONFIG_SET, params)
+            .await?;
+        let params = PluginSetSettingsParams {
+            name: plugin,
+            values,
+        };
+        self.machines()
+            .call(machine_id, method::PLUGIN_SET_SETTINGS, params)
+            .await
+    }
+
     /// The machine a task lives on and the task's id there; `None` for a local task.
     pub(super) fn remote_task(&self, task_id: i64) -> Result<Option<(i64, i64)>> {
         Ok(self.store().task_remote(task_id)?)

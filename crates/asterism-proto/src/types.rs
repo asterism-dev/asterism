@@ -1802,6 +1802,8 @@ pub struct MachineStatus {
     pub platform: Option<String>,
     pub error: Option<String>,
     pub update_available: bool,
+    #[serde(default)]
+    pub agents: Vec<AgentInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

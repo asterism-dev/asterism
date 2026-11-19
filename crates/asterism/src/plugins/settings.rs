@@ -85,6 +85,20 @@ pub fn resolved(paths: &Paths, plugin: &str, schema: &[SettingSpec]) -> Result<M
     Ok(values)
 }
 
+/// Like `resolved`, but never reads or returns a `Secret` setting.
+pub fn non_secret_values(
+    paths: &Paths,
+    plugin: &str,
+    schema: &[SettingSpec],
+) -> Result<Map<String, Value>> {
+    let open: Vec<SettingSpec> = schema
+        .iter()
+        .filter(|s| s.kind != SettingType::Secret)
+        .cloned()
+        .collect();
+    resolved(paths, plugin, &open)
+}
+
 pub fn view(paths: &Paths, plugin: &str, schema: &[SettingSpec]) -> Result<PluginSettings> {
     let is_secret = |key: &str| {
         schema
@@ -218,6 +232,21 @@ mod tests {
 
     fn updates(value: serde_json::Value) -> BTreeMap<String, Value> {
         serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn non_secret_values_drop_secrets() {
+        let (_dir, paths) = temp_paths();
+        save(
+            &paths,
+            "echo",
+            &schema(),
+            &updates(json!({"token": "hunter2", "verbose": true})),
+        )
+        .unwrap();
+        let values = non_secret_values(&paths, "echo", &schema()).unwrap();
+        assert!(!values.contains_key("token"));
+        assert_eq!(values.get("verbose"), Some(&json!(true)));
     }
 
     #[test]

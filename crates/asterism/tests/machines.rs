@@ -2076,3 +2076,90 @@ async fn hub_restart_does_not_spawn_remote_sessions_locally() {
         .await
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn machine_status_lists_machine_agents() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let agentbin = tmp.path().join("agentbin");
+    std::fs::create_dir(&agentbin).unwrap();
+    write_script(&agentbin.join("claude"), "exit 0\n");
+    let shell = tmp.path().join("login-shell");
+    write_script(
+        &shell,
+        &format!(
+            "if [ \"$1\" = -l ]; then\n  shift\n  PATH='{}':\"$PATH\"\n  export PATH\nfi\nexec /bin/sh \"$@\"\n",
+            agentbin.display()
+        ),
+    );
+    fake.set_login_shell(&shell);
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    let agents = machine(&d, m.id).await.status.agents;
+    assert!(
+        agents.iter().any(|a| a.name == "claude" && a.available),
+        "{agents:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_settings_are_pushed_to_machine() {
+    let (daemon, d, fake) = hub(DEADLINE).await;
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+
+    let config = AgentConfig {
+        args: vec!["--foo".into()],
+        mcp: Some(serde_json::json!({"mcpServers": {"x": {"command": "x"}}})),
+        hooks: Some(serde_json::json!({"hooks": {"Stop": []}})),
+        ..Default::default()
+    };
+    let () = d
+        .call(
+            method::AGENT_CONFIG_SET,
+            AgentConfigSetParams {
+                agent: "claude".into(),
+                config: config.clone(),
+            },
+        )
+        .await;
+    let () = d
+        .call(
+            method::PLUGIN_SET_SETTINGS,
+            PluginSetSettingsParams {
+                name: "claude".into(),
+                values: [("trust_workspaces".to_string(), Value::Bool(true))].into(),
+            },
+        )
+        .await;
+    daemon.push_agent_settings(m.id, "claude").await.unwrap();
+
+    let client = machine_client(&fake).await;
+    let pushed: AgentConfig = client
+        .call(
+            method::AGENT_CONFIG_GET,
+            AgentParams {
+                agent: "claude".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(pushed, config);
+    let settings: PluginSettings = client
+        .call(
+            method::PLUGIN_SETTINGS,
+            PluginNameParams {
+                name: "claude".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        settings.values.get("trust_workspaces"),
+        Some(&Value::Bool(true))
+    );
+    // `save` always writes the file, so assert it holds nothing rather than that it is absent.
+    let secrets =
+        std::fs::read_to_string(fake.machine_home().join("secrets.toml")).unwrap_or_default();
+    assert_eq!(secrets.trim(), "");
+}
