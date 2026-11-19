@@ -1,10 +1,11 @@
 //! What a machine may call on the hub over its ssh pipe, and how ids cross it.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use asterism_proto::client::Client;
 use asterism_proto::rpc::ErrorKind;
-use asterism_proto::types::{method, Session, Task, TaskCreateResult};
+use asterism_proto::types::{method, PrList, Project, Session, Task, TaskCreateResult, TaskPr};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
@@ -59,12 +60,16 @@ pub(crate) async fn dispatch(
 }
 
 fn inbound(daemon: &Daemon, machine_id: i64, method_name: &str, params: Value) -> Result<Value> {
-    let mut params = match params {
-        Value::Null => Value::Object(Default::default()),
-        params => params,
-    };
-    let Some(fields) = params.as_object_mut() else {
-        return Ok(params);
+    let mut fields = match params {
+        Value::Null => Default::default(),
+        Value::Object(fields) => fields,
+        // serde also builds structs from arrays, which would skip every check below.
+        _ => {
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                "params must be an object",
+            ))
+        }
     };
     if method_name == method::TASK_CREATE {
         fields.insert("machine_id".into(), machine_id.into());
@@ -87,20 +92,68 @@ fn inbound(daemon: &Daemon, machine_id: i64, method_name: &str, params: Value) -
         };
         *value = local.ok_or_else(|| not_found(key, remote_id))?.into();
     }
-    Ok(params)
+    match fields.get("project_id") {
+        None | Some(Value::Null) => {}
+        Some(value) => {
+            let project_id = value.as_i64().ok_or_else(|| {
+                Error::new(ErrorKind::InvalidParams, "project_id must be an integer")
+            })?;
+            if !machine_projects(daemon, machine_id)?.contains(&project_id) {
+                return Err(not_found("project_id", project_id));
+            }
+        }
+    }
+    Ok(Value::Object(fields))
+}
+
+/// The hub projects a machine may touch: those with a task on it, archived or not.
+fn machine_projects(daemon: &Daemon, machine_id: i64) -> Result<HashSet<i64>> {
+    Ok(daemon
+        .store()
+        .tasks(None, true)?
+        .into_iter()
+        .filter(|task| task.machine_id == Some(machine_id))
+        .map(|task| task.project_id)
+        .collect())
 }
 
 fn outbound(daemon: &Daemon, machine_id: i64, method_name: &str, result: Value) -> Result<Value> {
     match method_name {
         method::TASK_LIST => {
-            let tasks: Vec<Task> = decode(result)?;
-            // Tasks still being created have no machine id yet.
-            let mine = tasks
-                .into_iter()
-                .filter(|task| task.machine_id == Some(machine_id))
-                .filter_map(|task| remote_task(daemon, machine_id, task).ok())
-                .collect::<Vec<_>>();
+            let mut mine = Vec::new();
+            for task in decode::<Vec<Task>>(result)? {
+                // Tasks still being created have no machine id yet.
+                if let Some(id) = linked_task_id(daemon, machine_id, task.id)? {
+                    mine.push(Task {
+                        id,
+                        machine_id: None,
+                        ..task
+                    });
+                }
+            }
             encode(mine)
+        }
+        method::PROJECT_LIST => {
+            let allowed = machine_projects(daemon, machine_id)?;
+            let mut projects: Vec<Project> = decode(result)?;
+            projects.retain(|project| allowed.contains(&project.id));
+            encode(projects)
+        }
+        method::PR_LIST | method::PR_REFRESH => {
+            let list: PrList = decode(result)?;
+            let allowed = machine_projects(daemon, machine_id)?;
+            let mut prs = Vec::new();
+            for pr in list.prs {
+                if let Some(task_id) = linked_task_id(daemon, machine_id, pr.task_id)? {
+                    prs.push(TaskPr { task_id, ..pr });
+                }
+            }
+            let errors = list
+                .errors
+                .into_iter()
+                .filter(|error| allowed.contains(&error.project_id))
+                .collect();
+            encode(PrList { prs, errors })
         }
         method::TASK_ARCHIVE | method::TASK_RESTORE => {
             encode(remote_task(daemon, machine_id, decode(result)?)?)
@@ -121,16 +174,22 @@ fn outbound(daemon: &Daemon, machine_id: i64, method_name: &str, result: Value) 
     }
 }
 
+/// The machine's id for a hub task, or `None` when the task is not linked to this machine.
+fn linked_task_id(daemon: &Daemon, machine_id: i64, task_id: i64) -> Result<Option<i64>> {
+    Ok(match daemon.store().task_remote(task_id)? {
+        Some((machine, remote_id)) if machine == machine_id => Some(remote_id),
+        _ => None,
+    })
+}
+
 fn remote_task_id(daemon: &Daemon, machine_id: i64, task_id: i64) -> Result<i64> {
-    match daemon.store().task_remote(task_id)? {
-        Some((machine, remote_id)) if machine == machine_id => Ok(remote_id),
-        _ => Err(not_found("task_id", task_id)),
-    }
+    linked_task_id(daemon, machine_id, task_id)?.ok_or_else(|| not_found("task_id", task_id))
 }
 
 fn remote_task(daemon: &Daemon, machine_id: i64, task: Task) -> Result<Task> {
     Ok(Task {
         id: remote_task_id(daemon, machine_id, task.id)?,
+        machine_id: None,
         ..task
     })
 }

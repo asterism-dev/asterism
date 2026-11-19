@@ -2433,6 +2433,7 @@ async fn machine_peer_sees_only_its_tasks() {
         tasks.iter().map(|t| t.id).collect::<Vec<_>>(),
         vec![machine_task.id]
     );
+    assert_eq!(tasks[0].machine_id, None);
     assert_eq!(
         peer_error(&peer, method::TASK_DIFF, TaskIdParams { task_id: local }).await,
         ErrorKind::NotFound
@@ -2479,6 +2480,18 @@ async fn machine_peer_task_create_is_forced_to_caller() {
     let (daemon, d, fake) = hub(DEADLINE).await;
     let dir = tempfile::tempdir().unwrap();
     let (m, project_id, _) = machine_and_project(&d, dir.path()).await;
+    // A machine may only use projects it already has a task in.
+    let _: TaskCreateResult = d
+        .call(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id,
+                title: "seed".into(),
+                machine_id: Some(m.id),
+                ..Default::default()
+            },
+        )
+        .await;
     let peer = machine_peer(&daemon, m.id);
 
     for (title, machine_id) in [("from null", None), ("from other", Some(m.id + 100))] {
@@ -2503,7 +2516,118 @@ async fn machine_peer_task_create_is_forced_to_caller() {
         );
     }
     let hub_tasks: Vec<Task> = d.call(method::TASK_LIST, TaskListParams::default()).await;
-    assert_eq!(hub_tasks.len(), 2);
+    assert_eq!(hub_tasks.len(), 3);
     assert!(hub_tasks.iter().all(|t| t.machine_id == Some(m.id)));
-    assert_eq!(machine_tasks(&fake).await.len(), 2);
+    assert_eq!(machine_tasks(&fake).await.len(), 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn machine_peer_rejects_array_params() {
+    let (daemon, d, _fake) = hub(DEADLINE).await;
+    let dir = tempfile::tempdir().unwrap();
+    let project_id = local_project(&d, dir.path()).await;
+    let local = hub_task(&d, project_id, "local").await;
+    let peer = machine_peer(&daemon, 1);
+
+    for (name, params) in [
+        (method::TASK_DIFF, serde_json::json!([local])),
+        (method::TASK_DELETE, serde_json::json!([local, false])),
+        (
+            method::SESSION_START,
+            serde_json::json!([local, "shell", null]),
+        ),
+        (
+            method::TASK_CREATE,
+            serde_json::json!([project_id, "array"]),
+        ),
+    ] {
+        assert_eq!(
+            peer_error(&peer, name, params).await,
+            ErrorKind::InvalidParams,
+            "{name}"
+        );
+    }
+    for (name, params) in [
+        (
+            method::SESSION_START,
+            serde_json::json!({"task_id": local, "kind": "shell"}),
+        ),
+        (method::TASK_DELETE, serde_json::json!({"task_id": local})),
+    ] {
+        assert_eq!(
+            peer_error(&peer, name, params).await,
+            ErrorKind::NotFound,
+            "{name}"
+        );
+    }
+    let tasks: Vec<Task> = d.call(method::TASK_LIST, TaskListParams::default()).await;
+    assert_eq!(tasks.iter().map(|t| t.id).collect::<Vec<_>>(), vec![local]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn machine_peer_only_reaches_projects_with_its_tasks() {
+    let (daemon, d, _fake) = hub(DEADLINE).await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, mine, _) = machine_and_project(&d, dir.path()).await;
+    let _: TaskCreateResult = d
+        .call(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id: mine,
+                title: "remote".into(),
+                machine_id: Some(m.id),
+                ..Default::default()
+            },
+        )
+        .await;
+    let other_dir = tempfile::tempdir().unwrap();
+    let other = local_project(&d, other_dir.path()).await;
+    hub_task(&d, other, "local").await;
+    let peer = machine_peer(&daemon, m.id);
+
+    let projects: Vec<Project> = peer.call(method::PROJECT_LIST, Value::Null).await.unwrap();
+    assert_eq!(
+        projects.iter().map(|p| p.id).collect::<Vec<_>>(),
+        vec![mine]
+    );
+    let pr_list: PrList = peer.call(method::PR_LIST, Value::Null).await.unwrap();
+    assert!(
+        pr_list.errors.iter().all(|e| e.project_id == mine),
+        "{pr_list:?}"
+    );
+    let create = |project_id| TaskCreateParams {
+        project_id,
+        title: "from machine".into(),
+        ..Default::default()
+    };
+    assert_eq!(
+        peer_error(
+            &peer,
+            method::PROJECT_BRANCHES,
+            ProjectIdParams { project_id: other }
+        )
+        .await,
+        ErrorKind::NotFound
+    );
+    assert_eq!(
+        peer_error(
+            &peer,
+            method::PR_REFRESH,
+            ProjectIdParams { project_id: other }
+        )
+        .await,
+        ErrorKind::NotFound
+    );
+    assert_eq!(
+        peer_error(&peer, method::TASK_CREATE, create(other)).await,
+        ErrorKind::NotFound
+    );
+    let _: Value = peer
+        .call(
+            method::PROJECT_BRANCHES,
+            ProjectIdParams { project_id: mine },
+        )
+        .await
+        .unwrap();
+    let _: TaskCreateResult = peer.call(method::TASK_CREATE, create(mine)).await.unwrap();
 }
