@@ -12,7 +12,7 @@ use asterism_proto::types::{
     method, ClientKind, Event, HelloParams, HelloResult, Machine, MachineState, Role, Session,
     SessionListParams, SessionStatus,
 };
-use asterism_proto::PROTO_VERSION;
+use asterism_proto::{PROTO_VERSION, PROTO_VERSION_PREVIOUS};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::Child;
@@ -33,6 +33,16 @@ const AUTH_ERRORS: &[&str] = &[
 ];
 const SSH_FAILED: i32 = 255;
 const NOT_A_MACHINE: &str = "not an asterism machine daemon";
+const INCOMPATIBLE: &str = "incompatible version";
+
+/// Methods with the protocol version that added them; extend on each protocol bump.
+const ADDED_IN: &[(&str, u32)] = &[];
+
+fn link_supports(protocol: u32, method_name: &str) -> bool {
+    ADDED_IN
+        .iter()
+        .all(|&(added, since)| added != method_name || protocol >= since)
+}
 
 pub(crate) struct Settings {
     pub ssh_bin: PathBuf,
@@ -158,6 +168,7 @@ impl Shared {
         self.update(|state| {
             state.machine.status.state = new;
             state.machine.status.error = error;
+            state.machine.status.protocol = None;
             state.client = None;
         });
     }
@@ -209,7 +220,7 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
         if hello.role != Role::Machine {
             return Failure::Blocked(NOT_A_MACHINE.into());
         }
-        let mut update_available = false;
+        let mut update_available = link.protocol != PROTO_VERSION;
         if !runs_from(&hello.exe, &key) {
             let sessions = tokio::time::timeout(
                 settings.health_timeout,
@@ -246,17 +257,19 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
             return Failure::Offline("the machine's request stream is gone".into());
         };
         // Calls the machine forwards before `peer::serve` starts wait in the client's request queue.
-        match tokio::time::timeout(
-            settings.health_timeout,
-            client.call::<_, Value>(method::UPLINK_REGISTER, Value::Null),
-        )
-        .await
-        {
-            Ok(Ok(_)) => {}
-            // An older daemon kept for its sessions does not forward, so it needs no uplink.
-            Ok(Err(ClientError::Rpc(e))) if e.kind() == ErrorKind::MethodNotFound => {}
-            Ok(Err(e)) => return link.failure(e).await,
-            Err(_) => return Failure::Offline("the machine daemon did not answer".into()),
+        if link_supports(link.protocol, method::UPLINK_REGISTER) {
+            match tokio::time::timeout(
+                settings.health_timeout,
+                client.call::<_, Value>(method::UPLINK_REGISTER, Value::Null),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {}
+                // An older daemon kept for its sessions does not forward, so it needs no uplink.
+                Ok(Err(ClientError::Rpc(e))) if e.kind() == ErrorKind::MethodNotFound => {}
+                Ok(Err(e)) => return link.failure(e).await,
+                Err(_) => return Failure::Offline("the machine daemon did not answer".into()),
+            }
         }
         match tokio::time::timeout(
             settings.health_timeout,
@@ -276,6 +289,7 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
             state.machine.status.error = None;
             state.machine.status.update_available = update_available;
             state.machine.status.agents = hello.agents;
+            state.machine.status.protocol = Some(link.protocol);
             state.client = Some(client.clone());
         });
         // After Ready, so a queued forwarded call that calls back down the pipe finds the client.
@@ -331,6 +345,7 @@ struct Link {
     child: Child,
     client: Arc<Client>,
     stderr: JoinHandle<Option<String>>,
+    protocol: u32,
 }
 
 impl Link {
@@ -351,13 +366,27 @@ impl Link {
         else {
             return Err(Failure::Offline("ssh has no stdio".into()));
         };
-        let link = Link {
+        let mut link = Link {
             child,
             client: Arc::new(Client::new(stdout, stdin)),
             stderr: tokio::spawn(last_line(stderr)),
+            protocol: PROTO_VERSION,
         };
-        match tokio::time::timeout(settings.open_deadline, hello(&link.client)).await {
+        let opened = tokio::time::timeout(settings.open_deadline, async {
+            match hello(&link.client, PROTO_VERSION).await {
+                Err(ClientError::Rpc(e)) if e.kind() == ErrorKind::IncompatibleVersion => {
+                    link.protocol = PROTO_VERSION_PREVIOUS;
+                    hello(&link.client, PROTO_VERSION_PREVIOUS).await
+                }
+                result => result,
+            }
+        })
+        .await;
+        match opened {
             Ok(Ok(hello)) => Ok((link, hello)),
+            Ok(Err(ClientError::Rpc(e))) if e.kind() == ErrorKind::IncompatibleVersion => {
+                Err(Failure::Blocked(INCOMPATIBLE.into()))
+            }
             Ok(Err(e)) => Err(link.failure(e).await),
             Err(_) => Err(Failure::Offline("the machine daemon did not answer".into())),
         }
@@ -368,7 +397,7 @@ impl Link {
             let healthy = tokio::select! {
                 _ = self.child.wait() => None,
                 _ = tokio::time::sleep(settings.health_interval) => {
-                    Some(tokio::time::timeout(settings.health_timeout, hello(&self.client)).await)
+                    Some(tokio::time::timeout(settings.health_timeout, hello(&self.client, self.protocol)).await)
                 }
             };
             match healthy {
@@ -399,12 +428,12 @@ impl Link {
     }
 }
 
-async fn hello(client: &Client) -> Result<HelloResult, ClientError> {
+async fn hello(client: &Client, protocol: u32) -> Result<HelloResult, ClientError> {
     client
         .call(
             method::HELLO,
             HelloParams {
-                proto_version: PROTO_VERSION,
+                proto_version: protocol,
                 client_kind: ClientKind::Cli,
             },
         )

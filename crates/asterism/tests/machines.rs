@@ -198,8 +198,17 @@ async fn events_after_removed(
 
 /// Starts a daemon in the machine's home from outside `bin/<key>/`, as an older install would.
 fn start_foreign_daemon(fake: &FakeSsh, role: &str) -> std::process::Child {
+    start_foreign_daemon_with(fake, role, &[])
+}
+
+fn start_foreign_daemon_with(
+    fake: &FakeSsh,
+    role: &str,
+    env: &[(&str, String)],
+) -> std::process::Child {
     let child = std::process::Command::new(env!("CARGO_BIN_EXE_asterismd"))
         .env_clear()
+        .envs(env.iter().map(|(k, v)| (k, v)))
         .env("HOME", fake.home())
         .env("ASTERISM_HOME", fake.machine_home())
         .env("ASTERISM_ROLE", role)
@@ -1120,6 +1129,87 @@ async fn idle_daemon_without_uplink_is_replaced() {
     assert!(exited, "the old daemon was not replaced");
     assert!(eventually_state(&d, m.id, MachineState::Ready).await);
     assert!(!machine(&d, m.id).await.status.update_available);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn previous_protocol_machine_is_ready_with_update() {
+    let (d, fake) = start_with_fake_ssh().await;
+    fake.set_env(
+        "ASTERISM_TEST_PROTO_VERSION",
+        &(PROTO_VERSION - 1).to_string(),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let (m, project_id, _) = machine_and_project(&d, dir.path()).await;
+    let created: TaskCreateResult = d
+        .call(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id,
+                title: "Remote".into(),
+                machine_id: Some(m.id),
+                ..Default::default()
+            },
+        )
+        .await;
+    let task = created.task;
+    start_remote_shell(&d, task.id).await;
+    let status = machine(&d, m.id).await.status;
+    assert_eq!(status.state, MachineState::Ready);
+    assert!(status.update_available);
+    assert_eq!(status.protocol, Some(PROTO_VERSION - 1));
+    std::fs::write(
+        Path::new(&task.worktree_path).join("README.md"),
+        "hello\nfrom-machine\n",
+    )
+    .unwrap();
+    let diff: TaskDiffResult = d
+        .call(method::TASK_DIFF, TaskIdParams { task_id: task.id })
+        .await;
+    assert!(diff.patch.contains("+from-machine"), "{}", diff.patch);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn older_machine_is_blocked_incompatible() {
+    let (d, fake) = start_with_fake_ssh().await;
+    fake.set_env(
+        "ASTERISM_TEST_PROTO_VERSION",
+        &(PROTO_VERSION - 2).to_string(),
+    );
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Blocked).await);
+    let status = machine(&d, m.id).await.status;
+    assert!(
+        status
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("incompatible version"),
+        "{:?}",
+        status.error
+    );
+    let calls = fake.invocations();
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    assert_eq!(fake.invocations(), calls);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn idle_previous_protocol_machine_is_upgraded_silently() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let mut old = start_foreign_daemon_with(
+        &fake,
+        "machine",
+        &[(
+            "ASTERISM_TEST_PROTO_VERSION",
+            (PROTO_VERSION - 1).to_string(),
+        )],
+    );
+    let m = add_machine(&d, "vm").await;
+    let exited = common::eventually_within(DEADLINE, || old.try_wait().unwrap().is_some()).await;
+    assert!(exited, "the old daemon was not replaced");
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    let status = machine(&d, m.id).await.status;
+    assert!(!status.update_available);
+    assert_eq!(status.protocol, Some(PROTO_VERSION));
 }
 
 #[tokio::test(flavor = "multi_thread")]

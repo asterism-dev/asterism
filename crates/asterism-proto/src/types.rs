@@ -1805,6 +1805,9 @@ pub struct MachineStatus {
     pub update_available: bool,
     #[serde(default)]
     pub agents: Vec<AgentInfo>,
+    /// The protocol version the link speaks, once connected.
+    #[serde(default)]
+    pub protocol: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

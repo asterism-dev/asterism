@@ -1050,17 +1050,18 @@ impl Daemon {
     }
 
     pub fn hello(&self, params: HelloParams) -> Result<HelloResult> {
-        if params.proto_version != PROTO_VERSION {
+        let proto_version = proto_version();
+        if params.proto_version != proto_version {
             return Err(Error::new(
                 ErrorKind::IncompatibleVersion,
                 format!(
-                    "daemon speaks protocol {PROTO_VERSION}, client speaks {}",
+                    "daemon speaks protocol {proto_version}, client speaks {}",
                     params.proto_version
                 ),
             ));
         }
         Ok(HelloResult {
-            proto_version: PROTO_VERSION,
+            proto_version,
             daemon_version: env!("CARGO_PKG_VERSION").into(),
             daemon_build: asterism_proto::BUILD_ID.into(),
             pid: std::process::id(),
@@ -4077,6 +4078,18 @@ pub fn last_lines(text: &str, n: usize) -> String {
 fn same_path(a: &str, b: &str) -> bool {
     let canonical = |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p));
     a == b || canonical(a) == canonical(b)
+}
+
+/// Debug builds can pretend to be another version, so tests can run an older machine daemon.
+fn proto_version() -> u32 {
+    #[cfg(debug_assertions)]
+    if let Some(version) = std::env::var("ASTERISM_TEST_PROTO_VERSION")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
+        return version;
+    }
+    PROTO_VERSION
 }
 
 #[cfg(test)]
