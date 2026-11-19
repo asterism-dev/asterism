@@ -5,6 +5,7 @@ import { updateCount } from './pluginsView';
 import type {
   Activity,
   AgentInfo,
+  Machine,
   NodeEvent,
   NodeStatus,
   NotificationEntry,
@@ -41,6 +42,7 @@ export interface State {
   node: NodeStatus;
   projects: Project[];
   workspaces: Workspace[];
+  machines: Machine[];
   activeWorkspace: number | null;
   workspaceTasks: Record<number, number>;
   tasks: Task[];
@@ -75,6 +77,7 @@ export function initialState(): State {
     node: { state: 'connecting' },
     projects: [],
     workspaces: [],
+    machines: [],
     activeWorkspace: null,
     workspaceTasks: {},
     tasks: [],
@@ -329,6 +332,12 @@ export function applyEvent(s: State, event: NodeEvent): Session | null {
     case 'activity.changed':
       s.activities = upsertActivity(s.activities, event.params);
       return null;
+    case 'machine.changed':
+      upsert(s.machines, event.params);
+      return null;
+    case 'machine.removed':
+      s.machines = s.machines.filter((m) => m.id !== event.params.machine_id);
+      return null;
     case 'notification.removed':
       s.notifications = s.notifications.filter((n) => n.id !== event.params.id);
       return null;
@@ -369,7 +378,7 @@ export async function refreshPluginUpdates() {
 }
 
 export async function refresh() {
-  const [projects, workspaces, tasks, sessions, agents, notifications, activities] =
+  const [projects, workspaces, tasks, sessions, agents, notifications, activities, machines] =
     await Promise.all([
       api.projects(),
       api.workspaces(),
@@ -378,12 +387,14 @@ export async function refresh() {
       api.agents(),
       api.notifications(),
       api.activities(),
+      api.machines(),
     ]);
   state.notifications = notifications;
   state.activities = activities;
   state.agents = agents;
   state.projects = projects;
   state.workspaces = workspaces;
+  state.machines = machines;
   state.activeWorkspace = resolveWorkspace(workspaces, loadActiveWorkspace());
   state.workspaceTasks = loadWorkspaceTasks();
   state.tasks = tasks;

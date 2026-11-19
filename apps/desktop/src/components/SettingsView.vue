@@ -15,6 +15,7 @@ import PathsSettings from './PathsSettings.vue';
 import ShortcutsSettings from './ShortcutsSettings.vue';
 import PluginSettingsForm from './plugins/PluginSettingsForm.vue';
 import PluginsSettings from './PluginsSettings.vue';
+import MachinesSettings from './MachinesSettings.vue';
 import RemoteSettings from './RemoteSettings.vue';
 
 type Section =
@@ -22,6 +23,7 @@ type Section =
   | 'shortcuts'
   | 'paths'
   | 'remote'
+  | 'machines'
   | 'sessions'
   | 'plugins'
   | 'about'
@@ -146,6 +148,13 @@ async function open(next: Section) {
         </Button>
         <Button
           variant="ghost"
+          :class="{ active: section === 'machines' }"
+          @click="open('machines')"
+        >
+          Machines
+        </Button>
+        <Button
+          variant="ghost"
           :class="{ active: section === 'sessions' }"
           @click="open('sessions')"
         >
@@ -190,6 +199,9 @@ async function open(next: Section) {
       </div>
       <div v-else-if="section === 'remote'" class="settings-content">
         <RemoteSettings />
+      </div>
+      <div v-else-if="section === 'machines'" class="settings-content">
+        <MachinesSettings />
       </div>
       <div v-else-if="section === 'plugins'" class="settings-content">
         <PluginsSettings />

@@ -96,6 +96,15 @@ When `[remote]` is enabled, the daemon also listens on a TCP address and serves 
 
 The client is a second entry point of the desktop frontend: `mobile.html` and `src/mobile/`, with its own layout, `WsTransport`, pairing and hash routing. `apps/desktop/vite.mobile.config.ts` builds it into `dist-mobile/` and aliases the Tauri modules and `dock/main` to browser shims in `src/mobile/shims/`, so reused components keep their imports and the bundle contains no Tauri code. `bundle.resources` maps `dist-mobile/` to `Contents/Resources/mobile/`.
 
+## Machines
+
+Registered SSH machines; see [Machines](../guide/machines.md) for the user side. They are managed from a node only: `machine.add` and `machine.test` are denied to remote peers.
+
+- Machines are stored in the daemon's database. `machine.list`, `machine.add`, `machine.remove`, `machine.retry` and `machine.test` manage them; `machine.changed` (a full `Machine`) and `machine.removed` (`{machine_id}`) are the events.
+- `machines/install.rs` runs `ssh` with `BatchMode` on top of the user's `~/.ssh/config`, probes the platform and installs the machine daemon binaries into `~/.asterism-machine/bin/<build-key>/` over ssh. An install counts as complete only after its checksum is verified.
+- `machines/conn.rs` supervises one connection task per machine. State is `connecting`, `ready`, `offline` or `blocked`. Failures are `offline` and retried with a backoff of up to 30 s, except ssh exit 255 (auth or host key) and unsupported platforms, which are `blocked` until `machine.retry`.
+- The desktop keeps `state.machines` in sync from the events; `MachinesSettings.vue` renders them.
+
 ## Where state lives
 
 Everything lives under `ASTERISM_HOME`, which defaults to `~/.asterism`. The directory is created with mode `0700`, because the socket grants full control over the user's sessions.

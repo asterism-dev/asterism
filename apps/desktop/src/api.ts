@@ -28,6 +28,7 @@ import type {
   ProjectCreateResult,
   ProjectInitializeResult,
   RemoteConfig,
+  Machine,
   RemoteDevice,
   RemoteInterface,
   RemotePairing,
@@ -325,6 +326,12 @@ export const api = {
     call<RemotePairing>('remote.device_rotate', { device_id: deviceId }),
   removeRemoteDevice: (deviceId: number) =>
     call<null>('remote.device_remove', { device_id: deviceId }),
+  machines: () => call<Machine[]>('machine.list'),
+  addMachine: (name: string, destination: string) =>
+    call<Machine>('machine.add', { name, destination }),
+  removeMachine: (machineId: number) => call<null>('machine.remove', { machine_id: machineId }),
+  retryMachine: (machineId: number) => call<null>('machine.retry', { machine_id: machineId }),
+  testMachine: (destination: string) => call<{ platform: string }>('machine.test', { destination }),
   forgeStatus: (forge: string) => call<ForgeStatus>('forge.status', { forge }),
   forgeRepos: (forge: string, owner: string) => call<ForgeRepo[]>('forge.repos', { forge, owner }),
   cloneProject: (source: string, forge?: string, workspaceId?: number, activityToken?: string) =>

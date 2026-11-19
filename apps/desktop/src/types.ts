@@ -182,7 +182,9 @@ export type NodeEvent =
   | { method: 'subagent.updated'; params: { session_id: number; subagent: Subagent } }
   | { method: 'notification.changed'; params: NotificationEntry }
   | { method: 'notification.removed'; params: { id: number } }
-  | { method: 'activity.changed'; params: Activity };
+  | { method: 'activity.changed'; params: Activity }
+  | { method: 'machine.changed'; params: Machine }
+  | { method: 'machine.removed'; params: { machine_id: number } };
 
 export type ActivityStatus = 'pending' | 'running' | 'done' | 'failed';
 export interface ActivityStep {
@@ -555,6 +557,20 @@ export interface RemoteInterface {
   name: string;
   address: string;
   tailscale: boolean;
+}
+export type MachineState = 'connecting' | 'ready' | 'offline' | 'blocked';
+export interface MachineStatus {
+  state: MachineState;
+  platform: string | null;
+  error: string | null;
+  update_available: boolean;
+}
+export interface Machine {
+  id: number;
+  name: string;
+  destination: string;
+  created_at: number;
+  status: MachineStatus;
 }
 export interface RemoteDevice {
   id: number;
