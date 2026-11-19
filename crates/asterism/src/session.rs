@@ -268,16 +268,14 @@ impl Pty {
 
     /// SIGKILL for processes that ignore the hangup `kill` sends.
     pub fn force_kill(&self) -> io::Result<()> {
-        let Some(pid) = self.pid else { return Ok(()) };
-        let kill = |target: String| {
-            std::process::Command::new("kill")
-                .args(["-KILL", &target])
-                .status()
-                .is_ok_and(|s| s.success())
+        let Some(pid) = self.pid.and_then(|pid| libc::pid_t::try_from(pid).ok()) else {
+            return Ok(());
         };
+        // kill(2), not the `kill` binary: procps-ng 4.0.4 (Ubuntu 24.04) can exit 0 for `-KILL -<pgid>` without signalling.
         // The PTY child is a session leader, so its pgid is its pid; fall back to the pid alone.
-        if !kill(format!("-{pid}")) {
-            kill(pid.to_string());
+        // SAFETY: kill(2) only sends a signal.
+        if unsafe { libc::kill(-pid, libc::SIGKILL) } != 0 {
+            unsafe { libc::kill(pid, libc::SIGKILL) };
         }
         Ok(())
     }
