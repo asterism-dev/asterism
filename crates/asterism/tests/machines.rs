@@ -598,7 +598,7 @@ async fn machine_with_active_tasks_cannot_be_removed() {
     match err {
         ClientError::Rpc(e) => {
             assert_eq!(e.kind(), ErrorKind::InvalidParams);
-            assert!(e.message.contains("tasks"), "{}", e.message);
+            assert_eq!(e.message, "machine vm still has 1 active tasks");
         }
         other => panic!("{other:?}"),
     }
