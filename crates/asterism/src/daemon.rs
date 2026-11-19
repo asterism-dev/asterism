@@ -82,6 +82,7 @@ pub struct DaemonOptions {
     pub remote_retry: Duration,
     /// The Tailscale CLI used for `tailscale serve`; tests inject a fake.
     pub tailscale_bin: Option<PathBuf>,
+    pub role: Role,
 }
 
 impl Default for DaemonOptions {
@@ -99,6 +100,7 @@ impl Default for DaemonOptions {
             mobile_dir: default_mobile_dir(),
             remote_retry: Duration::from_secs(30),
             tailscale_bin: Some(crate::remote::tailscale::default_bin()),
+            role: Role::default(),
         }
     }
 }
@@ -999,6 +1001,10 @@ impl Daemon {
                 .unwrap_or_else(|| gethostname::gethostname().to_string_lossy().into_owned()),
             os: std::env::consts::OS.into(),
             agents: self.agent_infos(),
+            role: self.options.role,
+            exe: std::env::current_exe()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
         })
     }
 

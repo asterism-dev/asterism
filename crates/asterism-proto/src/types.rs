@@ -145,6 +145,23 @@ pub struct AgentInfo {
     pub plugin: String,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    #[default]
+    Node,
+    Machine,
+}
+
+impl Role {
+    pub fn from_env() -> Self {
+        match std::env::var("ASTERISM_ROLE").as_deref() {
+            Ok("machine") => Self::Machine,
+            _ => Self::Node,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HelloResult {
     pub proto_version: u32,
@@ -156,6 +173,11 @@ pub struct HelloResult {
     pub hostname: String,
     pub os: String,
     pub agents: Vec<AgentInfo>,
+    #[serde(default)]
+    pub role: Role,
+    /// Path of the running daemon binary; empty from daemons that predate it.
+    #[serde(default)]
+    pub exe: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
