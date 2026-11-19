@@ -360,9 +360,7 @@ async function submit() {
                 placeholder="Describe what the agent should do…"
               />
             </template>
-            <p v-else class="muted">
-              Opens a shell in the worktree — no agent is started.
-            </p>
+            <p v-else class="muted">Opens a shell in the worktree — no agent is started.</p>
           </div>
         </template>
         <template #workspace>
