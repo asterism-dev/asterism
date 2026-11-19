@@ -1,12 +1,14 @@
 import { expect, it } from 'vitest';
 import {
+  forgetConfirmText,
   localTaskActions,
   machineAgents,
   machineBlocksInput,
   machineStatusLine,
   taskMachine,
+  updateConfirmText,
 } from './machines';
-import type { AgentInfo, Machine, Task } from './types';
+import type { AgentInfo, Machine, MachineSessionRef, Task } from './types';
 
 it.each([
   [
@@ -109,4 +111,66 @@ it('localTaskActions offers the machine agents but never reveal for remote tasks
     reveal: false,
   });
   expect(localTaskActions(task(9), [m], [agent('claude')])).toEqual({ agents: [], reveal: false });
+});
+
+const ref = (title: string, kind: MachineSessionRef['kind']): MachineSessionRef => ({
+  session_id: 1,
+  task_id: 1,
+  task_title: title,
+  kind,
+});
+
+it('lists sessions that resume and end', () => {
+  const text = updateConfirmText({
+    resume: [ref('Fix bug', { type: 'agent', name: 'claude' })],
+    end: [ref('Build', { type: 'command', argv: ['make', 'dev'] }), ref('Logs', { type: 'shell' })],
+    exact: true,
+  });
+  expect(text).toBe(
+    [
+      'Update now? The machine restarts its daemon.',
+      'Will resume:',
+      '- Fix bug (claude)',
+      'Will end:',
+      '- Build (make dev)',
+      '- Logs (shell)',
+    ].join('\n'),
+  );
+});
+
+it('lists only sessions that end', () => {
+  const text = updateConfirmText({
+    resume: [],
+    end: [ref('Logs', { type: 'shell' })],
+    exact: true,
+  });
+  expect(text).not.toContain('Will resume:');
+  expect(text).toContain('Will end:\n- Logs (shell)');
+});
+
+it('says there are no running sessions', () => {
+  expect(updateConfirmText({ resume: [], end: [], exact: true })).toContain('No running sessions.');
+});
+
+it('says sessions may end when the preview is not exact', () => {
+  const text = updateConfirmText({
+    resume: [],
+    end: [ref('Logs', { type: 'shell' })],
+    exact: false,
+  });
+  expect(text).toContain('These sessions may end:\n- Logs (shell)');
+  expect(text).not.toContain('Will end:');
+});
+
+it('forget lists the tasks to archive', () => {
+  const tasks = [{ title: 'A' }, { title: 'B' }] as Task[];
+  expect(forgetConfirmText('box', tasks)).toBe(
+    'Forget box? Its tasks will be archived here and anything left on the machine is abandoned:\n- A\n- B',
+  );
+});
+
+it('forget without tasks', () => {
+  expect(forgetConfirmText('box', [])).toBe(
+    'Forget box? Its tasks will be archived here and anything left on the machine is abandoned:\nIt has no active tasks.',
+  );
 });

@@ -573,8 +573,20 @@ export interface MachineStatus {
   platform: string | null;
   error: string | null;
   update_available: boolean;
+  protocol: number | null;
   /** Absent on older daemons. */
   agents?: AgentInfo[];
+}
+export interface MachineSessionRef {
+  session_id: number;
+  task_id: number;
+  task_title: string;
+  kind: SessionKind;
+}
+export interface MachineUpdatePreview {
+  resume: MachineSessionRef[];
+  end: MachineSessionRef[];
+  exact: boolean;
 }
 export interface Machine {
   id: number;

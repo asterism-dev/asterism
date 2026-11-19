@@ -1,4 +1,11 @@
-import type { AgentInfo, Machine, Task } from './types';
+import type {
+  AgentInfo,
+  Machine,
+  MachineSessionRef,
+  MachineUpdatePreview,
+  SessionKind,
+  Task,
+} from './types';
 
 export function machineStatusLine(m: Machine): string {
   const { state, platform, error, update_available } = m.status;
@@ -46,4 +53,41 @@ export function localTaskActions(
     agents: remote ? machineAgents(machine, []) : machineAgents(null, localAgents),
     reveal: !remote,
   };
+}
+
+export function canUpdateMachine(m: Machine): boolean {
+  const { state, update_available, error } = m.status;
+  return update_available || (state === 'blocked' && !!error?.includes('incompatible version'));
+}
+
+function sessionKindLabel(kind: SessionKind): string {
+  switch (kind.type) {
+    case 'agent':
+      return kind.name;
+    case 'shell':
+      return 'shell';
+    case 'command':
+      return kind.argv.join(' ');
+  }
+}
+
+const sessionLines = (refs: MachineSessionRef[]) =>
+  refs.map((r) => `- ${r.task_title} (${sessionKindLabel(r.kind)})`);
+
+export function updateConfirmText(p: MachineUpdatePreview): string {
+  const lines = ['Update now? The machine restarts its daemon.'];
+  if (!p.resume.length && !p.end.length) lines.push('No running sessions.');
+  if (p.resume.length) lines.push('Will resume:', ...sessionLines(p.resume));
+  if (p.end.length) {
+    lines.push(p.exact ? 'Will end:' : 'These sessions may end:', ...sessionLines(p.end));
+  }
+  return lines.join('\n');
+}
+
+export function forgetConfirmText(name: string, tasks: Task[]): string {
+  const head = `Forget ${name}? Its tasks will be archived here and anything left on the machine is abandoned:`;
+  return [
+    head,
+    ...(tasks.length ? tasks.map((t) => `- ${t.title}`) : ['It has no active tasks.']),
+  ].join('\n');
 }

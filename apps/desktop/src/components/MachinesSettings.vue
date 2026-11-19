@@ -3,13 +3,19 @@ import { Button, TextInput } from '@asterism-dev/lumen';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { onMounted, ref } from 'vue';
 import { api, errorMessage } from '../api';
-import { machineStatusLine } from '../machines';
+import {
+  canUpdateMachine,
+  forgetConfirmText,
+  machineStatusLine,
+  updateConfirmText,
+} from '../machines';
 import { state, toast } from '../store';
 import type { Machine } from '../types';
 
 const name = ref('');
 const destination = ref('');
 const busy = ref(false);
+const updating = ref(new Set<number>());
 const testResult = ref<{ ok: boolean; text: string } | null>(null);
 const report = (e: unknown) => toast(errorMessage(e));
 
@@ -55,6 +61,32 @@ async function remove(m: Machine) {
   if (!(await ask(message, { title: 'Remove machine', kind: 'warning' }))) return;
   api.removeMachine(m.id).catch(report);
 }
+
+async function update(m: Machine) {
+  try {
+    const preview = await api.machineUpdatePreview(m.id);
+    if (!(await ask(updateConfirmText(preview), { title: 'Update machine', kind: 'warning' }))) {
+      return;
+    }
+    updating.value.add(m.id);
+    await api.updateMachine(m.id);
+  } catch (e) {
+    report(e);
+  } finally {
+    updating.value.delete(m.id);
+  }
+}
+
+async function forget(m: Machine) {
+  try {
+    const tasks = await api.machineTasks(m.id);
+    const message = forgetConfirmText(m.name, tasks);
+    if (!(await ask(message, { title: 'Forget machine', kind: 'warning' }))) return;
+    await api.forgetMachine(m.id);
+  } catch (e) {
+    report(e);
+  }
+}
 </script>
 
 <template>
@@ -73,7 +105,11 @@ async function remove(m: Machine) {
           @click="api.retryMachine(m.id).catch(report)"
           >Retry</Button
         >
+        <Button v-if="canUpdateMachine(m)" :disabled="updating.has(m.id)" @click="update(m)">{{
+          updating.has(m.id) ? 'Updating…' : 'Update now'
+        }}</Button>
         <Button variant="danger" @click="remove(m)">Remove</Button>
+        <Button variant="danger" @click="forget(m)">Forget</Button>
       </div>
       <p v-if="!state.machines.length" class="hint">No machines yet.</p>
     </section>

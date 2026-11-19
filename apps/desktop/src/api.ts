@@ -29,6 +29,7 @@ import type {
   ProjectInitializeResult,
   RemoteConfig,
   Machine,
+  MachineUpdatePreview,
   RemoteDevice,
   RemoteInterface,
   RemotePairing,
@@ -333,6 +334,12 @@ export const api = {
     call<Machine>('machine.add', { name, destination }),
   removeMachine: (machineId: number) => call<null>('machine.remove', { machine_id: machineId }),
   retryMachine: (machineId: number) => call<null>('machine.retry', { machine_id: machineId }),
+  machineUpdatePreview: (machineId: number) =>
+    call<MachineUpdatePreview>('machine.update_preview', { machine_id: machineId }),
+  updateMachine: (machineId: number) => call<null>('machine.update', { machine_id: machineId }),
+  machineTasks: (machineId: number) => call<Task[]>('machine.tasks', { machine_id: machineId }),
+  forgetMachine: (machineId: number) =>
+    call<{ archived_task_ids: number[] }>('machine.forget', { machine_id: machineId }),
   testMachine: (destination: string) => call<{ platform: string }>('machine.test', { destination }),
   forgeStatus: (forge: string) => call<ForgeStatus>('forge.status', { forge }),
   forgeRepos: (forge: string, owner: string) => call<ForgeRepo[]>('forge.repos', { forge, owner }),
