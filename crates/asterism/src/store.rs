@@ -109,6 +109,15 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE tasks ADD COLUMN machine_id INTEGER;
      ALTER TABLE tasks ADD COLUMN remote_id INTEGER;
      ALTER TABLE sessions ADD COLUMN remote_id INTEGER;",
+    "CREATE TABLE machines_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        destination TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT 0
+     );
+     INSERT INTO machines_new SELECT id, name, destination, created_at FROM machines;
+     DROP TABLE machines;
+     ALTER TABLE machines_new RENAME TO machines;",
 ];
 
 const PROJECT_COLUMNS: &str = "id, name, path, created_at, default_base, workspace_id";
@@ -1040,6 +1049,14 @@ mod tests {
         store
             .insert_notification("test", Some(task_id), None, None, None)
             .unwrap()
+    }
+
+    #[test]
+    fn machine_ids_are_never_reused() {
+        let store = Store::open_in_memory().unwrap();
+        let a = store.add_machine("a", "a").unwrap().id;
+        store.remove_machine(a).unwrap();
+        assert_ne!(store.add_machine("b", "b").unwrap().id, a);
     }
 
     #[test]
