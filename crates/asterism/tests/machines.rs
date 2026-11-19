@@ -17,6 +17,8 @@ use tempfile::TempDir;
 use tokio::net::UnixStream;
 use tokio::sync::mpsc::UnboundedReceiver;
 
+const DEADLINE: Duration = Duration::from_secs(30);
+
 struct D {
     _home: TempDir,
     client: Client,
@@ -37,6 +39,10 @@ async fn start_with_fake_ssh() -> (D, FakeSsh) {
 }
 
 async fn start_with_role(role: Role) -> (D, FakeSsh) {
+    start(role, Duration::from_secs(30)).await
+}
+
+async fn start(role: Role, open_deadline: Duration) -> (D, FakeSsh) {
     let fake = FakeSsh::new();
     let home = tempfile::tempdir().unwrap();
     let paths = Paths {
@@ -49,6 +55,7 @@ async fn start_with_role(role: Role) -> (D, FakeSsh) {
         machine_health_interval: Duration::from_millis(200),
         machine_health_timeout: Duration::from_secs(2),
         machine_backoff_max: Duration::from_millis(300),
+        machine_open_deadline: open_deadline,
         role,
         ..common::daemon_options()
     };
@@ -157,7 +164,7 @@ fn start_foreign_daemon(fake: &FakeSsh, role: &str) -> std::process::Child {
 #[tokio::test]
 async fn probe_reports_host_platform() {
     let fake = FakeSsh::new();
-    let platform = install::probe(&fake.ssh("vm")).await.unwrap();
+    let platform = install::probe(&fake.ssh("vm"), DEADLINE).await.unwrap();
     assert_eq!(platform.to_string(), host_platform());
 }
 
@@ -166,8 +173,8 @@ async fn install_uploads_binaries_once_into_a_home_with_spaces() {
     let fake = FakeSsh::new();
     assert!(fake.home().to_string_lossy().contains(' '));
     let ssh = fake.ssh("vm");
-    let platform = install::probe(&ssh).await.unwrap();
-    let first = install::ensure_installed(&ssh, &platform, &fake.bins_dir())
+    let platform = install::probe(&ssh, DEADLINE).await.unwrap();
+    let first = install::ensure_installed(&ssh, &platform, &fake.bins_dir(), DEADLINE)
         .await
         .unwrap();
     let dir = fake.home().join(".asterism-machine/bin").join(&first.key);
@@ -176,7 +183,7 @@ async fn install_uploads_binaries_once_into_a_home_with_spaces() {
         .unwrap()
         .modified()
         .unwrap();
-    let second = install::ensure_installed(&ssh, &platform, &fake.bins_dir())
+    let second = install::ensure_installed(&ssh, &platform, &fake.bins_dir(), DEADLINE)
         .await
         .unwrap();
     assert_eq!(first.key, second.key);
@@ -193,8 +200,8 @@ async fn install_uploads_binaries_once_into_a_home_with_spaces() {
 async fn changed_cli_is_uploaded_again() {
     let fake = FakeSsh::new();
     let ssh = fake.ssh("vm");
-    let platform = install::probe(&ssh).await.unwrap();
-    let first = install::ensure_installed(&ssh, &platform, &fake.bins_dir())
+    let platform = install::probe(&ssh, DEADLINE).await.unwrap();
+    let first = install::ensure_installed(&ssh, &platform, &fake.bins_dir(), DEADLINE)
         .await
         .unwrap();
     let cli = fake.bins_dir().join(host_platform()).join("asterism");
@@ -202,7 +209,7 @@ async fn changed_cli_is_uploaded_again() {
     changed.push(0);
     std::fs::remove_file(&cli).unwrap();
     std::fs::write(&cli, &changed).unwrap();
-    let second = install::ensure_installed(&ssh, &platform, &fake.bins_dir())
+    let second = install::ensure_installed(&ssh, &platform, &fake.bins_dir(), DEADLINE)
         .await
         .unwrap();
     assert_ne!(first.key, second.key);
@@ -215,8 +222,8 @@ async fn install_fails_without_binaries_for_the_platform() {
     let fake = FakeSsh::new();
     let empty = tempfile::tempdir().unwrap();
     let ssh = fake.ssh("vm");
-    let platform = install::probe(&ssh).await.unwrap();
-    let err = install::ensure_installed(&ssh, &platform, empty.path())
+    let platform = install::probe(&ssh, DEADLINE).await.unwrap();
+    let err = install::ensure_installed(&ssh, &platform, empty.path(), DEADLINE)
         .await
         .unwrap_err();
     assert!(matches!(err, InstallError::MissingBinaries(_)));
@@ -226,7 +233,7 @@ async fn install_fails_without_binaries_for_the_platform() {
 async fn ssh_failure_reports_the_last_stderr_line() {
     let fake = FakeSsh::new();
     fake.fail_with("Permission denied (publickey).", 255);
-    let err = install::probe(&fake.ssh("vm")).await.unwrap_err();
+    let err = install::probe(&fake.ssh("vm"), DEADLINE).await.unwrap_err();
     assert!(matches!(
         err,
         InstallError::Ssh { status: Some(255), ref line } if line == "Permission denied (publickey)."
@@ -237,14 +244,14 @@ async fn ssh_failure_reports_the_last_stderr_line() {
 async fn interrupted_install_is_uploaded_again() {
     let fake = FakeSsh::new();
     let ssh = fake.ssh("vm");
-    let platform = install::probe(&ssh).await.unwrap();
-    let first = install::ensure_installed(&ssh, &platform, &fake.bins_dir())
+    let platform = install::probe(&ssh, DEADLINE).await.unwrap();
+    let first = install::ensure_installed(&ssh, &platform, &fake.bins_dir(), DEADLINE)
         .await
         .unwrap();
     let dir = fake.home().join(".asterism-machine/bin").join(&first.key);
     std::fs::remove_file(dir.join("ok")).unwrap();
     std::fs::write(dir.join("asterismd"), b"truncated").unwrap();
-    install::ensure_installed(&ssh, &platform, &fake.bins_dir())
+    install::ensure_installed(&ssh, &platform, &fake.bins_dir(), DEADLINE)
         .await
         .unwrap();
     assert!(dir.join("ok").is_file());
@@ -325,6 +332,39 @@ async fn unreachable_machine_does_not_delay_other_requests() {
     d.call::<_, Vec<Project>>(method::PROJECT_LIST, Value::Null)
         .await;
     assert!(started.elapsed() < Duration::from_millis(200));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hanging_machine_goes_offline_and_test_fails() {
+    let (d, fake) = start(Role::Node, Duration::from_millis(300)).await;
+    fake.hang();
+    let mut events = d.events();
+    let m = add_machine(&d, "vm").await;
+    let error = loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let Event::MachineChanged(x) = event {
+            if x.id == m.id && x.status.state == MachineState::Offline {
+                break x.status.error.unwrap();
+            }
+        }
+    };
+    assert!(error.contains("did not answer"), "{error}");
+    let err = tokio::time::timeout(
+        Duration::from_secs(5),
+        d.client.call::<_, MachineTestResult>(
+            method::MACHINE_TEST,
+            MachineTestParams {
+                destination: "vm".into(),
+            },
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap_err();
+    assert!(err.to_string().contains("did not answer"), "{err}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

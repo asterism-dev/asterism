@@ -88,6 +88,7 @@ pub struct DaemonOptions {
     pub machine_health_interval: Duration,
     pub machine_health_timeout: Duration,
     pub machine_backoff_max: Duration,
+    pub machine_open_deadline: Duration,
 }
 
 impl Default for DaemonOptions {
@@ -111,6 +112,8 @@ impl Default for DaemonOptions {
             machine_health_interval: Duration::from_secs(15),
             machine_health_timeout: Duration::from_secs(5),
             machine_backoff_max: Duration::from_secs(30),
+            // Covers a fresh ssh handshake plus `attach` spawning the daemon, which the health deadline does not.
+            machine_open_deadline: Duration::from_secs(30),
         }
     }
 }
@@ -252,6 +255,7 @@ impl Daemon {
                     health_interval: options.machine_health_interval,
                     health_timeout: options.machine_health_timeout,
                     backoff_max: options.machine_backoff_max,
+                    open_deadline: options.machine_open_deadline,
                     events: events.clone(),
                     installs: Mutex::default(),
                 },

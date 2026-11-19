@@ -3,7 +3,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Mutex;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use sha2::{Digest, Sha256};
 
@@ -126,8 +126,8 @@ pub struct RemoteInstall {
     pub key: String,
 }
 
-pub async fn probe(ssh: &Ssh) -> Result<Platform, InstallError> {
-    let uname = run(ssh, "uname -sm", &[], None).await?;
+pub async fn probe(ssh: &Ssh, deadline: Duration) -> Result<Platform, InstallError> {
+    let uname = run(ssh, "uname -sm", &[], None, Some(deadline)).await?;
     let uname = uname.trim();
     let mut words = uname.split_whitespace();
     let os = words.next().unwrap_or_default();
@@ -148,6 +148,7 @@ pub async fn ensure_installed(
     ssh: &Ssh,
     platform: &Platform,
     bins_dir: &Path,
+    deadline: Duration,
 ) -> Result<RemoteInstall, InstallError> {
     let local = bins_dir.join(platform.to_string());
     let hashes = {
@@ -159,7 +160,11 @@ pub async fn ensure_installed(
     let key = format!("{:x}", Sha256::digest(hashes.concat()))[..16].to_string();
 
     let check = format!(r#"{INSTALL_DIR}; test -f "$d/ok" && echo installed || true"#);
-    if run(ssh, &check, &[&key], None).await?.trim() == "installed" {
+    if run(ssh, &check, &[&key], None, Some(deadline))
+        .await?
+        .trim()
+        == "installed"
+    {
         return Ok(RemoteInstall { key });
     }
 
@@ -169,13 +174,14 @@ pub async fn ensure_installed(
     for name in BINARIES {
         let file = std::fs::File::open(local.join(name))
             .map_err(|e| InstallError::MissingBinaries(e.to_string()))?;
-        run(ssh, &upload, &[&key, name], Some(file)).await?;
+        // A large upload over a slow link legitimately takes long.
+        run(ssh, &upload, &[&key, name], Some(file), None).await?;
     }
 
     let verify = format!(
         r#"{INSTALL_DIR}; if command -v sha256sum >/dev/null 2>&1; then sha256sum "$d/asterismd" "$d/asterism"; else shasum -a 256 "$d/asterismd" "$d/asterism"; fi"#
     );
-    let sums = run(ssh, &verify, &[&key], None).await?;
+    let sums = run(ssh, &verify, &[&key], None, Some(deadline)).await?;
     let remote: Vec<&str> = sums
         .lines()
         .filter_map(|l| l.split_whitespace().next())
@@ -186,6 +192,7 @@ pub async fn ensure_installed(
             &format!(r#"{INSTALL_DIR}; rm -rf "$d""#),
             &[&key],
             None,
+            Some(deadline),
         )
         .await?;
         return Err(InstallError::Checksum);
@@ -196,6 +203,7 @@ pub async fn ensure_installed(
         &format!(r#"{INSTALL_DIR}; touch "$d/ok""#),
         &[&key],
         None,
+        Some(deadline),
     )
     .await?;
     Ok(RemoteInstall { key })
@@ -239,16 +247,27 @@ async fn run(
     script: &str,
     args: &[&str],
     stdin: Option<std::fs::File>,
+    deadline: Option<Duration>,
 ) -> Result<String, InstallError> {
-    let out = ssh
-        .command(script, args)
+    let mut cmd = ssh.command(script, args);
+    let output = cmd
         .stdin(stdin.map_or_else(Stdio::null, Stdio::from))
-        .output()
-        .await
-        .map_err(|e| InstallError::Ssh {
-            status: None,
-            line: e.to_string(),
-        })?;
+        .output();
+    let output = match deadline {
+        Some(deadline) => {
+            tokio::time::timeout(deadline, output)
+                .await
+                .map_err(|_| InstallError::Ssh {
+                    status: None,
+                    line: "the machine did not answer".into(),
+                })?
+        }
+        None => output.await,
+    };
+    let out = output.map_err(|e| InstallError::Ssh {
+        status: None,
+        line: e.to_string(),
+    })?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         let line = stderr

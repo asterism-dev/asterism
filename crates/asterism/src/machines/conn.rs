@@ -23,8 +23,6 @@ use crate::lock;
 
 const ATTACH: &str = r#"ASTERISM_HOME="$HOME/.asterism-machine" ASTERISM_ROLE=machine exec "$HOME/.asterism-machine/bin/$1/asterism" attach"#;
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
-// Covers a fresh ssh handshake plus `attach` spawning the daemon, which the health deadline does not.
-const OPEN_DEADLINE: Duration = Duration::from_secs(30);
 const STDERR_GRACE: Duration = Duration::from_secs(1);
 const AUTH_ERRORS: &[&str] = &[
     "Permission denied",
@@ -40,6 +38,7 @@ pub(crate) struct Settings {
     pub health_interval: Duration,
     pub health_timeout: Duration,
     pub backoff_max: Duration,
+    pub open_deadline: Duration,
     pub events: broadcast::Sender<Event>,
     /// Per destination, so `machine.test` never uploads over a running install.
     pub installs: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -185,7 +184,7 @@ async fn connect(shared: &Shared, backoff: &mut Duration) -> Failure {
     let settings = &shared.settings;
     let destination = shared.machine().destination;
     let ssh = Ssh::new(settings.ssh_bin.clone(), destination.clone());
-    let platform = match install::probe(&ssh).await {
+    let platform = match install::probe(&ssh, settings.open_deadline).await {
         Ok(platform) => platform,
         Err(e) => return install_failure(e),
     };
@@ -220,7 +219,7 @@ async fn connect(shared: &Shared, backoff: &mut Duration) -> Failure {
                         .call::<_, Value>(method::SHUTDOWN, Value::Null)
                         .await;
                     // `attach` exits once the old daemon has closed its socket.
-                    let _ = tokio::time::timeout(OPEN_DEADLINE, link.child.wait()).await;
+                    let _ = tokio::time::timeout(settings.open_deadline, link.child.wait()).await;
                     upgraded = true;
                     continue;
                 }
@@ -244,7 +243,9 @@ async fn connect(shared: &Shared, backoff: &mut Duration) -> Failure {
 /// Probes, installs and says `hello` once over a throwaway connection; returns the platform.
 pub(crate) async fn test(settings: &Settings, destination: &str) -> Result<String, Failure> {
     let ssh = Ssh::new(settings.ssh_bin.clone(), destination.to_string());
-    let platform = install::probe(&ssh).await.map_err(install_failure)?;
+    let platform = install::probe(&ssh, settings.open_deadline)
+        .await
+        .map_err(install_failure)?;
     let key = ensure_installed(settings, &ssh, destination, &platform).await?;
     let (_link, hello) = Link::open(settings, destination, &key).await?;
     if hello.role != Role::Machine {
@@ -269,7 +270,7 @@ async fn ensure_installed(
         .or_default()
         .clone();
     let _installing = guard.lock().await;
-    install::ensure_installed(ssh, platform, bins_dir)
+    install::ensure_installed(ssh, platform, bins_dir, settings.open_deadline)
         .await
         .map(|installed| installed.key)
         .map_err(install_failure)
@@ -311,7 +312,7 @@ impl Link {
             client: Arc::new(Client::new(stdout, stdin)),
             stderr: tokio::spawn(last_line(stderr)),
         };
-        match tokio::time::timeout(OPEN_DEADLINE, hello(&link.client)).await {
+        match tokio::time::timeout(settings.open_deadline, hello(&link.client)).await {
             Ok(Ok(hello)) => Ok((link, hello)),
             Ok(Err(e)) => Err(link.failure(e).await),
             Err(_) => Err(Failure::Offline("the machine daemon did not answer".into())),
