@@ -66,8 +66,40 @@ jobs:
           id=$(gh api "repos/${GITHUB_REPOSITORY}/releases" -f tag_name="v$VERSION" -f name="v$VERSION" -F draft=true -F body=@notes.md --jq .id)
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
-  build:
+  machine-bins:
     needs: bump
+    if: needs.bump.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump.outputs.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+      - uses: swatinem/rust-cache@v2
+        with:
+          key: machine-bins
+      - uses: mlugg/setup-zig@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+      - name: Build static Linux machine binaries
+        run: |
+          for arch in x86_64 aarch64; do
+            cargo zigbuild -p asterism --release --target "$arch-unknown-linux-musl" --bin asterismd --bin asterism --bin asterism-plugin-claude
+            mkdir -p "machine/linux-$arch"
+            for bin in asterismd asterism asterism-plugin-claude; do cp "target/$arch-unknown-linux-musl/release/$bin" "machine/linux-$arch/"; done
+          done
+      # Artifacts drop the executable bit; the daemon chmods each binary when it installs it on a machine.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: machine-bins
+          path: machine/
+          if-no-files-found: error
+
+  build:
+    needs: [bump, machine-bins]
     if: needs.bump.outputs.released == 'true'
     runs-on: macos-15
     strategy:
@@ -92,6 +124,17 @@ jobs:
           cache-dependency-path: apps/desktop/package-lock.json
       - run: npm ci
         working-directory: apps/desktop
+      - uses: actions/download-artifact@v4
+        with:
+          name: machine-bins
+          path: apps/desktop/src-tauri/machine
+      - name: Build macOS machine binaries
+        run: |
+          for arch in aarch64 x86_64; do
+            cargo build -p asterism --release --target "$arch-apple-darwin" --bin asterismd --bin asterism --bin asterism-plugin-claude
+            mkdir -p "apps/desktop/src-tauri/machine/darwin-$arch"
+            for bin in asterismd asterism asterism-plugin-claude; do cp "target/$arch-apple-darwin/release/$bin" "apps/desktop/src-tauri/machine/darwin-$arch/"; done
+          done
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ github.token }}

@@ -3,5 +3,6 @@
 /apps/desktop/dist
 /apps/desktop/dist-mobile
 /apps/desktop/src-tauri/binaries
+/apps/desktop/src-tauri/machine
 /apps/desktop/src-tauri/gen
 /site
