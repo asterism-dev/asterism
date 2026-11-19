@@ -208,6 +208,18 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
         if hello.role != Role::Machine {
             return Failure::Blocked(NOT_A_MACHINE.into());
         }
+        // Calls the machine forwards before `peer::serve` starts wait in the client's request queue.
+        match tokio::time::timeout(
+            settings.health_timeout,
+            link.client
+                .call::<_, Value>(method::UPLINK_REGISTER, Value::Null),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => return link.failure(e).await,
+            Err(_) => return Failure::Offline("the machine daemon did not answer".into()),
+        }
         let mut update_available = false;
         if !runs_from(&hello.exe, &key) {
             let sessions = tokio::time::timeout(
@@ -257,14 +269,15 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
         // Dropped with this connection, which aborts the pump.
         let mut pump = JoinSet::new();
         pump.spawn(super::link::pump(shared.clone(), client.clone(), events));
-        pump.spawn(super::peer::serve(shared.clone(), client.clone(), requests));
         shared.update(|state| {
             state.machine.status.state = MachineState::Ready;
             state.machine.status.error = None;
             state.machine.status.update_available = update_available;
             state.machine.status.agents = hello.agents;
-            state.client = Some(client);
+            state.client = Some(client.clone());
         });
+        // After Ready, so a queued forwarded call that calls back down the pipe finds the client.
+        pump.spawn(super::peer::serve(shared.clone(), client, requests));
         return link.supervise(settings).await;
     }
 }

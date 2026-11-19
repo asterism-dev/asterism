@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, Weak};
 use std::time::Duration;
 
 use asterism_plugin::protocol::{
@@ -214,6 +214,8 @@ pub struct Daemon {
     next_activity_id: AtomicI64,
     pub(crate) remote: crate::remote::Hub,
     machines: crate::machines::Machines,
+    /// On a machine, the hub's connection; weak so a closed connection never lingers here.
+    uplink: Mutex<Weak<crate::rpc::Uplink>>,
 }
 
 #[derive(Default)]
@@ -291,6 +293,7 @@ impl Daemon {
                 next_activity_id: AtomicI64::new(1),
                 remote: crate::remote::Hub::new(),
                 machines,
+                uplink: Mutex::new(Weak::new()),
             }
         }))
     }
@@ -364,6 +367,18 @@ impl Daemon {
 
     pub fn machines(&self) -> &crate::machines::Machines {
         &self.machines
+    }
+
+    pub(crate) fn role(&self) -> Role {
+        self.options.role
+    }
+
+    pub(crate) fn set_uplink(&self, uplink: &Arc<crate::rpc::Uplink>) {
+        *crate::lock(&self.uplink) = Arc::downgrade(uplink);
+    }
+
+    pub(crate) fn uplink(&self) -> Option<Arc<crate::rpc::Uplink>> {
+        crate::lock(&self.uplink).upgrade()
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {

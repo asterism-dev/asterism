@@ -743,10 +743,7 @@ fn bare_origin(dir: &Path) -> String {
 
 /// A task and a running shell created over the machine daemon's own socket; returns their ids.
 async fn remote_shell(fake: &FakeSsh, origin: &str) -> (Client, i64, i64) {
-    let client = Client::connect_unix(&fake.machine_home().join("asterismd.sock"))
-        .await
-        .unwrap();
-    hello(&client).await;
+    let client = machine_client(fake).await;
     let project: Project = client
         .call(
             method::PROJECT_ENSURE,
@@ -1063,11 +1060,16 @@ async fn machine_and_project(d: &D, dir: &Path) -> (Machine, i64, String) {
     (m, project.id, origin)
 }
 
+/// Stands in for the hub, so the machine serves every call itself; replaces the hub's uplink.
 async fn machine_client(fake: &FakeSsh) -> Client {
     let client = Client::connect_unix(&fake.machine_home().join("asterismd.sock"))
         .await
         .unwrap();
     hello(&client).await;
+    let _: Value = client
+        .call(method::UPLINK_REGISTER, Value::Null)
+        .await
+        .unwrap();
     client
 }
 
@@ -2630,4 +2632,173 @@ async fn machine_peer_only_reaches_projects_with_its_tasks() {
         .await
         .unwrap();
     let _: TaskCreateResult = peer.call(method::TASK_CREATE, create(mine)).await.unwrap();
+}
+
+/// A hub task on `m` whose hub id differs from its machine id, so only translated ids reach it; returns (hub id, machine id).
+async fn task_on_machine(d: &D, m: &Machine, project_id: i64) -> (i64, i64) {
+    hub_task(d, project_id, "local one").await;
+    hub_task(d, project_id, "local two").await;
+    let created: TaskCreateResult = d
+        .call(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id,
+                title: "remote".into(),
+                machine_id: Some(m.id),
+                ..Default::default()
+            },
+        )
+        .await;
+    let (_, remote_id) = hub_store(d).task_remote(created.task.id).unwrap().unwrap();
+    assert_ne!(created.task.id, remote_id);
+    (created.task.id, remote_id)
+}
+
+/// The real CLI, with the environment a remote session on the machine gives it.
+async fn cli_on_machine(fake: &FakeSsh, task_id: i64, args: &[&str]) -> std::process::Output {
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_asterism"))
+        .args(args)
+        .env("ASTERISM_HOME", fake.machine_home())
+        .env(
+            "ASTERISM_SOCKET",
+            fake.machine_home().join("asterismd.sock"),
+        )
+        .env("ASTERISM_TASK", task_id.to_string())
+        .env("ASTERISM_OFFICIAL_STORE", "")
+        .env_remove("ASTERISM_SESSION")
+        .current_dir("/")
+        .kill_on_drop(true)
+        .output();
+    let output = tokio::time::timeout(DEADLINE, output)
+        .await
+        .expect("the CLI hung")
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "asterism {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_on_machine_reaches_hub() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, project_id, _) = machine_and_project(&d, dir.path()).await;
+    let (hub_id, remote_id) = task_on_machine(&d, &m, project_id).await;
+    hub_store(&d)
+        .add_review_comment(
+            hub_id,
+            None,
+            "README.md",
+            1,
+            DiffSide::New,
+            "hello",
+            "please say goodbye",
+        )
+        .unwrap();
+
+    let out = cli_on_machine(&fake, remote_id, &["--json", "task", "list"]).await;
+    let tasks: Vec<Value> = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        tasks
+            .iter()
+            .map(|t| (t["id"].as_i64().unwrap(), t["title"].as_str().unwrap()))
+            .collect::<Vec<_>>(),
+        vec![(remote_id, "remote")]
+    );
+    let out = cli_on_machine(&fake, remote_id, &["review", "comments", "--local"]).await;
+    let prompt = String::from_utf8_lossy(&out.stdout);
+    assert!(prompt.contains("please say goodbye"), "{prompt}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_task_new_on_machine_creates_task_on_same_machine() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, project_id, _) = machine_and_project(&d, dir.path()).await;
+    let (_, remote_id) = task_on_machine(&d, &m, project_id).await;
+
+    // The hub creates the child down the same pipe while this call is still open.
+    let out = cli_on_machine(&fake, remote_id, &["--json", "task", "new", "child"]).await;
+    let created: TaskCreateResult = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(created.task.title, "child");
+    assert_eq!(created.task.project_id, project_id);
+
+    let hub_tasks: Vec<Task> = d.call(method::TASK_LIST, TaskListParams::default()).await;
+    let child = hub_tasks.iter().find(|t| t.title == "child").unwrap();
+    assert_eq!(child.machine_id, Some(m.id));
+    assert_eq!(
+        hub_store(&d).task_remote(child.id).unwrap(),
+        Some((m.id, created.task.id))
+    );
+    let on_machine = machine_store(&fake).task(created.task.id).unwrap().unwrap();
+    assert_eq!(on_machine.title, "child");
+    assert!(on_machine
+        .worktree_path
+        .starts_with(&fake.machine_home().display().to_string()));
+    assert!(Path::new(&on_machine.worktree_path).is_dir());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn forwarded_call_without_hub_fails_fast() {
+    let (d, _fake) = start_with_role(Role::Machine).await;
+    let socket = d._home.path().join("asterismd.sock");
+    let cli = Client::connect_unix(&socket).await.unwrap();
+    hello(&cli).await;
+
+    let started = Instant::now();
+    let err = rpc_error(
+        cli.call::<_, Vec<Task>>(method::TASK_LIST, TaskListParams::default())
+            .await,
+    );
+    assert_eq!(err.kind(), ErrorKind::MachineOffline);
+    assert!(err.message.contains("the hub is not connected"), "{err}");
+    assert!(started.elapsed() < Duration::from_secs(1));
+
+    let hub = Client::connect_unix(&socket).await.unwrap();
+    hello(&hub).await;
+    let _: Value = hub
+        .call(method::UPLINK_REGISTER, Value::Null)
+        .await
+        .unwrap();
+    let mut forwarded = hub.take_requests().unwrap();
+    // The uplink's own calls are served by the machine, never sent back up.
+    let own: Vec<Task> = hub
+        .call(method::TASK_LIST, TaskListParams::default())
+        .await
+        .unwrap();
+    assert!(own.is_empty());
+
+    let pending = tokio::spawn(async move {
+        cli.call::<_, Vec<Task>>(method::TASK_LIST, TaskListParams::default())
+            .await
+    });
+    let line = tokio::time::timeout(DEADLINE, forwarded.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let request: asterism_proto::rpc::Request = serde_json::from_str(&line).unwrap();
+    assert_eq!(request.method, method::TASK_LIST);
+    drop(forwarded);
+    drop(hub);
+    let err = rpc_error(
+        tokio::time::timeout(DEADLINE, pending)
+            .await
+            .unwrap()
+            .unwrap(),
+    );
+    assert_eq!(err.kind(), ErrorKind::MachineOffline);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn uplink_register_forbidden_on_node() {
+    let (d, _fake) = start_with_fake_ssh().await;
+    let err = rpc_error(
+        d.client
+            .call::<_, Value>(method::UPLINK_REGISTER, Value::Null)
+            .await,
+    );
+    assert_eq!(err.kind(), ErrorKind::Forbidden);
 }

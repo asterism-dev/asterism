@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use asterism_proto::rpc::{ErrorKind, Request, Response, RpcError};
@@ -12,7 +13,7 @@ use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::{JoinHandle, JoinSet};
 
 use crate::daemon::Daemon;
@@ -54,6 +55,66 @@ struct Conn {
     out: mpsc::Sender<String>,
     forwarders: Mutex<HashMap<String, JoinHandle<()>>>,
     peer: Peer,
+    /// Set once the hub registers this connection as a machine daemon's uplink.
+    uplink: OnceLock<Arc<Uplink>>,
+}
+
+/// The hub's connection on a machine daemon; the machine's calls to the hub go out over it.
+pub(crate) struct Uplink {
+    out: mpsc::Sender<String>,
+    next_id: AtomicU64,
+    /// `None` once the connection is gone, so no call can start waiting on it afterwards.
+    pending: Mutex<Option<HashMap<u64, oneshot::Sender<Response>>>>,
+}
+
+impl Uplink {
+    fn resolve(&self, line: &str) {
+        let Ok(response) = serde_json::from_str::<Response>(line) else {
+            return;
+        };
+        if let Some(tx) = lock(&self.pending)
+            .as_mut()
+            .and_then(|pending| pending.remove(&response.id))
+        {
+            let _ = tx.send(response);
+        }
+    }
+
+    /// Drops every waiting call's sender, which fails it with `MachineOffline`.
+    fn close(&self) {
+        lock(&self.pending).take();
+    }
+}
+
+fn hub_offline() -> Error {
+    Error::new(ErrorKind::MachineOffline, "the hub is not connected")
+}
+
+/// Sends one call up to the hub and waits for its answer for as long as the uplink lives.
+async fn forward(daemon: &Daemon, method_name: &str, params: Value) -> Result<Value> {
+    let uplink = daemon.uplink().ok_or_else(hub_offline)?;
+    let id = uplink.next_id.fetch_add(1, Ordering::Relaxed);
+    let (tx, rx) = oneshot::channel();
+    lock(&uplink.pending)
+        .as_mut()
+        .ok_or_else(hub_offline)?
+        .insert(id, tx);
+    let line = serde_json::to_string(&Request::new(id, method_name, params))
+        .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+    uplink.out.send(line).await.map_err(|_| hub_offline())?;
+    let response = rx.await.map_err(|_| hub_offline())?;
+    match response.error {
+        Some(e) => Err(Error::new(e.kind(), e.message)),
+        None => Ok(response.result.unwrap_or(Value::Null)),
+    }
+}
+
+/// On a machine, hub-owned calls from local clients go to the hub; the uplink's own calls never do, or they would loop.
+fn forwards(daemon: &Daemon, conn: &Conn, method_name: &str) -> bool {
+    daemon.role() == Role::Machine
+        && conn.uplink.get().is_none()
+        && method_name != method::HELLO
+        && machines::peer::machine_allowed(method_name)
 }
 
 impl Conn {
@@ -131,6 +192,7 @@ pub async fn run_conn(
         out,
         forwarders: Mutex::new(HashMap::new()),
         peer,
+        uplink: OnceLock::new(),
     });
     // Dropping the set on disconnect aborts in-flight requests such as an unbounded `wait`.
     let mut requests = JoinSet::new();
@@ -140,9 +202,19 @@ pub async fn run_conn(
     }
     requests.shutdown().await;
     conn.stop_all();
+    if let Some(uplink) = conn.uplink.get() {
+        uplink.close();
+    }
 }
 
 async fn handle_line(daemon: Arc<Daemon>, conn: Arc<Conn>, line: String) {
+    if let Some(uplink) = conn.uplink.get() {
+        // Lines without a method are the hub's answers to calls this machine forwarded.
+        if serde_json::from_str::<Value>(&line).is_ok_and(|v| v.get("method").is_none()) {
+            uplink.resolve(&line);
+            return;
+        }
+    }
     let request = match serde_json::from_str::<Request>(&line) {
         Ok(request) => request,
         Err(e) => {
@@ -179,7 +251,12 @@ async fn handle_line(daemon: Arc<Daemon>, conn: Arc<Conn>, line: String) {
         attach(&daemon, &conn, id, request.params).await;
         return;
     }
-    let response = match dispatch(&daemon, &conn, request).await {
+    let result = if forwards(&daemon, &conn, &request.method) {
+        forward(&daemon, &request.method, request.params).await
+    } else {
+        dispatch(&daemon, &conn, request).await
+    };
+    let response = match result {
         Ok(result) => Response::ok(id, result),
         Err(e) => Response::err(id, e.into()),
     };
@@ -282,6 +359,23 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
             daemon
                 .machines()
                 .retry(params::<MachineIdParams>(raw)?.machine_id)?;
+            Ok(Value::Null)
+        }
+        method::UPLINK_REGISTER => {
+            if daemon.role() != Role::Machine || conn.peer != Peer::Local {
+                return Err(Error::new(
+                    ErrorKind::Forbidden,
+                    "only the hub can register as a machine daemon's uplink",
+                ));
+            }
+            let uplink = conn.uplink.get_or_init(|| {
+                Arc::new(Uplink {
+                    out: conn.out.clone(),
+                    next_id: AtomicU64::new(1),
+                    pending: Mutex::new(Some(HashMap::new())),
+                })
+            });
+            daemon.set_uplink(uplink);
             Ok(Value::Null)
         }
         method::MACHINE_TEST => to_value(
