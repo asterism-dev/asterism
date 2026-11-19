@@ -190,6 +190,27 @@ async fn install_uploads_binaries_once_into_a_home_with_spaces() {
 }
 
 #[tokio::test]
+async fn changed_cli_is_uploaded_again() {
+    let fake = FakeSsh::new();
+    let ssh = fake.ssh("vm");
+    let platform = install::probe(&ssh).await.unwrap();
+    let first = install::ensure_installed(&ssh, &platform, &fake.bins_dir())
+        .await
+        .unwrap();
+    let cli = fake.bins_dir().join(host_platform()).join("asterism");
+    let mut changed = std::fs::read(&cli).unwrap();
+    changed.push(0);
+    std::fs::remove_file(&cli).unwrap();
+    std::fs::write(&cli, &changed).unwrap();
+    let second = install::ensure_installed(&ssh, &platform, &fake.bins_dir())
+        .await
+        .unwrap();
+    assert_ne!(first.key, second.key);
+    let dir = fake.home().join(".asterism-machine/bin").join(&second.key);
+    assert_eq!(std::fs::read(dir.join("asterism")).unwrap(), changed);
+}
+
+#[tokio::test]
 async fn install_fails_without_binaries_for_the_platform() {
     let fake = FakeSsh::new();
     let empty = tempfile::tempdir().unwrap();

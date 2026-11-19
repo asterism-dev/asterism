@@ -152,7 +152,7 @@ pub async fn ensure_installed(
             .map_err(|e| InstallError::MissingBinaries(format!("{}: {e}", path.display())))?;
         hashes.push(hash);
     }
-    let key = hashes[0][..16].to_string();
+    let key = format!("{:x}", Sha256::digest(hashes.concat()))[..16].to_string();
 
     let check = format!(r#"{INSTALL_DIR}; test -f "$d/ok" && echo installed || true"#);
     if run(ssh, &check, &[&key], None).await?.trim() == "installed" {
