@@ -45,6 +45,7 @@ pub mod method {
     pub const TASK_RESTORE: &str = "task.restore";
     pub const TASK_DELETE_CHECK: &str = "task.delete_check";
     pub const TASK_DELETE: &str = "task.delete";
+    pub const TASK_DELETE_MANY: &str = "task.delete_many";
     pub const SESSION_LIST: &str = "session.list";
     pub const SESSION_START: &str = "session.start";
     pub const SESSION_KILL: &str = "session.kill";
@@ -1112,6 +1113,13 @@ pub struct TaskDeleteParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskDeleteManyParams {
+    pub task_ids: Vec<i64>,
+    #[serde(default)]
+    pub delete_branch: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskDeleteCheck {
     pub dirty: bool,
     pub branch: String,
@@ -1687,6 +1695,7 @@ pub struct AgentConfigSetParams {
 pub enum ActivityKind {
     Clone,
     CreateTask,
+    DeleteTasks,
 }
 
 /// `Pending` is only used on steps.

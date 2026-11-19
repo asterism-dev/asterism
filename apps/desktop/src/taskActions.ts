@@ -1,7 +1,5 @@
 import { ask } from '@tauri-apps/plugin-dialog';
 import { api, errorMessage } from './api';
-import { floatKey, workspaceKey } from './dock/model';
-import { remove } from './dock/storage';
 import { toast } from './store';
 import type { Task } from './types';
 
@@ -36,18 +34,10 @@ export async function deleteTask(task: Task) {
         kind: 'warning',
       });
     }
-    const warning = await removeTask(task, deleteBranch);
-    if (warning) toast(`Deleted with a warning: ${warning}`);
+    await api.deleteTasks([task.id], deleteBranch);
   } catch (e) {
     report(e);
   }
-}
-
-async function removeTask(task: Task, deleteBranch: boolean): Promise<string | null> {
-  const result = await api.deleteTask(task.id, deleteBranch);
-  remove(workspaceKey(task.id));
-  remove(floatKey(task.id));
-  return result.warning;
 }
 
 // Sequential: each call runs git against the same repo, and one failure shouldn't stop the rest.
@@ -71,5 +61,11 @@ export const archiveTasks = (tasks: Task[]) =>
 export const restoreTasks = (tasks: Task[]) =>
   eachTask(tasks, 'Restored', (t) => api.restoreTask(t.id));
 
+/** Returns once the daemon has started; progress shows up as an activity. */
 export const deleteTasks = (tasks: Task[], deleteBranches: boolean) =>
-  eachTask(tasks, 'Deleted', (t) => removeTask(t, deleteBranches));
+  api
+    .deleteTasks(
+      tasks.map((t) => t.id),
+      deleteBranches,
+    )
+    .catch(report);
