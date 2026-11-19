@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::paths::Paths;
+use asterism_proto::types::Role;
 use catalog::InstalledFile;
 use process::{Backend, BackendConfig, HostFn};
 use registry::{Registry, Sources};
@@ -37,19 +38,34 @@ pub struct PluginSet {
 }
 
 impl PluginSet {
-    pub fn load(paths: &Paths, builtin_dir: &Path, runtime: &Runtime, host: &HostFn) -> Self {
-        let links = registry::load_links(&paths.plugin_links()).unwrap_or_else(|e| {
-            eprintln!(
-                "asterismd: ignoring {}: {e}",
-                paths.plugin_links().display()
-            );
+    /// On a machine only built-in agent plugins run; linked and installed ones stay on the hub.
+    pub fn load(
+        paths: &Paths,
+        builtin_dir: &Path,
+        runtime: &Runtime,
+        host: &HostFn,
+        role: Role,
+    ) -> Self {
+        let machine = role == Role::Machine;
+        let links = if machine {
             BTreeMap::new()
-        });
-        let installed =
+        } else {
+            registry::load_links(&paths.plugin_links()).unwrap_or_else(|e| {
+                eprintln!(
+                    "asterismd: ignoring {}: {e}",
+                    paths.plugin_links().display()
+                );
+                BTreeMap::new()
+            })
+        };
+        let installed = if machine {
+            InstalledFile::default()
+        } else {
             catalog::load_installed(&paths.plugin_installed_file()).unwrap_or_else(|e| {
                 eprintln!("asterismd: ignoring {e}");
                 InstalledFile::default()
-            });
+            })
+        };
         let installed_dirs = installed
             .plugins
             .iter()
@@ -75,6 +91,7 @@ impl PluginSet {
             links,
             installed: installed_dirs,
             disabled: installed.disabled.clone(),
+            agents_only: machine,
         });
         let mut backends = HashMap::new();
         for plugin in registry.plugins().iter().filter(|p| p.is_ok()) {

@@ -252,7 +252,7 @@ impl Daemon {
         };
         Ok(Arc::new_cyclic(move |daemon| {
             let host = crate::rpc::host_fn(daemon.clone());
-            let plugins = PluginSet::load(&paths, &builtin_dir, &runtime, &host);
+            let plugins = PluginSet::load(&paths, &builtin_dir, &runtime, &host, options.role);
             let machines = crate::machines::Machines::new(
                 daemon.clone(),
                 options.role,
@@ -932,6 +932,7 @@ impl Daemon {
             &self.builtin_dir,
             &self.runtime,
             &self.host,
+            self.options.role,
         ));
         let old = std::mem::replace(
             &mut *self
@@ -3020,11 +3021,14 @@ impl Daemon {
         let session = self.session(id)?;
         self.emit(Event::SessionChanged(session.clone()));
         self.touch_task(task.id);
-        let daemon = self.clone();
-        let project_id = task.project_id;
-        tokio::spawn(async move {
-            let _ = daemon.refresh_prs(project_id).await;
-        });
+        // A machine has no forge plugins; the hub tracks PRs.
+        if self.options.role != Role::Machine {
+            let daemon = self.clone();
+            let project_id = task.project_id;
+            tokio::spawn(async move {
+                let _ = daemon.refresh_prs(project_id).await;
+            });
+        }
         Ok(session)
     }
 

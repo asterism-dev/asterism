@@ -1,5 +1,6 @@
 mod common;
 
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -332,6 +333,111 @@ async fn added_machine_becomes_ready() {
         .home()
         .join(".asterism-machine/asterismd.sock")
         .exists());
+}
+
+#[tokio::test]
+async fn machine_install_includes_agent_backend() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    let key = std::fs::read_dir(fake.home().join(".asterism-machine/bin"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mode = std::fs::metadata(key.join("asterism-plugin-claude"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_ne!(mode & 0o111, 0, "not executable: {mode:o}");
+}
+
+fn write_script(path: &Path, body: &str) {
+    std::fs::write(path, format!("#!/bin/sh\n{body}")).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn machine_daemon_finds_agent_on_login_path() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let agentbin = tmp.path().join("agentbin");
+    std::fs::create_dir(&agentbin).unwrap();
+    write_script(&agentbin.join("claude"), "exit 0\n");
+    let shell = tmp.path().join("login-shell");
+    write_script(
+        &shell,
+        &format!(
+            "echo 'Welcome to the machine'\nif [ \"$1\" = -l ]; then\n  shift\n  PATH='{}':\"$PATH\"\n  export PATH\nfi\nexec /bin/sh \"$@\"\n",
+            agentbin.display()
+        ),
+    );
+    fake.set_login_shell(&shell);
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+
+    let client = machine_client(&fake).await;
+    let agents: Vec<AgentInfo> = client.call(method::AGENT_LIST, Value::Null).await.unwrap();
+    assert!(
+        agents.iter().any(|a| a.name == "claude" && a.available),
+        "{agents:?}"
+    );
+
+    let origin = bare_origin(tmp.path());
+    let project: Project = client
+        .call(method::PROJECT_ENSURE, ProjectEnsureParams { url: origin })
+        .await
+        .unwrap();
+    let created: TaskCreateResult = client
+        .call(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id: project.id,
+                title: "path".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let session: Session = client
+        .call(
+            method::SESSION_START,
+            SessionStartParams {
+                task_id: created.task.id,
+                kind: SessionKind::Command {
+                    argv: vec![
+                        "sh".into(),
+                        "-c".into(),
+                        "echo \"P=$PATH\"; sleep 30".into(),
+                    ],
+                },
+                prompt: None,
+            },
+        )
+        .await
+        .unwrap();
+    let want = agentbin.display().to_string();
+    let mut text = String::new();
+    for _ in 0..250 {
+        let read: SessionReadResult = client
+            .call(
+                method::SESSION_READ,
+                SessionReadParams {
+                    session_id: session.id,
+                    lines: 50,
+                },
+            )
+            .await
+            .unwrap();
+        // The terminal wraps the long PATH.
+        text = read.text.replace('\n', "");
+        if text.contains(&want) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(text.contains(&want), "{text}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

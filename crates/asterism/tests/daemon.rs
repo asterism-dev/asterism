@@ -1115,6 +1115,30 @@ fn hello_reports_role_and_executable() {
 }
 
 #[test]
+fn machine_role_loads_only_builtin_agent_plugins() {
+    let home = tempfile::tempdir().unwrap();
+    let paths = Paths {
+        home: home.path().to_path_buf(),
+    };
+    common::link_fixture(&paths);
+    let daemon = Daemon::with_options(
+        paths,
+        asterism_core::daemon::DaemonOptions {
+            role: Role::Machine,
+            ..common::daemon_options()
+        },
+    )
+    .unwrap();
+    let names: Vec<String> = daemon
+        .plugin_list()
+        .unwrap()
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    assert_eq!(names, ["claude"]);
+}
+
+#[test]
 fn hello_defaults_to_node_role() {
     assert_eq!(hello_with(common::daemon_options()).role, Role::Node);
 }
