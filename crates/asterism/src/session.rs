@@ -268,7 +268,7 @@ impl Pty {
 
     /// SIGKILL for processes that ignore the hangup `kill` sends.
     pub fn force_kill(&self) -> io::Result<()> {
-        let Some(pid) = self.pid.and_then(|pid| libc::pid_t::try_from(pid).ok()) else {
+        let Some(pid) = killable_pid(self.pid) else {
             return Ok(());
         };
         // kill(2), not the `kill` binary: procps-ng 4.0.4 (Ubuntu 24.04) can exit 0 for `-KILL -<pgid>` without signalling.
@@ -279,6 +279,12 @@ impl Pty {
         }
         Ok(())
     }
+}
+
+// kill(-0) would hit the daemon's own process group and kill(-1) every process it may signal.
+fn killable_pid(pid: Option<u32>) -> Option<libc::pid_t> {
+    pid.and_then(|pid| libc::pid_t::try_from(pid).ok())
+        .filter(|&pid| pid > 1)
 }
 
 #[cfg(test)]
@@ -293,5 +299,14 @@ mod tests {
         assert!(!ended_by_signal(&ExitStatus::with_exit_code(0)));
         assert!(!ended_by_signal(&ExitStatus::with_exit_code(1)));
         assert!(!ended_by_signal(&ExitStatus::with_exit_code(130)));
+    }
+
+    #[test]
+    fn only_real_child_pids_are_signalled() {
+        assert_eq!(killable_pid(None), None);
+        assert_eq!(killable_pid(Some(0)), None);
+        assert_eq!(killable_pid(Some(1)), None);
+        assert_eq!(killable_pid(Some(u32::MAX)), None);
+        assert_eq!(killable_pid(Some(4242)), Some(4242));
     }
 }
