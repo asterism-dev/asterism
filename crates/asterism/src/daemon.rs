@@ -3582,6 +3582,11 @@ impl Daemon {
             if !resumed {
                 self.store()
                     .set_session_status(session.id, SessionStatus::Exited)?;
+                // A hub may have listed this session before the write; its mirror follows the event.
+                self.emit(Event::SessionStatusChanged {
+                    session_id: session.id,
+                    status: SessionStatus::Exited,
+                });
             }
         }
         Ok(())

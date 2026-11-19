@@ -533,11 +533,21 @@ async fn restart_marks_non_resumable_sessions_exited() {
         common::daemon_options(),
     )
     .unwrap();
+    let mut events = restarted.subscribe();
     restarted.recover().await.unwrap();
     assert_eq!(
         restarted.session(session.id).unwrap().status,
         SessionStatus::Exited
     );
+    // A hub mirroring this daemon may have listed the session before recover marked it.
+    let mut announced = false;
+    while let Ok(event) = events.try_recv() {
+        announced |= matches!(
+            event,
+            Event::SessionStatusChanged { session_id, status: SessionStatus::Exited } if session_id == session.id
+        );
+    }
+    assert!(announced, "recover did not announce the exited session");
     env.daemon.kill_session(session.id).unwrap();
 }
 
