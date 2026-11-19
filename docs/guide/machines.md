@@ -23,7 +23,7 @@ In **New task**, pick the machine under **Machine** (default: Local). The dialog
 
 - The project needs an `origin` remote, and the machine needs access to it with its own git credentials. Asterism never sends your credentials, `secrets.toml` or plugin settings to a machine.
 - The machine clones `origin` into `~/.asterism-machine/repos/<owner>/<repo>` on first use, creates the branch and worktree there and always pushes the branch to `origin`, so pull request status and review work on the Mac. **Checkout branch** works for a branch that is already on `origin`.
-- If the machine cannot clone or push, the dialog shows the machine's error and no task is left behind.
+- If the machine cannot clone or create the branch, the dialog shows the machine's error and no task is left behind. If only the push fails, Asterism shows the error as a warning and keeps the task.
 
 Tasks on a machine show a machine badge in the sidebar and the task header.
 
