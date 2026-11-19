@@ -1749,6 +1749,88 @@ async fn lifecycle_fails_when_machine_offline() {
     assert!(!stored.archived);
 }
 
+/// Waits for the `session.removed` and `task.removed` events that deleting `task_id` emits.
+async fn expect_removed(events: &mut UnboundedReceiver<Event>, task_id: i64, session_id: i64) {
+    let (mut session_removed, mut task_removed) = (false, false);
+    while !(session_removed && task_removed) {
+        match tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            Event::SessionRemoved { session_id: id } if id == session_id => session_removed = true,
+            Event::TaskRemoved { task_id: id } if id == task_id => task_removed = true,
+            _ => {}
+        }
+    }
+}
+
+async fn delete_hub_task(d: &D, task_id: i64) {
+    let _: TaskDeleteResult = d
+        .call(
+            method::TASK_DELETE,
+            TaskDeleteParams {
+                task_id,
+                delete_branch: true,
+            },
+        )
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn archived_task_of_a_removed_machine_can_be_deleted() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, task, _worktree) = remote_task(&d, &fake, dir.path()).await;
+    let session = start_remote_shell(&d, task.id).await;
+    let _: Task = d
+        .call(
+            method::TASK_ARCHIVE,
+            TaskArchiveParams {
+                task_id: task.id,
+                force: false,
+            },
+        )
+        .await;
+    let _: Value = d
+        .call(method::MACHINE_REMOVE, MachineIdParams { machine_id: m.id })
+        .await;
+    let mut events = d.events();
+
+    delete_hub_task(&d, task.id).await;
+
+    assert!(hub_store(&d).task(task.id).unwrap().is_none());
+    assert!(hub_store(&d).session(session.id).unwrap().is_none());
+    expect_removed(&mut events, task.id, session.id).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn task_gone_on_its_machine_can_be_deleted() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_m, task, _worktree) = remote_task(&d, &fake, dir.path()).await;
+    let session = start_remote_shell(&d, task.id).await;
+    let (_, remote_id) = hub_store(&d).task_remote(task.id).unwrap().unwrap();
+    let _: TaskDeleteResult = machine_client(&fake)
+        .await
+        .call(
+            method::TASK_DELETE,
+            TaskDeleteParams {
+                task_id: remote_id,
+                delete_branch: true,
+            },
+        )
+        .await
+        .unwrap();
+    let mut events = d.events();
+
+    delete_hub_task(&d, task.id).await;
+
+    assert!(hub_store(&d).task(task.id).unwrap().is_none());
+    assert!(hub_store(&d).session(session.id).unwrap().is_none());
+    expect_removed(&mut events, task.id, session.id).await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn hub_restart_does_not_spawn_remote_sessions_locally() {
     let (_daemon, d, fake) = hub(DEADLINE).await;

@@ -2519,10 +2519,15 @@ impl Daemon {
                 task_id: remote,
                 delete_branch,
             };
-            let result: TaskDeleteResult = self
+            let result = match self
                 .machines()
                 .call(machine, method::TASK_DELETE, params)
-                .await?;
+                .await
+            {
+                // The machine was removed or no longer has the task, so nothing is left to delete there.
+                Err(e) if e.kind == ErrorKind::NotFound => TaskDeleteResult { warning: None },
+                other => other?,
+            };
             self.forget_task(task_id)?;
             return Ok(result);
         }
