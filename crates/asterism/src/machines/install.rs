@@ -93,7 +93,11 @@ impl fmt::Display for Platform {
 
 #[derive(Debug)]
 pub enum InstallError {
-    Ssh(String),
+    /// `status` is the ssh exit code; 255 means ssh itself failed, not the remote command.
+    Ssh {
+        status: Option<i32>,
+        line: String,
+    },
     Unsupported(String),
     MissingBinaries(String),
     Checksum,
@@ -102,7 +106,7 @@ pub enum InstallError {
 impl fmt::Display for InstallError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            InstallError::Ssh(line) => write!(f, "ssh failed: {line}"),
+            InstallError::Ssh { line, .. } => write!(f, "ssh failed: {line}"),
             InstallError::Unsupported(uname) => write!(f, "unsupported platform: {uname}"),
             InstallError::MissingBinaries(path) => write!(f, "missing machine binaries: {path}"),
             InstallError::Checksum => f.write_str("uploaded binaries failed the checksum"),
@@ -210,7 +214,10 @@ async fn run(
         .stdin(stdin.map_or_else(Stdio::null, Stdio::from))
         .output()
         .await
-        .map_err(|e| InstallError::Ssh(e.to_string()))?;
+        .map_err(|e| InstallError::Ssh {
+            status: None,
+            line: e.to_string(),
+        })?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         let line = stderr
@@ -218,7 +225,10 @@ async fn run(
             .rev()
             .find(|l| !l.trim().is_empty())
             .map_or_else(|| format!("ssh exited with {}", out.status), str::to_string);
-        return Err(InstallError::Ssh(line));
+        return Err(InstallError::Ssh {
+            status: out.status.code(),
+            line,
+        });
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }

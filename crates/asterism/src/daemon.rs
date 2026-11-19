@@ -245,6 +245,7 @@ impl Daemon {
             let plugins = PluginSet::load(&paths, &builtin_dir, &runtime, &host);
             let machines = crate::machines::Machines::new(
                 daemon.clone(),
+                options.role,
                 crate::machines::conn::Settings {
                     ssh_bin: options.ssh_bin.clone(),
                     bins_dir: options.machine_bins_dir.clone(),

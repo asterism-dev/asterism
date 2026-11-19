@@ -33,6 +33,10 @@ impl D {
 }
 
 async fn start_with_fake_ssh() -> (D, FakeSsh) {
+    start_with_role(Role::Node).await
+}
+
+async fn start_with_role(role: Role) -> (D, FakeSsh) {
     let fake = FakeSsh::new();
     let home = tempfile::tempdir().unwrap();
     let paths = Paths {
@@ -45,6 +49,7 @@ async fn start_with_fake_ssh() -> (D, FakeSsh) {
         machine_health_interval: Duration::from_millis(200),
         machine_health_timeout: Duration::from_secs(2),
         machine_backoff_max: Duration::from_millis(300),
+        role,
         ..common::daemon_options()
     };
     tokio::spawn(asterism_core::run_with_options(paths, options));
@@ -201,7 +206,10 @@ async fn ssh_failure_reports_the_last_stderr_line() {
     let fake = FakeSsh::new();
     fake.fail_with("Permission denied (publickey).", 255);
     let err = install::probe(&fake.ssh("vm")).await.unwrap_err();
-    assert!(matches!(err, InstallError::Ssh(ref line) if line == "Permission denied (publickey)."));
+    assert!(matches!(
+        err,
+        InstallError::Ssh { status: Some(255), ref line } if line == "Permission denied (publickey)."
+    ));
 }
 
 #[tokio::test]
@@ -386,4 +394,53 @@ async fn node_daemon_on_the_machine_is_blocked() {
     );
     fake.stop_daemon();
     node.wait().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn remote_command_permission_denied_is_offline_not_blocked() {
+    let (d, fake) = start_with_fake_ssh().await;
+    fake.fail_with("mkdir: /x: Permission denied", 1);
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Offline).await);
+    assert!(machine(&d, m.id)
+        .await
+        .status
+        .error
+        .unwrap()
+        .contains("Permission denied"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn machine_role_daemon_refuses_to_manage_machines() {
+    let (d, fake) = start_with_role(Role::Machine).await;
+    let add = d
+        .client
+        .call::<_, Machine>(
+            method::MACHINE_ADD,
+            MachineAddParams {
+                name: "vm".into(),
+                destination: "vm".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(add, ClientError::Rpc(ref e) if e.kind() == ErrorKind::Forbidden));
+    let test = d
+        .client
+        .call::<_, MachineTestResult>(
+            method::MACHINE_TEST,
+            MachineTestParams {
+                destination: "vm".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(test, ClientError::Rpc(ref e) if e.kind() == ErrorKind::Forbidden));
+    let retry = d
+        .client
+        .call::<_, Value>(method::MACHINE_RETRY, MachineIdParams { machine_id: 1 })
+        .await
+        .unwrap_err();
+    assert!(matches!(retry, ClientError::Rpc(ref e) if e.kind() == ErrorKind::Forbidden));
+    assert_eq!(fake.invocations(), 0);
 }

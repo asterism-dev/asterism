@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use asterism_proto::client::Client;
 use asterism_proto::rpc::ErrorKind;
-use asterism_proto::types::{Event, Machine, MachineStatus, MachineTestResult};
+use asterism_proto::types::{Event, Machine, MachineStatus, MachineTestResult, Role};
 use tokio::task::JoinHandle;
 
 use crate::daemon::Daemon;
@@ -23,14 +23,16 @@ struct Live {
 /// Registered machines and one supervised connection task per machine.
 pub struct Machines {
     daemon: Weak<Daemon>,
+    role: Role,
     settings: Arc<Settings>,
     live: Mutex<HashMap<i64, Live>>,
 }
 
 impl Machines {
-    pub(crate) fn new(daemon: Weak<Daemon>, settings: Settings) -> Self {
+    pub(crate) fn new(daemon: Weak<Daemon>, role: Role, settings: Settings) -> Self {
         Self {
             daemon,
+            role,
             settings: Arc::new(settings),
             live: Mutex::new(HashMap::new()),
         }
@@ -40,6 +42,17 @@ impl Machines {
         self.daemon
             .upgrade()
             .ok_or_else(|| Error::new(ErrorKind::Internal, "the daemon is shutting down"))
+    }
+
+    /// Only a node opens ssh connections; a machine daemon must never reach further hosts.
+    fn require_node(&self) -> Result<()> {
+        if self.role != Role::Node {
+            return Err(Error::new(
+                ErrorKind::Forbidden,
+                "machines can only be managed from a node",
+            ));
+        }
+        Ok(())
     }
 
     pub fn list(&self) -> Result<Vec<Machine>> {
@@ -55,6 +68,7 @@ impl Machines {
     }
 
     pub fn add(&self, name: &str, destination: &str) -> Result<Machine> {
+        self.require_node()?;
         let name = name.trim();
         if name.is_empty() {
             return Err(Error::new(ErrorKind::InvalidParams, "name is empty"));
@@ -74,8 +88,8 @@ impl Machines {
         Ok(self.connect(stored))
     }
 
-    /// Node role only: a machine daemon must never open connections of its own.
     pub fn start_stored(&self) -> Result<()> {
+        self.require_node()?;
         let stored = self.daemon()?.store().machines()?;
         for m in stored {
             self.connect(m);
@@ -115,6 +129,7 @@ impl Machines {
     }
 
     pub fn retry(&self, id: i64) -> Result<()> {
+        self.require_node()?;
         match lock(&self.live).get(&id) {
             Some(live) => {
                 live.shared.retry();
@@ -128,6 +143,7 @@ impl Machines {
     }
 
     pub async fn test(&self, destination: &str) -> Result<MachineTestResult> {
+        self.require_node()?;
         check_destination(destination)?;
         let platform = conn::test(&self.settings, destination)
             .await

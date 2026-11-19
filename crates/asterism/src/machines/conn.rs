@@ -31,6 +31,7 @@ const AUTH_ERRORS: &[&str] = &[
     "Host key verification failed",
     "REMOTE HOST IDENTIFICATION HAS CHANGED",
 ];
+const SSH_FAILED: i32 = 255;
 const NOT_A_MACHINE: &str = "not an asterism machine daemon";
 
 pub(crate) struct Settings {
@@ -59,8 +60,8 @@ impl Failure {
     }
 }
 
-fn classify(line: String) -> Failure {
-    if AUTH_ERRORS.iter().any(|e| line.contains(e)) {
+fn classify(status: Option<i32>, line: String) -> Failure {
+    if status == Some(SSH_FAILED) && AUTH_ERRORS.iter().any(|e| line.contains(e)) {
         Failure::Blocked(line)
     } else {
         Failure::Offline(line)
@@ -69,7 +70,7 @@ fn classify(line: String) -> Failure {
 
 fn install_failure(e: InstallError) -> Failure {
     match e {
-        InstallError::Ssh(line) => classify(line),
+        InstallError::Ssh { status, line } => classify(status, line),
         e => Failure::Blocked(e.to_string()),
     }
 }
@@ -335,16 +336,21 @@ impl Link {
     }
 
     /// Prefers ssh's own last stderr line, which says why the connection went away.
-    async fn failure(self, error: ClientError) -> Failure {
+    async fn failure(mut self, error: ClientError) -> Failure {
         if let ClientError::Rpc(e) = error {
             return Failure::Offline(e.to_string());
         }
+        let status = tokio::time::timeout(STDERR_GRACE, self.child.wait())
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .and_then(|status| status.code());
         let line = tokio::time::timeout(STDERR_GRACE, self.stderr)
             .await
             .ok()
             .and_then(Result::ok)
             .flatten();
-        classify(line.unwrap_or_else(|| error.to_string()))
+        classify(status, line.unwrap_or_else(|| error.to_string()))
     }
 }
 
