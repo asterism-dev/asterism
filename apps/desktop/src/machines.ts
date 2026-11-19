@@ -24,3 +24,7 @@ export function taskMachine(
   const m = machines.find((x) => x.id === task.machine_id);
   return { name: m?.name ?? `machine ${task.machine_id}`, ready: m?.status.state === 'ready' };
 }
+
+export function machineBlocksInput(task: Task, machines: Machine[], loaded: boolean): boolean {
+  return loaded && taskMachine(task, machines)?.ready === false;
+}

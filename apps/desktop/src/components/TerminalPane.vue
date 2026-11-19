@@ -9,7 +9,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { api, decodeBase64, errorMessage, RpcError } from '../api';
 import { openFile } from '../dock/main';
 import { findFileLinks } from '../fileLinks';
-import { taskMachine } from '../machines';
+import { machineBlocksInput } from '../machines';
 import { matchAction } from '../shortcuts';
 import { isConnected, refresh, state, toast } from '../store';
 
@@ -17,8 +17,7 @@ const props = defineProps<{ sessionId: number; taskId: number; live: boolean }>(
 
 const offline = computed(() => {
   const task = state.tasks.find((t) => t.id === props.taskId);
-  const machine = task && taskMachine(task, state.machines);
-  return !!machine && !machine.ready;
+  return !!task && machineBlocksInput(task, state.machines, state.machinesLoaded);
 });
 
 const RESIZE_DEBOUNCE_MS = 50;

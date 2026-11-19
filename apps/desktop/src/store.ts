@@ -43,6 +43,8 @@ export interface State {
   projects: Project[];
   workspaces: Workspace[];
   machines: Machine[];
+  /** Only the desktop app loads machines; elsewhere an empty list means unknown. */
+  machinesLoaded: boolean;
   activeWorkspace: number | null;
   workspaceTasks: Record<number, number>;
   tasks: Task[];
@@ -78,6 +80,7 @@ export function initialState(): State {
     projects: [],
     workspaces: [],
     machines: [],
+    machinesLoaded: false,
     activeWorkspace: null,
     workspaceTasks: {},
     tasks: [],

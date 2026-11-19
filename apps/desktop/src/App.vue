@@ -72,7 +72,10 @@ function onStatus(status: NodeStatus) {
     // Archived tasks keep their layout for a later restore, so only deleted tasks are pruned.
     api
       .machines()
-      .then((machines) => (state.machines = machines))
+      .then((machines) => {
+        state.machines = machines;
+        state.machinesLoaded = true;
+      })
       .catch(() => {});
     refresh()
       .then(() => api.allTasks())
