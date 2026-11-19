@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use asterism_proto::paths::Paths;
 use asterism_proto::rpc::ErrorKind;
-use asterism_proto::types::{ArchiveSettings, NodeConfig, NodeConfigInfo, PathSettings};
+use asterism_proto::types::{NodeConfig, NodeConfigInfo, PathSettings};
 
 use crate::agent_settings::{write_atomic, SAVE_LOCK};
 use crate::config::{Config, PathsConfig};
@@ -144,6 +144,7 @@ pub fn layout_owner_repo(origin: Option<&str>, project_name: &str) -> (String, S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use asterism_proto::types::ArchiveSettings;
 
     fn temp_paths() -> (tempfile::TempDir, Paths) {
         let dir = tempfile::tempdir().unwrap();
