@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { machineBlocksInput, machineStatusLine, taskMachine } from './machines';
+import { localTaskActions, machineBlocksInput, machineStatusLine, taskMachine } from './machines';
 import type { Machine, Task } from './types';
 
 it.each([
@@ -68,4 +68,13 @@ it('machineBlocksInput only blocks once the machine list is known', () => {
   expect(machineBlocksInput(task(7), [machine('ready')], true)).toBe(false);
   expect(machineBlocksInput(task(null), [], true)).toBe(false);
   expect(machineBlocksInput(task(7), [], false)).toBe(false);
+});
+
+it('localTaskActions offers agents and reveal only for local tasks', () => {
+  expect(localTaskActions(task(null), ['claude'])).toEqual({ agents: ['claude'], reveal: true });
+  expect(localTaskActions(task(undefined), ['claude'])).toEqual({
+    agents: ['claude'],
+    reveal: true,
+  });
+  expect(localTaskActions(task(7), ['claude'])).toEqual({ agents: [], reveal: false });
 });

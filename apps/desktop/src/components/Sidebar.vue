@@ -36,7 +36,7 @@ import {
 import { loadMoreOpen, saveMoreOpen } from '../workspaces';
 import { leaveSettings } from '../settingsGuard';
 import { startSession } from '../sessionActions';
-import { taskMachine } from '../machines';
+import { localTaskActions, taskMachine } from '../machines';
 import { withHint } from '../shortcuts';
 import { archiveTask, deleteTask } from '../taskActions';
 import Kbd from './Kbd.vue';
@@ -188,14 +188,19 @@ function projectMenu(e: MouseEvent, p: Project) {
 }
 
 function taskMenu(e: MouseEvent, t: Task) {
-  const agents = state.agents.filter((a) => a.available);
+  const local = localTaskActions(
+    t,
+    state.agents.filter((a) => a.available),
+  );
   showMenu(e, [
-    ...agents.map((a) => ({
+    ...local.agents.map((a) => ({
       label: `New ${a.display_name || a.name} session`,
       action: () => startSession(t.id, { type: 'agent', name: a.name }),
     })),
     { label: 'New shell', action: () => startSession(t.id, { type: 'shell' }) },
-    { label: 'Reveal worktree', action: () => revealItemInDir(t.worktree_path).catch(report) },
+    ...(local.reveal
+      ? [{ label: 'Reveal worktree', action: () => revealItemInDir(t.worktree_path).catch(report) }]
+      : []),
     {
       label: 'Copy branch name',
       action: () =>

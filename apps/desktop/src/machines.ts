@@ -28,3 +28,9 @@ export function taskMachine(
 export function machineBlocksInput(task: Task, machines: Machine[], loaded: boolean): boolean {
   return loaded && taskMachine(task, machines)?.ready === false;
 }
+
+/** Agents and Finder only work on this Mac, so machine tasks offer neither. */
+export function localTaskActions<A>(task: Task, agents: A[]): { agents: A[]; reveal: boolean } {
+  const local = task.machine_id == null;
+  return { agents: local ? agents : [], reveal: local };
+}
