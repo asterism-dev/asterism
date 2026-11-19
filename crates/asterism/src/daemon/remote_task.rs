@@ -92,14 +92,17 @@ impl Daemon {
         Ok(session)
     }
 
-    /// `session.wait` on a machine, bounded by `machine_call_timeout`.
+    /// `session.wait` on a machine, ending a second before `machine_call_timeout` so the machine's own timeout is what callers see.
     pub(super) async fn wait_remote(
         &self,
         machine_id: i64,
         remote_id: i64,
         params: SessionWaitParams,
     ) -> Result<SessionStatus> {
-        let cap = self.options.machine_call_timeout;
+        let cap = self
+            .options
+            .machine_call_timeout
+            .saturating_sub(std::time::Duration::from_secs(1));
         let wait = params
             .timeout_ms
             .map_or(cap, |ms| std::time::Duration::from_millis(ms).min(cap));

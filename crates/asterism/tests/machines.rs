@@ -1652,6 +1652,29 @@ async fn agent_session_on_machine_is_rejected() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn unbounded_remote_wait_times_out_on_the_machine_first() {
+    let (_daemon, d, fake) = hub(Duration::from_secs(2)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_m, task, _worktree) = remote_task(&d, &fake, dir.path()).await;
+    let session = start_remote_shell(&d, task.id).await;
+
+    let err = rpc_error(
+        d.client
+            .call::<_, SessionWaitResult>(
+                method::SESSION_WAIT,
+                SessionWaitParams {
+                    session_id: session.id,
+                    until: SessionStatus::Exited,
+                    timeout_ms: None,
+                },
+            )
+            .await,
+    );
+    assert_eq!(err.kind(), ErrorKind::Timeout);
+    assert!(err.message.contains("did not reach"), "{}", err.message);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn archive_restore_delete_remote_task() {
     let (d, fake) = start_with_fake_ssh().await;
     let dir = tempfile::tempdir().unwrap();
