@@ -938,3 +938,217 @@ async fn attach_output_streams_remote_output() {
         seen.extend(chunk);
     }
 }
+
+/// A ready machine and a hub project cloned from a fresh `file://` origin; returns the project id and origin URL.
+async fn machine_and_project(d: &D, dir: &Path) -> (Machine, i64, String) {
+    let m = add_machine(d, "vm").await;
+    assert!(eventually_state(d, m.id, MachineState::Ready).await);
+    let origin = bare_origin(dir);
+    let repo = dir.join("hub/demo");
+    std::fs::create_dir_all(repo.parent().unwrap()).unwrap();
+    common::run_git(dir, &["clone", "-q", &origin, &repo.display().to_string()]);
+    let project: Project = d
+        .call(
+            method::PROJECT_ADD,
+            ProjectAddParams {
+                path: repo.display().to_string(),
+                workspace_id: None,
+            },
+        )
+        .await;
+    (m, project.id, origin)
+}
+
+async fn machine_client(fake: &FakeSsh) -> Client {
+    let client = Client::connect_unix(&fake.machine_home().join("asterismd.sock"))
+        .await
+        .unwrap();
+    hello(&client).await;
+    client
+}
+
+async fn machine_tasks(fake: &FakeSsh) -> Vec<Task> {
+    machine_client(fake)
+        .await
+        .call(method::TASK_LIST, TaskListParams::default())
+        .await
+        .unwrap()
+}
+
+async fn create_error(d: &D, params: TaskCreateParams) -> asterism_proto::rpc::RpcError {
+    match d
+        .client
+        .call::<_, TaskCreateResult>(method::TASK_CREATE, params)
+        .await
+        .unwrap_err()
+    {
+        ClientError::Rpc(e) => e,
+        other => panic!("{other:?}"),
+    }
+}
+
+fn origin_branches(dir: &Path, origin: &str) -> String {
+    common::run_git(dir, &["ls-remote", "--heads", origin])
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn task_created_on_machine_is_pushed() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, project_id, origin) = machine_and_project(&d, dir.path()).await;
+
+    let created: TaskCreateResult = d
+        .call(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id,
+                title: "Remote work".into(),
+                machine_id: Some(m.id),
+                ..Default::default()
+            },
+        )
+        .await;
+
+    let task = created.task;
+    assert_eq!(task.machine_id, Some(m.id));
+    assert_eq!(task.branch, format!("asterism/{}-remote-work", task.id));
+    assert!(
+        origin_branches(dir.path(), &origin).contains(&format!("refs/heads/{}", task.branch)),
+        "{}",
+        origin_branches(dir.path(), &origin)
+    );
+    let remote = machine_tasks(&fake).await;
+    assert_eq!(remote.len(), 1);
+    assert_eq!(remote[0].branch, task.branch);
+    assert_eq!(task.worktree_path, remote[0].worktree_path);
+    assert!(task
+        .worktree_path
+        .starts_with(&fake.machine_home().display().to_string()));
+    assert_eq!(
+        hub_store(&d).task_remote(task.id).unwrap(),
+        Some((m.id, remote[0].id))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn checkout_existing_branch_on_machine() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, project_id, _origin) = machine_and_project(&d, dir.path()).await;
+    let work = dir.path().join("work");
+    common::run_git(&work, &["checkout", "-q", "-b", "feature/x"]);
+    common::run_git(
+        &work,
+        &[
+            "push",
+            "-q",
+            &dir.path()
+                .join("remotes/acme/demo.git")
+                .display()
+                .to_string(),
+            "feature/x",
+        ],
+    );
+
+    let created: TaskCreateResult = d
+        .call(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id,
+                title: "Checkout".into(),
+                checkout: Some("feature/x".into()),
+                machine_id: Some(m.id),
+                ..Default::default()
+            },
+        )
+        .await;
+
+    assert_eq!(created.task.branch, "feature/x");
+    let remote = machine_tasks(&fake).await;
+    assert_eq!(remote.len(), 1);
+    assert_eq!(remote[0].branch, "feature/x");
+    let head = common::run_git(
+        Path::new(&remote[0].worktree_path),
+        &["rev-parse", "--abbrev-ref", "HEAD"],
+    );
+    assert_eq!(head.trim(), "feature/x");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_without_origin_is_rejected() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, project_id, _origin) = machine_and_project(&d, dir.path()).await;
+    common::run_git(
+        &dir.path().join("hub/demo"),
+        &["remote", "remove", "origin"],
+    );
+
+    let e = create_error(
+        &d,
+        TaskCreateParams {
+            project_id,
+            title: "t".into(),
+            machine_id: Some(m.id),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    assert_eq!(e.kind(), ErrorKind::InvalidParams);
+    assert_eq!(e.message, "project has no origin remote");
+    assert!(hub_store(&d).tasks(None, true).unwrap().is_empty());
+    assert!(machine_tasks(&fake).await.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unreachable_origin_leaves_no_task() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, project_id, _origin) = machine_and_project(&d, dir.path()).await;
+    let missing = format!("file://{}/remotes/acme/missing.git", dir.path().display());
+    common::run_git(
+        &dir.path().join("hub/demo"),
+        &["remote", "set-url", "origin", &missing],
+    );
+
+    let e = create_error(
+        &d,
+        TaskCreateParams {
+            project_id,
+            title: "t".into(),
+            machine_id: Some(m.id),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    assert_ne!(e.kind(), ErrorKind::MachineOffline);
+    assert!(e.message.contains("missing.git"), "{}", e.message);
+    assert!(hub_store(&d).tasks(None, true).unwrap().is_empty());
+    assert!(machine_tasks(&fake).await.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_on_machine_is_rejected() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, project_id, _origin) = machine_and_project(&d, dir.path()).await;
+
+    let e = create_error(
+        &d,
+        TaskCreateParams {
+            project_id,
+            title: "t".into(),
+            agent: Some("claude".into()),
+            machine_id: Some(m.id),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    assert_eq!(e.kind(), ErrorKind::InvalidParams);
+    assert_eq!(e.message, "agents on machines are not supported yet");
+    assert!(hub_store(&d).tasks(None, true).unwrap().is_empty());
+    assert!(machine_tasks(&fake).await.is_empty());
+}

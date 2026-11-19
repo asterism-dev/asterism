@@ -422,6 +422,14 @@ impl Store {
         Ok(())
     }
 
+    pub fn set_task_base_branch(&self, id: i64, base_branch: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE tasks SET base_branch = ?2 WHERE id = ?1",
+            params![id, base_branch],
+        )?;
+        Ok(())
+    }
+
     pub fn set_task_location(
         &self,
         id: i64,

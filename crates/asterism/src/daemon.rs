@@ -39,6 +39,7 @@ use crate::store::Store;
 use crate::{git, hibernate, lock, node_settings, repo_source, status};
 
 mod activity;
+mod remote_task;
 mod review;
 mod worktree_conflict;
 
@@ -1832,6 +1833,9 @@ impl Daemon {
         self: &Arc<Self>,
         params: TaskCreateParams,
     ) -> Result<TaskCreateResult> {
+        if let Some(machine_id) = params.machine_id {
+            return self.create_remote_task(machine_id, params).await;
+        }
         if let Some(name) = &params.agent {
             self.ensure_agent_available(name)?;
         }
