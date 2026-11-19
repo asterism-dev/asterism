@@ -1,3 +1,9 @@
+## v0.28.0 (2026-11-19)
+
+### Feat
+
+- **desktop**: delete tasks in the background with live activity progress (#36)
+
 ## v0.27.0 (2026-11-17)
 
 ### Feat
