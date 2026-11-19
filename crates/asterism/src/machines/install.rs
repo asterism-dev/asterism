@@ -1,8 +1,13 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Mutex;
+use std::time::SystemTime;
 
 use sha2::{Digest, Sha256};
+
+use crate::lock;
 
 const SSH_OPTIONS: &[&str] = &[
     "-T",
@@ -145,13 +150,12 @@ pub async fn ensure_installed(
     bins_dir: &Path,
 ) -> Result<RemoteInstall, InstallError> {
     let local = bins_dir.join(platform.to_string());
-    let mut hashes = Vec::new();
-    for name in BINARIES {
-        let path = local.join(name);
-        let hash = sha256_file(&path)
-            .map_err(|e| InstallError::MissingBinaries(format!("{}: {e}", path.display())))?;
-        hashes.push(hash);
-    }
+    let hashes = {
+        let local = local.clone();
+        tokio::task::spawn_blocking(move || local_hashes(&local))
+            .await
+            .map_err(|e| InstallError::MissingBinaries(e.to_string()))??
+    };
     let key = format!("{:x}", Sha256::digest(hashes.concat()))[..16].to_string();
 
     let check = format!(r#"{INSTALL_DIR}; test -f "$d/ok" && echo installed || true"#);
@@ -195,6 +199,33 @@ pub async fn ensure_installed(
     )
     .await?;
     Ok(RemoteInstall { key })
+}
+
+/// Hashes are cached per directory and recomputed only when a binary's size or mtime changes, e.g. after a dev rebuild.
+fn local_hashes(dir: &Path) -> Result<Vec<String>, InstallError> {
+    type Stamps = Vec<(SystemTime, u64)>;
+    static CACHE: Mutex<BTreeMap<PathBuf, (Stamps, Vec<String>)>> = Mutex::new(BTreeMap::new());
+    let missing = |path: &Path, e: std::io::Error| {
+        InstallError::MissingBinaries(format!("{}: {e}", path.display()))
+    };
+    let mut stamps = Vec::new();
+    for name in BINARIES {
+        let path = dir.join(name);
+        let meta = std::fs::metadata(&path).map_err(|e| missing(&path, e))?;
+        stamps.push((meta.modified().map_err(|e| missing(&path, e))?, meta.len()));
+    }
+    if let Some((cached, hashes)) = lock(&CACHE).get(dir) {
+        if *cached == stamps {
+            return Ok(hashes.clone());
+        }
+    }
+    let mut hashes = Vec::new();
+    for name in BINARIES {
+        let path = dir.join(name);
+        hashes.push(sha256_file(&path).map_err(|e| missing(&path, e))?);
+    }
+    lock(&CACHE).insert(dir.to_path_buf(), (stamps, hashes.clone()));
+    Ok(hashes)
 }
 
 fn sha256_file(path: &Path) -> std::io::Result<String> {
