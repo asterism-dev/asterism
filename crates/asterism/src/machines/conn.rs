@@ -94,6 +94,8 @@ struct State {
     client: Option<Arc<Client>>,
     closed: bool,
     installed_key: Option<String>,
+    /// A restart was requested; the next connect onto the current key removes older installs.
+    cleanup_pending: bool,
     /// The caller of a running Update now, answered once the machine is ready again or the update failed.
     update: Option<oneshot::Sender<Result<(), String>>>,
 }
@@ -125,6 +127,7 @@ impl Shared {
                 client: None,
                 closed: false,
                 installed_key: None,
+                cleanup_pending: false,
                 update: None,
             }),
             retry: Notify::new(),
@@ -297,6 +300,7 @@ async fn stop_blocked(shared: &Shared) -> Result<(), Failure> {
     // The daemon serves `shutdown` without a successful `hello`, so even an incompatible one stops.
     let link = Link::spawn(&shared.settings, &shared.machine().destination, &key)?;
     link.shutdown(&shared.settings).await;
+    lock(&shared.state).cleanup_pending = true;
     Ok(())
 }
 
@@ -358,7 +362,9 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
                 Err(_) => return Failure::Offline("the machine daemon did not answer".into()),
             }
         }
-        if upgraded && runs_from(&hello.exe, &key) {
+        let cleanup_pending = lock(&shared.state).cleanup_pending;
+        if (upgraded || cleanup_pending) && runs_from(&hello.exe, &key) {
+            lock(&shared.state).cleanup_pending = false;
             // Best effort: a leftover install only costs disk space until the next restart.
             let _ = install::remove_other_installs(&ssh, &key, settings.open_deadline).await;
         }
@@ -419,6 +425,7 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
                 shared.set(MachineState::Connecting, None);
                 key = installed;
                 upgraded = true;
+                lock(&shared.state).cleanup_pending = true;
             }
         }
     }

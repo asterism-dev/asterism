@@ -3426,6 +3426,30 @@ async fn update_now_on_incompatible_machine() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn update_now_on_blocked_machine_removes_old_keys() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    fake.set_env(
+        "ASTERISM_TEST_PROTO_VERSION",
+        &(PROTO_VERSION - 2).to_string(),
+    );
+    new_build(&fake);
+    fake.stop_daemon();
+    assert!(eventually_state(&d, m.id, MachineState::Blocked).await);
+    assert_eq!(installed_keys(&fake).len(), 2);
+    fake.set_env("ASTERISM_TEST_PROTO_VERSION", &PROTO_VERSION.to_string());
+
+    let () = d
+        .call(method::MACHINE_UPDATE, MachineIdParams { machine_id: m.id })
+        .await;
+
+    assert_eq!(machine(&d, m.id).await.status.state, MachineState::Ready);
+    let removed = common::eventually_within(DEADLINE, || installed_keys(&fake).len() == 1).await;
+    assert!(removed, "{:?}", installed_keys(&fake));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn old_keys_removed_after_restart() {
     let (d, fake) = start_with_fake_ssh().await;
     let m = add_machine(&d, "vm").await;
