@@ -2393,7 +2393,6 @@ impl Daemon {
             return Ok(task);
         }
         if let Some((machine, remote)) = self.remote_task(task_id)? {
-            // The machine kills its sessions; their mirrors turn exited through the pump.
             let params = TaskArchiveParams {
                 task_id: remote,
                 force: false,
@@ -2402,6 +2401,13 @@ impl Daemon {
                 .machines()
                 .call(machine, method::TASK_ARCHIVE, params)
                 .await?;
+            // The machine's exit events may never arrive if the link drops now, and reconcile skips archived tasks.
+            let mirrors = self.store().sessions(Some(task_id))?;
+            for stored in mirrors {
+                if stored.session.status != SessionStatus::Exited {
+                    self.apply_session_status(stored.session.id, SessionStatus::Exited);
+                }
+            }
         } else {
             let sessions = self.store().sessions(Some(task_id))?;
             for stored in sessions {

@@ -1749,6 +1749,26 @@ async fn archive_restore_delete_remote_task() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn archive_ends_mirrors_without_waiting_for_the_machine_events() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_m, task, _worktree) = remote_task(&d, &fake, dir.path()).await;
+    let session = start_remote_shell(&d, task.id).await;
+
+    let _: Task = d
+        .call(
+            method::TASK_ARCHIVE,
+            TaskArchiveParams {
+                task_id: task.id,
+                force: false,
+            },
+        )
+        .await;
+
+    assert_eq!(session_status(&d, session.id), SessionStatus::Exited);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn lifecycle_fails_when_machine_offline() {
     let (d, fake) = start_with_fake_ssh().await;
     let dir = tempfile::tempdir().unwrap();
