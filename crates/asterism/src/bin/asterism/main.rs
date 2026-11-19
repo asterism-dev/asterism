@@ -443,7 +443,9 @@ async fn main() {
 async fn run(cli: Cli) -> Result<(), ClientError> {
     let json = cli.json;
     if let Cmd::Attach = cli.command {
-        return Ok(attach().await?);
+        attach().await?;
+        // A pending tokio stdin read would otherwise keep the bridge alive after the daemon is gone.
+        std::process::exit(0);
     }
     if let Cmd::Daemon(DaemonCmd::Stop) = cli.command {
         if let Ok(stream) = UnixStream::connect(socket_path()).await {
