@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **macOS.** The desktop app is macOS-only; CI and releases run on `macos-14`.
+- **macOS.** The desktop app is macOS-only; CI and releases run on `macos-15`.
 - **Rust**, stable toolchain, with `clippy` and `rustfmt` for `make lint`.
 - **Node.js**, current LTS, with npm.
 - **git**, which the daemon uses for worktrees and the build uses to stamp a build id.
@@ -70,7 +70,7 @@ Release bundles carry the same layout in `Contents/Resources/machine/<platform>/
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on every pull request, on `macos-14` with stable Rust and Node LTS: `npm ci` in `apps/desktop`, then `make lint` and `make test`. Run both locally before pushing.
+`.github/workflows/ci.yml` runs on every pull request, on `macos-15` with stable Rust and Node LTS: `npm ci` in `apps/desktop`, then `make lint` and `make test`. Run both locally before pushing.
 
 ## Commits and releases
 
@@ -89,6 +89,6 @@ Releases are automated with [Commitizen](https://commitizen-tools.github.io/comm
 2. **machine-bins**: builds `asterismd`, `asterism` and `asterism-plugin-claude` as static `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` binaries with `cargo-zigbuild` on Ubuntu and uploads them as an artifact.
 3. **build**: downloads that artifact into `apps/desktop/src-tauri/machine/linux-*/`, builds both macOS machine sets into `machine/darwin-aarch64/` and `machine/darwin-x86_64/`, then builds the app for `aarch64-apple-darwin` and `x86_64-apple-darwin` with `tauri-action`, signs the updater artifacts and uploads them to the draft release, including the updater's `latest.json`.
 4. **publish**: checks that `latest.json` lists both platforms, then publishes the release as latest.
-4. **docs**: calls `.github/workflows/docs.yml` for the new tag, which builds this site with `zensical build --clean` and deploys it to GitHub Pages.
+5. **docs**: calls `.github/workflows/docs.yml` for the new tag, which builds this site with `zensical build --clean` and deploys it to GitHub Pages.
 
 A manual run (`workflow_dispatch`) defaults to a dry run, which builds without bumping, tagging or publishing; runs from any branch other than `main` are always dry runs. `docs.yml` can also be dispatched on its own to redeploy the docs from any ref.
