@@ -117,6 +117,18 @@ async fn ensure_clones_once_and_reuses() {
 }
 
 #[tokio::test]
+async fn concurrent_ensures_share_one_clone() {
+    let env = setup(false);
+    let url = bare_origin(env.home.path());
+    let (a, b) = tokio::join!(
+        env.daemon.ensure_project(&url),
+        env.daemon.ensure_project(&url)
+    );
+    assert_eq!(a.unwrap().id, b.unwrap().id);
+    assert_eq!(env.daemon.projects().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn ensure_reports_unreachable_origin() {
     let env = setup(false);
     let err = env

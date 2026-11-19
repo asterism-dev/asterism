@@ -200,6 +200,7 @@ pub struct Daemon {
     store_status: Mutex<BTreeMap<String, StoreStatus>>,
     pr_status: Mutex<PrStatus>,
     waking: tokio::sync::Mutex<()>,
+    ensuring: tokio::sync::Mutex<()>,
     /// Subagents per session, kept after exit until the session is removed.
     subagents: Mutex<HashMap<i64, SessionSubagents>>,
     review_cache: Mutex<review::ReviewCache>,
@@ -275,6 +276,7 @@ impl Daemon {
                 store_status: Mutex::new(BTreeMap::new()),
                 pr_status: Mutex::new(PrStatus::default()),
                 waking: tokio::sync::Mutex::new(()),
+                ensuring: tokio::sync::Mutex::new(()),
                 subagents: Mutex::new(HashMap::new()),
                 review_cache: Mutex::new(review::ReviewCache::default()),
                 activities: Mutex::new(VecDeque::new()),
@@ -1648,14 +1650,12 @@ impl Daemon {
 
     pub async fn ensure_project(self: &Arc<Self>, url: &str) -> Result<Project> {
         let url = url.trim();
+        // ponytail: one lock for all urls; clones are rare, per-url locks if ensures start queueing.
+        let _ensuring = self.ensuring.lock().await;
         if let Some(project) = self.project_with_origin(url)? {
             return Ok(project);
         }
-        match self.clone_project(url, None, None, None).await {
-            // A concurrent ensure may have claimed the target and registered it meanwhile.
-            Err(e) if e.kind == ErrorKind::InvalidParams => self.project_with_origin(url)?.ok_or(e),
-            result => result,
-        }
+        self.clone_project(url, None, None, None).await
     }
 
     pub async fn clone_copy(self: &Arc<Self>, p: ProjectCloneCopyParams) -> Result<Project> {
