@@ -36,9 +36,11 @@ pub enum Peer {
 
 const REMOTE_DENIED: &[&str] = &[method::SHUTDOWN, method::SESSION_HOOK];
 
-/// A leaked device token must not be able to stop the daemon or rotate itself.
+/// A leaked device token must not be able to stop the daemon, rotate itself or reach other hosts.
 fn remote_denied(method_name: &str) -> bool {
-    REMOTE_DENIED.contains(&method_name) || method_name.starts_with("remote.")
+    REMOTE_DENIED.contains(&method_name)
+        || method_name.starts_with("remote.")
+        || method_name.starts_with("machine.")
 }
 
 /// One client connection; background forwarders are keyed so re-attaching replaces them.
@@ -238,6 +240,29 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
             remote::remove_device(daemon, params::<RemoteDeviceIdParams>(raw)?.device_id)?;
             Ok(Value::Null)
         }
+        method::MACHINE_LIST => to_value(daemon.machines().list()?),
+        method::MACHINE_ADD => {
+            let p: MachineAddParams = params(raw)?;
+            to_value(daemon.machines().add(&p.name, &p.destination)?)
+        }
+        method::MACHINE_REMOVE => {
+            daemon
+                .machines()
+                .remove(params::<MachineIdParams>(raw)?.machine_id)?;
+            Ok(Value::Null)
+        }
+        method::MACHINE_RETRY => {
+            daemon
+                .machines()
+                .retry(params::<MachineIdParams>(raw)?.machine_id)?;
+            Ok(Value::Null)
+        }
+        method::MACHINE_TEST => to_value(
+            daemon
+                .machines()
+                .test(&params::<MachineTestParams>(raw)?.destination)
+                .await?,
+        ),
         other => dispatch_method(daemon, other, raw).await,
     }
 }
@@ -696,6 +721,8 @@ mod tests {
             method::REMOTE_STATUS,
             method::REMOTE_DEVICE_ADD,
             method::REMOTE_CONFIG_SET,
+            method::MACHINE_ADD,
+            method::MACHINE_TEST,
         ] {
             assert!(remote_denied(name), "{name}");
         }

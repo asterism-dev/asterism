@@ -1,3 +1,4 @@
+use std::io::{Read, Write};
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -22,6 +23,10 @@ impl FakeSsh {
         let script = format!(
             r#"#!/bin/sh
 root={root}
+echo >> "$root/calls"
+if [ -f "$root/hang" ]; then
+  exec sleep 86400
+fi
 if [ -f "$root/fail" ]; then
   {{ read -r code; read -r line; }} < "$root/fail"
   echo "$line" >&2
@@ -35,7 +40,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 shift
-HOME={home} exec sh -c "$*"
+# Like real ssh, the remote side gets none of our environment (e.g. ASTERISM_SOCKET).
+exec env -i HOME={home} PATH="$PATH" sh -c "$*"
 "#,
             root = sh_quote(root.path()),
             home = sh_quote(&home),
@@ -74,6 +80,40 @@ HOME={home} exec sh -c "$*"
             format!("{code}\n{stderr_line}\n"),
         )
         .unwrap();
+    }
+
+    pub fn recover(&self) {
+        let _ = std::fs::remove_file(self.root.path().join("fail"));
+    }
+
+    /// Every later invocation sleeps forever, like an unreachable host.
+    pub fn hang(&self) {
+        std::fs::write(self.root.path().join("hang"), "").unwrap();
+    }
+
+    pub fn invocations(&self) -> usize {
+        std::fs::read_to_string(self.root.path().join("calls"))
+            .map_or(0, |calls| calls.lines().count())
+    }
+
+    pub fn machine_home(&self) -> PathBuf {
+        self.home.join(".asterism-machine")
+    }
+
+    /// Sends `shutdown` to the machine daemon, if one is listening.
+    pub fn stop_daemon(&self) {
+        let socket = self.machine_home().join("asterismd.sock");
+        if let Ok(mut stream) = std::os::unix::net::UnixStream::connect(socket) {
+            let _ = stream.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"shutdown\"}\n");
+            let _ = stream.read(&mut [0; 512]);
+        }
+    }
+}
+
+impl Drop for FakeSsh {
+    fn drop(&mut self) {
+        // The machine daemon runs detached and would outlive the test.
+        self.stop_daemon();
     }
 }
 

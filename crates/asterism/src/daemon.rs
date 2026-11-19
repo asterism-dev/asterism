@@ -85,6 +85,9 @@ pub struct DaemonOptions {
     pub role: Role,
     pub ssh_bin: PathBuf,
     pub machine_bins_dir: Option<PathBuf>,
+    pub machine_health_interval: Duration,
+    pub machine_health_timeout: Duration,
+    pub machine_backoff_max: Duration,
 }
 
 impl Default for DaemonOptions {
@@ -105,6 +108,9 @@ impl Default for DaemonOptions {
             role: Role::default(),
             ssh_bin: crate::machines::install::default_ssh_bin(),
             machine_bins_dir: crate::machines::install::default_bins_dir(),
+            machine_health_interval: Duration::from_secs(15),
+            machine_health_timeout: Duration::from_secs(5),
+            machine_backoff_max: Duration::from_secs(30),
         }
     }
 }
@@ -197,6 +203,7 @@ pub struct Daemon {
     activities: Mutex<VecDeque<Activity>>,
     next_activity_id: AtomicI64,
     pub(crate) remote: crate::remote::Hub,
+    machines: crate::machines::Machines,
 }
 
 #[derive(Default)]
@@ -236,6 +243,18 @@ impl Daemon {
         Ok(Arc::new_cyclic(move |daemon| {
             let host = crate::rpc::host_fn(daemon.clone());
             let plugins = PluginSet::load(&paths, &builtin_dir, &runtime, &host);
+            let machines = crate::machines::Machines::new(
+                daemon.clone(),
+                crate::machines::conn::Settings {
+                    ssh_bin: options.ssh_bin.clone(),
+                    bins_dir: options.machine_bins_dir.clone(),
+                    health_interval: options.machine_health_interval,
+                    health_timeout: options.machine_health_timeout,
+                    backoff_max: options.machine_backoff_max,
+                    events: events.clone(),
+                    installs: Mutex::default(),
+                },
+            );
             Self {
                 options,
                 paths,
@@ -256,6 +275,7 @@ impl Daemon {
                 activities: Mutex::new(VecDeque::new()),
                 next_activity_id: AtomicI64::new(1),
                 remote: crate::remote::Hub::new(),
+                machines,
             }
         }))
     }
@@ -325,6 +345,10 @@ impl Daemon {
 
     pub fn paths(&self) -> &Paths {
         &self.paths
+    }
+
+    pub fn machines(&self) -> &crate::machines::Machines {
+        &self.machines
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
