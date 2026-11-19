@@ -100,6 +100,8 @@ const MIGRATIONS: &[&str] = &[
      ALTER TABLE projects ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT 0;
      UPDATE projects SET workspace_id = (SELECT id FROM workspaces LIMIT 1);",
     "ALTER TABLE workspaces ADD COLUMN color TEXT NOT NULL DEFAULT '';",
+    "ALTER TABLE tasks ADD COLUMN archived_at INTEGER;
+     UPDATE tasks SET archived_at = unixepoch() WHERE archived = 1;",
 ];
 
 const PROJECT_COLUMNS: &str = "id, name, path, created_at, default_base, workspace_id";
@@ -494,8 +496,10 @@ impl Store {
     }
 
     pub fn set_task_active(&self, id: i64) -> rusqlite::Result<()> {
-        self.conn
-            .execute("UPDATE tasks SET archived = 0 WHERE id = ?1", [id])?;
+        self.conn.execute(
+            "UPDATE tasks SET archived = 0, archived_at = NULL WHERE id = ?1",
+            [id],
+        )?;
         Ok(())
     }
 
@@ -506,8 +510,10 @@ impl Store {
     }
 
     pub fn set_task_archived(&self, id: i64) -> rusqlite::Result<()> {
-        self.conn
-            .execute("UPDATE tasks SET archived = 1 WHERE id = ?1", [id])?;
+        self.conn.execute(
+            "UPDATE tasks SET archived = 1, archived_at = unixepoch() WHERE id = ?1",
+            [id],
+        )?;
         Ok(())
     }
 
@@ -531,6 +537,15 @@ impl Store {
              WHERE (?1 IS NULL OR project_id = ?1) AND (?2 OR archived = 0) ORDER BY id"
         ))?;
         let rows = stmt.query_map(params![project_id, include_archived], task_row)?;
+        rows.collect()
+    }
+
+    /// Archived tasks whose archiving happened at or before `cutoff` (unix seconds).
+    pub fn archived_due(&self, cutoff: i64) -> rusqlite::Result<Vec<Task>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {TASK_COLUMNS} FROM tasks WHERE archived = 1 AND archived_at <= ?1 ORDER BY id"
+        ))?;
+        let rows = stmt.query_map([cutoff], task_row)?;
         rows.collect()
     }
 
@@ -1125,6 +1140,20 @@ mod tests {
         store.set_task_archived(id).unwrap();
         assert!(store.tasks(Some(p.id), false).unwrap().is_empty());
         assert_eq!(store.tasks(None, true).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn archived_due_follows_archive_and_restore() {
+        let store = Store::open_in_memory().unwrap();
+        let p = store.add_project("repo", "/src/repo").unwrap();
+        let id = store.insert_task(p.id, "t", None, "main").unwrap();
+        let far = i64::MAX;
+        assert!(store.archived_due(far).unwrap().is_empty());
+        store.set_task_archived(id).unwrap();
+        assert_eq!(store.archived_due(far).unwrap()[0].id, id);
+        assert!(store.archived_due(0).unwrap().is_empty());
+        store.set_task_active(id).unwrap();
+        assert!(store.archived_due(far).unwrap().is_empty());
     }
 
     #[test]

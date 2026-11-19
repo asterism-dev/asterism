@@ -324,6 +324,26 @@ pub struct PathSettings {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NodeConfig {
     pub paths: PathSettings,
+    #[serde(default)]
+    pub archive: ArchiveSettings,
+}
+
+/// Automatic deletion of archived tasks; their worktree is always removed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ArchiveSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_delete_after_hours: Option<u32>,
+    #[serde(default)]
+    pub delete_branch: bool,
+    /// Also delete when uncommitted changes or unmerged commits would be lost.
+    #[serde(default)]
+    pub force: bool,
+}
+
+impl ArchiveSettings {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

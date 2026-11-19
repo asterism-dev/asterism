@@ -3,7 +3,7 @@ use std::io;
 use std::path::Path;
 
 use asterism_proto::rpc::ErrorKind;
-use asterism_proto::types::SessionKind;
+use asterism_proto::types::{ArchiveSettings, SessionKind};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
@@ -26,6 +26,8 @@ pub struct Config {
     pub default_forge: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote: Option<asterism_proto::types::RemoteConfig>,
+    #[serde(default, skip_serializing_if = "ArchiveSettings::is_default")]
+    pub archive: ArchiveSettings,
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq, Eq)]

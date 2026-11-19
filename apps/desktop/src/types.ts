@@ -312,8 +312,14 @@ export interface PathSettings {
   repos: string;
   worktrees: string;
 }
+export interface ArchiveSettings {
+  auto_delete_after_hours?: number | null;
+  delete_branch: boolean;
+  force: boolean;
+}
 export interface NodeConfig {
   paths: PathSettings;
+  archive: ArchiveSettings;
 }
 export interface NodeConfigInfo {
   config: NodeConfig;
