@@ -241,6 +241,9 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
         let Some(events) = client.take_events() else {
             return Failure::Offline("the machine's event stream is gone".into());
         };
+        let Some(requests) = client.take_requests() else {
+            return Failure::Offline("the machine's request stream is gone".into());
+        };
         match tokio::time::timeout(
             settings.health_timeout,
             client.call::<_, Value>(method::SUBSCRIBE, Value::Null),
@@ -254,6 +257,7 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
         // Dropped with this connection, which aborts the pump.
         let mut pump = JoinSet::new();
         pump.spawn(super::link::pump(shared.clone(), client.clone(), events));
+        pump.spawn(super::peer::serve(shared.clone(), client.clone(), requests));
         shared.update(|state| {
             state.machine.status.state = MachineState::Ready;
             state.machine.status.error = None;

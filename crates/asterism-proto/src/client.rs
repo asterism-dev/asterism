@@ -62,6 +62,7 @@ pub struct Client {
     closed: Arc<AtomicBool>,
     outgoing: mpsc::UnboundedSender<String>,
     events: Mutex<Option<mpsc::UnboundedReceiver<Event>>>,
+    requests: Mutex<Option<mpsc::UnboundedReceiver<String>>>,
 }
 
 impl Client {
@@ -79,6 +80,7 @@ impl Client {
         let closed = Arc::new(AtomicBool::new(false));
         let (outgoing, mut outgoing_rx) = mpsc::unbounded_channel::<String>();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
 
         tokio::spawn(async move {
             while let Some(mut line) = outgoing_rx.recv().await {
@@ -95,6 +97,14 @@ impl Client {
         tokio::spawn(async move {
             let mut lines = BufReader::new(reader).lines();
             while let Ok(Some(line)) = lines.next_line().await {
+                // A request from the peer may share an id with one of our pending calls.
+                let is_request = serde_json::from_str::<Value>(&line).is_ok_and(|message| {
+                    message.get("method").is_some() && message.get("id").is_some()
+                });
+                if is_request {
+                    let _ = request_tx.send(line);
+                    continue;
+                }
                 match serde_json::from_str::<ServerMessage>(&line) {
                     Ok(ServerMessage::Response(response)) => {
                         if let Some(tx) = lock(&reader_pending).remove(&response.id) {
@@ -127,6 +137,7 @@ impl Client {
             closed,
             outgoing,
             events: Mutex::new(Some(event_rx)),
+            requests: Mutex::new(Some(request_rx)),
         }
     }
 
@@ -159,5 +170,14 @@ impl Client {
     /// Hands out the notification stream; only the first caller receives it.
     pub fn take_events(&self) -> Option<mpsc::UnboundedReceiver<Event>> {
         lock(&self.events).take()
+    }
+
+    /// Hands out the raw request lines the peer sends; only the first caller receives them.
+    pub fn take_requests(&self) -> Option<mpsc::UnboundedReceiver<String>> {
+        lock(&self.requests).take()
+    }
+
+    pub fn send_raw(&self, line: String) {
+        let _ = self.outgoing.send(line);
     }
 }

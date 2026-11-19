@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use asterism_core::daemon::{Daemon, DaemonOptions};
 use asterism_core::machines::install::{self, InstallError};
 use asterism_core::paths::Paths;
+use asterism_core::rpc::Peer;
 use asterism_core::store::Store;
 use asterism_proto::client::{Client, ClientError};
 use asterism_proto::rpc::ErrorKind;
@@ -18,6 +19,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
 use tempfile::TempDir;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -2334,5 +2336,174 @@ async fn unavailable_agent_on_machine_is_rejected() {
     assert!(hub_store(&d).sessions(Some(task.id)).unwrap().is_empty());
     assert!(machine_sessions(&fake, remote_id).await.is_empty());
     assert_eq!(hub_store(&d).tasks(None, true).unwrap().len(), 3);
+    assert_eq!(machine_tasks(&fake).await.len(), 2);
+}
+
+/// A client that talks to the hub the way machine `machine_id` does over its ssh pipe.
+fn machine_peer(daemon: &Arc<Daemon>, machine_id: i64) -> Client {
+    let (client_side, server_side) = tokio::io::duplex(64 * 1024);
+    let (client_read, client_write) = tokio::io::split(client_side);
+    let (server_read, mut server_write) = tokio::io::split(server_side);
+    let (incoming_tx, incoming) = tokio::sync::mpsc::channel(16);
+    let (out, mut out_rx) = tokio::sync::mpsc::channel::<String>(16);
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(server_read).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if incoming_tx.send(line).await.is_err() {
+                break;
+            }
+        }
+    });
+    tokio::spawn(async move {
+        while let Some(line) = out_rx.recv().await {
+            if server_write
+                .write_all(format!("{line}\n").as_bytes())
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+    tokio::spawn(asterism_core::rpc::run_conn(
+        daemon.clone(),
+        Peer::Machine { machine_id },
+        incoming,
+        out,
+    ));
+    Client::new(client_read, client_write)
+}
+
+async fn peer_error<P: Serialize>(peer: &Client, name: &str, params: P) -> ErrorKind {
+    match peer.call::<_, Value>(name, params).await {
+        Err(ClientError::Rpc(e)) => e.kind(),
+        other => panic!("{name}: {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn machine_peer_denies_forbidden_methods() {
+    let (daemon, d, _fake) = hub(DEADLINE).await;
+    let peer = machine_peer(&daemon, 1);
+    for name in [
+        method::SHUTDOWN,
+        method::PLUGIN_SET_SETTINGS,
+        method::PROJECT_ADD,
+        method::SESSION_HOOK,
+        method::AGENT_CONFIG_SET,
+    ] {
+        assert_eq!(
+            peer_error(&peer, name, Value::Null).await,
+            ErrorKind::Forbidden,
+            "{name}"
+        );
+    }
+    hello(&peer).await;
+    let _: Vec<Project> = d.call(method::PROJECT_LIST, Value::Null).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn machine_peer_sees_only_its_tasks() {
+    let (daemon, d, fake) = hub(DEADLINE).await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, project_id, _) = machine_and_project(&d, dir.path()).await;
+    // Local tasks first: the remote task's hub id then differs from its machine id, and `local` is no machine id.
+    hub_task(&d, project_id, "local one").await;
+    let local = hub_task(&d, project_id, "local two").await;
+    let remote: TaskCreateResult = d
+        .call(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id,
+                title: "remote".into(),
+                machine_id: Some(m.id),
+                ..Default::default()
+            },
+        )
+        .await;
+    let machine_task = machine_tasks(&fake).await.remove(0);
+    assert_ne!(machine_task.id, remote.task.id);
+    let peer = machine_peer(&daemon, m.id);
+
+    let tasks: Vec<Task> = peer
+        .call(method::TASK_LIST, TaskListParams::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        tasks.iter().map(|t| t.id).collect::<Vec<_>>(),
+        vec![machine_task.id]
+    );
+    assert_eq!(
+        peer_error(&peer, method::TASK_DIFF, TaskIdParams { task_id: local }).await,
+        ErrorKind::NotFound
+    );
+    let _: TaskDiffResult = peer
+        .call(
+            method::TASK_DIFF,
+            TaskIdParams {
+                task_id: machine_task.id,
+            },
+        )
+        .await
+        .unwrap();
+    let session: Session = peer
+        .call(
+            method::SESSION_START,
+            SessionStartParams {
+                task_id: machine_task.id,
+                kind: SessionKind::Shell,
+                prompt: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(session.task_id, machine_task.id);
+    let on_machine: Vec<Session> = machine_client(&fake)
+        .await
+        .call(
+            method::SESSION_LIST,
+            SessionListParams {
+                task_id: Some(machine_task.id),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        on_machine.iter().map(|s| s.id).collect::<Vec<_>>(),
+        vec![session.id]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn machine_peer_task_create_is_forced_to_caller() {
+    let (daemon, d, fake) = hub(DEADLINE).await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, project_id, _) = machine_and_project(&d, dir.path()).await;
+    let peer = machine_peer(&daemon, m.id);
+
+    for (title, machine_id) in [("from null", None), ("from other", Some(m.id + 100))] {
+        let created: TaskCreateResult = peer
+            .call(
+                method::TASK_CREATE,
+                TaskCreateParams {
+                    project_id,
+                    title: title.into(),
+                    machine_id,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(
+            hub_store(&d)
+                .task_by_remote(m.id, created.task.id)
+                .unwrap()
+                .is_some(),
+            "{title}: the returned id is the machine's"
+        );
+    }
+    let hub_tasks: Vec<Task> = d.call(method::TASK_LIST, TaskListParams::default()).await;
+    assert_eq!(hub_tasks.len(), 2);
+    assert!(hub_tasks.iter().all(|t| t.machine_id == Some(m.id)));
     assert_eq!(machine_tasks(&fake).await.len(), 2);
 }

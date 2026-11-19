@@ -18,6 +18,7 @@ use tokio::task::{JoinHandle, JoinSet};
 use crate::daemon::Daemon;
 use crate::error::{Error, Result};
 use crate::lock;
+use crate::machines;
 use crate::plugins::process::HostFn;
 use crate::remote;
 
@@ -32,6 +33,7 @@ const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 pub enum Peer {
     Local,
     Remote { device_id: i64 },
+    Machine { machine_id: i64 },
 }
 
 const REMOTE_DENIED: &[&str] = &[
@@ -119,7 +121,7 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: UnixStream) {
     run_conn(daemon, Peer::Local, lines_rx, out).await;
 }
 
-pub(crate) async fn run_conn(
+pub async fn run_conn(
     daemon: Arc<Daemon>,
     peer: Peer,
     mut incoming: mpsc::Receiver<String>,
@@ -153,6 +155,17 @@ async fn handle_line(daemon: Arc<Daemon>, conn: Arc<Conn>, line: String) {
         }
     };
     let id = request.id;
+    if let Peer::Machine { machine_id } = conn.peer {
+        let response =
+            match machines::peer::dispatch(&daemon, machine_id, &request.method, request.params)
+                .await
+            {
+                Ok(result) => Response::ok(id, result),
+                Err(e) => Response::err(id, e.into()),
+            };
+        conn.send(&response).await;
+        return;
+    }
     if matches!(conn.peer, Peer::Remote { .. }) && remote_denied(&request.method) {
         let message = format!("{} is not available remotely", request.method);
         conn.send(&Response::err(
