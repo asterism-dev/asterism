@@ -66,6 +66,8 @@ make machine-bins
 
 `scripts/build-machine-bins.sh` needs Docker. It builds static `linux-x86_64` and `linux-aarch64` binaries in `rust:<version>-alpine` containers (the amd64 one runs emulated on Apple silicon and is slow) and copies the host's debug build as `darwin-*`.
 
+Release bundles carry the same layout in `Contents/Resources/machine/<platform>/`, which the daemon uses when `ASTERISM_MACHINE_BINS` is unset. Tauri bundles `apps/desktop/src-tauri/machine/` (git-ignored) there; `npm run sidecars` creates it empty, because Tauri checks resource paths at compile time, so local builds ship no machine binaries and block machines with "missing machine binaries".
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every pull request, on `macos-14` with stable Rust and Node LTS: `npm ci` in `apps/desktop`, then `make lint` and `make test`. Run both locally before pushing.
@@ -84,8 +86,9 @@ Releases are automated with [Commitizen](https://commitizen-tools.github.io/comm
 `.github/workflows/release.yml` runs on every push to `main`:
 
 1. **bump**: `cz bump --get-next` decides whether the commits since the last tag warrant a release. If not, the workflow stops. Otherwise `cz bump` updates the version and changelog, commits, tags, pushes both atomically, and creates a draft GitHub release with the new changelog section as notes.
-2. **build**: builds the app for `aarch64-apple-darwin` and `x86_64-apple-darwin` with `tauri-action`, signs the updater artifacts and uploads them to the draft release, including the updater's `latest.json`.
-3. **publish**: checks that `latest.json` lists both platforms, then publishes the release as latest.
+2. **machine-bins**: builds `asterismd`, `asterism` and `asterism-plugin-claude` as static `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` binaries with `cargo-zigbuild` on Ubuntu and uploads them as an artifact.
+3. **build**: downloads that artifact into `apps/desktop/src-tauri/machine/linux-*/`, builds both macOS machine sets into `machine/darwin-aarch64/` and `machine/darwin-x86_64/`, then builds the app for `aarch64-apple-darwin` and `x86_64-apple-darwin` with `tauri-action`, signs the updater artifacts and uploads them to the draft release, including the updater's `latest.json`.
+4. **publish**: checks that `latest.json` lists both platforms, then publishes the release as latest.
 4. **docs**: calls `.github/workflows/docs.yml` for the new tag, which builds this site with `zensical build --clean` and deploys it to GitHub Pages.
 
 A manual run (`workflow_dispatch`) defaults to a dry run, which builds without bumping, tagging or publishing; runs from any branch other than `main` are always dry runs. `docs.yml` can also be dispatched on its own to redeploy the docs from any ref.

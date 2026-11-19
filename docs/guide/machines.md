@@ -15,7 +15,7 @@ A machine is a remote computer Asterism reaches over SSH. Asterism installs a sm
 3. Click **Test connection** to check the login. It shows the platform of the machine or the SSH error.
 4. Click **Add**.
 
-Asterism installs its daemon on the first connection and updates it when the machine's copy is out of date.
+Asterism installs its daemon on the first connection. The binaries for every supported platform ship inside the app, so nothing is downloaded. When the machine's copy is out of date and nothing runs there, Asterism updates it on the next connection; otherwise it shows "update available" and leaves the running daemon alone until you click **Update now** (see [Update a machine](#update-a-machine)).
 
 ## Run a task on a machine
 
@@ -69,19 +69,34 @@ The CLI there is limited to the machine it runs on:
 
 Any process on the machine running as the machine's user can take over this connection to your Mac. That user already controls the machine daemon and its tasks, so only add machines whose user you trust with this access.
 
-A machine can be removed only when all its tasks are archived.
+A machine can be removed only when all its tasks are archived. To remove a machine that is gone for good, use **Forget** (see [Forget a machine](#forget-a-machine)).
+
+## Update a machine
+
+Asterism never restarts a machine daemon on its own while sessions run on it. After an Asterism update, a machine with running sessions shows "update available" and keeps working on its old daemon. Asterism also speaks the protocol of the previous release, so a machine one release behind keeps working until you update it.
+
+Click **Update now** in **Settings → Machines** to install the current build and restart the machine daemon on it. The confirmation lists what happens to the running sessions:
+
+- **Will resume**: agent sessions that can be resumed, as after a restart of Asterism on your Mac.
+- **Will end**: shells, commands and agents that cannot be resumed.
+
+When the machine's daemon cannot tell (for example when it is too old to know), the list says "These sessions may end" instead. Update now needs a connected machine, or one that needs attention with "incompatible version". After the restart, Asterism removes the machine's binaries of older builds.
+
+## Forget a machine
+
+**Forget** removes a machine that is gone for good, for example a deleted VM. It works while the machine is offline and never contacts it. The confirmation names the machine's active tasks; Asterism archives them on your Mac and removes the machine. Whatever is left on the machine (worktrees, branches that were not pushed, running sessions) is abandoned. You can delete the archived tasks afterwards; restoring them fails, because the machine is gone.
 
 ## What gets installed
 
-Everything lives in `~/.asterism-machine` on the machine, including the clones under `repos/` and the worktrees of its tasks. The binaries, including the backends of the built-in agents, are under `~/.asterism-machine/bin/<build-key>/`, one directory per Asterism build. To clean up, remove the machine in Settings, stop the machine daemon with `ASTERISM_HOME=~/.asterism-machine ~/.asterism-machine/bin/<build-key>/asterism daemon stop` on the machine, then delete `~/.asterism-machine`.
+Everything lives in `~/.asterism-machine` on the machine, including the clones under `repos/` and the worktrees of its tasks. The binaries, including the backends of the built-in agents, are under `~/.asterism-machine/bin/<build-key>/`, one directory per Asterism build; directories of older builds are removed right after the machine daemon restarts on the current build. To clean up, remove the machine in Settings, stop the machine daemon with `ASTERISM_HOME=~/.asterism-machine ~/.asterism-machine/bin/<build-key>/asterism daemon stop` on the machine, then delete `~/.asterism-machine`.
 
 ## Status
 
 | Status | Meaning |
 | --- | --- |
 | Connecting | Asterism is connecting or installing. |
-| Connected | The daemon is running. The platform is shown, plus "update available" when a newer build exists. |
+| Connected | The daemon is running. The platform is shown, plus "update available" when a newer build exists; click **Update now** to install it. |
 | Offline, retrying | The connection dropped or the host is unreachable. Asterism retries automatically with a backoff of up to 30 s. |
-| Needs attention | Retrying cannot help: authentication or host key failure, an unsupported platform, a machine that does not run the Asterism daemon, or an install error. Fix the cause, then click **Retry**. |
+| Needs attention | Retrying cannot help: authentication or host key failure, an unsupported platform, a machine that does not run the Asterism daemon, or an install error. Fix the cause, then click **Retry**. A machine daemon more than one release behind shows "incompatible version"; click **Update now**. |
 
 For a host key failure, connect once with `ssh <destination>` in a terminal to accept or fix the key in `known_hosts`.
