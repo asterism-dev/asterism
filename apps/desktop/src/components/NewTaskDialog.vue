@@ -12,7 +12,7 @@ import {
 import { activityFor } from '../activity';
 import { api, errorMessage, RpcError } from '../api';
 import { baseChoice } from '../baseBranch';
-import { machineStatusLine } from '../machines';
+import { machineAgents, machineStatusLine } from '../machines';
 import { leaveSettings } from '../settingsGuard';
 import { matchAction } from '../shortcuts';
 import { addSession, addTask, state, toast } from '../store';
@@ -44,7 +44,6 @@ const emit = defineEmits<{ close: [] }>();
 
 const placeholder = randomSlug();
 const suffix = randomSuffix();
-const agents = computed(() => state.agents.filter((a) => a.available));
 const projectId = ref(props.projectId);
 const projectOptions = computed(() =>
   state.projects
@@ -77,15 +76,14 @@ function loadLastMachine() {
   }
 }
 const machineId = ref(loadLastMachine());
+const agents = computed(() =>
+  machineAgents(state.machines.find((m) => m.id === machineId.value) ?? null, state.agents),
+);
 watch(machineId, (id) => {
   try {
     localStorage.setItem(LAST_MACHINE_KEY, String(id));
   } catch {
     // The choice just isn't remembered.
-  }
-  if (id !== LOCAL) {
-    session.value = 'shell';
-    prompt.value = '';
   }
 });
 const TABS = [
@@ -96,6 +94,14 @@ const title = ref('');
 const prompt = ref('');
 const agent = ref(agents.value[0]?.name ?? '');
 const session = ref<'agent' | 'shell'>(agents.value.length ? 'agent' : 'shell');
+watch(
+  agents,
+  (list) => {
+    if (!list.some((a) => a.name === agent.value)) agent.value = list[0]?.name ?? '';
+    if (!list.length) session.value = 'shell';
+  },
+  { immediate: true },
+);
 const tab = ref('conversation');
 const kind = ref<'issue' | 'pr'>('issue');
 const issue = ref<TaskIssue | null>(null);
@@ -344,15 +350,11 @@ async function submit() {
             <SegmentedControl
               v-model="session"
               :options="sessionOptions"
-              :disabled="machineId !== LOCAL"
               size="sm"
               class="session"
               aria-label="Session"
             />
-            <p v-if="machineId !== LOCAL" class="muted">
-              Agents on machines come in a later update
-            </p>
-            <template v-else-if="session === 'agent'">
+            <template v-if="session === 'agent'">
               <Select v-model="agent" :options="agentOptions" aria-label="Agent" />
               <Textarea
                 v-model="prompt"

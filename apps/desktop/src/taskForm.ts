@@ -122,8 +122,8 @@ export function createRequest(f: TaskForm): TaskCreateRequest {
   const common = {
     project_id: f.projectId,
     title: finalSlug(f.title) || f.placeholder,
-    prompt: (!f.machineId && f.agent && f.prompt.trim()) || null,
-    agent: (!f.machineId && f.agent) || null,
+    prompt: (f.agent && f.prompt.trim()) || null,
+    agent: f.agent || null,
     machine_id: f.machineId,
     issue: f.issue,
     on_conflict: f.onConflict,

@@ -188,10 +188,7 @@ function projectMenu(e: MouseEvent, p: Project) {
 }
 
 function taskMenu(e: MouseEvent, t: Task) {
-  const local = localTaskActions(
-    t,
-    state.agents.filter((a) => a.available),
-  );
+  const local = localTaskActions(t, state.machines, state.agents);
   showMenu(e, [
     ...local.agents.map((a) => ({
       label: `New ${a.display_name || a.name} session`,
