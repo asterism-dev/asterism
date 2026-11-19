@@ -91,6 +91,7 @@ pub struct DaemonOptions {
     pub machine_backoff_max: Duration,
     pub machine_open_deadline: Duration,
     pub machine_call_timeout: Duration,
+    pub machine_clone_timeout: Duration,
 }
 
 impl Default for DaemonOptions {
@@ -117,6 +118,7 @@ impl Default for DaemonOptions {
             // Covers a fresh ssh handshake plus `attach` spawning the daemon, which the health deadline does not.
             machine_open_deadline: Duration::from_secs(30),
             machine_call_timeout: Duration::from_secs(30),
+            machine_clone_timeout: Duration::from_secs(600),
         }
     }
 }

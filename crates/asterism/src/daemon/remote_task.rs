@@ -2,8 +2,8 @@ use std::path::Path;
 
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::{
-    method, ActivityKind, Event, IssueRef, Project, ProjectEnsureParams, TaskCreateParams,
-    TaskCreateResult,
+    method, ActivityKind, Event, IssueRef, Project, ProjectEnsureParams, Task, TaskCreateParams,
+    TaskCreateResult, TaskDeleteParams,
 };
 
 use super::{activity, issue_name, not_found, slugify, Daemon};
@@ -82,13 +82,17 @@ impl Daemon {
             id: activity,
         };
         self.set_activity_refs(activity, Some(project.id), Some(id));
+        let clone_timeout = self.options.machine_clone_timeout;
         let remote = async {
             let remote_project: Project = self
                 .machines()
-                .call(
+                .call_with_timeout(
                     machine_id,
+                    clone_timeout,
                     method::PROJECT_ENSURE,
-                    ProjectEnsureParams { url: origin },
+                    ProjectEnsureParams {
+                        url: strip_credentials(&origin),
+                    },
                 )
                 .await?;
             let (branch, checkout) = match checkout {
@@ -96,8 +100,9 @@ impl Daemon {
                 None => (Some(branch), None),
             };
             self.machines()
-                .call::<_, TaskCreateResult>(
+                .call_with_timeout::<_, TaskCreateResult>(
                     machine_id,
+                    clone_timeout,
                     method::TASK_CREATE,
                     TaskCreateParams {
                         project_id: remote_project.id,
@@ -116,7 +121,10 @@ impl Daemon {
         let created = match remote {
             Ok(created) => created,
             Err(e) => {
-                self.store().delete_task(id)?;
+                // The remote error is what the dialog needs; a failing local cleanup must not hide it.
+                if let Err(cleanup) = self.store().delete_task(id) {
+                    eprintln!("asterismd: deleting task {id} after a failed remote create failed: {cleanup}");
+                }
                 self.fail_activity_step(activity, e.message.clone(), true);
                 return Err(e);
             }
@@ -128,6 +136,38 @@ impl Daemon {
         }
 
         let remote_task = &created.task;
+        if let Err(e) = self.link_remote_task(id, machine_id, remote_task, &params) {
+            let _ = self
+                .machines()
+                .call::<_, serde_json::Value>(
+                    machine_id,
+                    method::TASK_DELETE,
+                    TaskDeleteParams {
+                        task_id: remote_task.id,
+                        delete_branch: trimmed(&params.checkout).is_none(),
+                    },
+                )
+                .await;
+            let _ = self.store().delete_task(id);
+            self.fail_activity_step(activity, e.message.clone(), true);
+            return Err(e);
+        }
+        let task = self.task(id)?;
+        self.emit(Event::TaskChanged(task.clone()));
+        Ok(TaskCreateResult {
+            task,
+            session: None,
+            warning: created.warning,
+        })
+    }
+
+    fn link_remote_task(
+        &self,
+        id: i64,
+        machine_id: i64,
+        remote_task: &Task,
+        params: &TaskCreateParams,
+    ) -> Result<()> {
         let store = self.store();
         store.set_task_remote(id, machine_id, remote_task.id)?;
         store.set_task_base_branch(id, &remote_task.base_branch)?;
@@ -147,13 +187,53 @@ impl Daemon {
                 },
             )?;
         }
-        drop(store);
-        let task = self.task(id)?;
-        self.emit(Event::TaskChanged(task.clone()));
-        Ok(TaskCreateResult {
-            task,
-            session: None,
-            warning: created.warning,
-        })
+        Ok(())
+    }
+}
+
+/// The machine uses its own git credentials, so userinfo in an http(s) origin is never sent.
+fn strip_credentials(url: &str) -> String {
+    let Some(rest) = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+    else {
+        return url.to_string();
+    };
+    let scheme = &url[..url.len() - rest.len()];
+    let authority_end = rest.find('/').unwrap_or(rest.len());
+    match rest[..authority_end].rfind('@') {
+        Some(at) => format!("{scheme}{}", &rest[at + 1..]),
+        None => url.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_credentials;
+
+    #[test]
+    fn credentials_are_stripped_from_http_origins() {
+        for (url, want) in [
+            (
+                "https://user:token@github.com/acme/demo.git",
+                "https://github.com/acme/demo.git",
+            ),
+            ("http://token@host:8080/a/b", "http://host:8080/a/b"),
+            (
+                "https://github.com/acme/demo.git",
+                "https://github.com/acme/demo.git",
+            ),
+            ("https://host/a/b@c", "https://host/a/b@c"),
+            (
+                "git@github.com:acme/demo.git",
+                "git@github.com:acme/demo.git",
+            ),
+            (
+                "ssh://git@host/acme/demo.git",
+                "ssh://git@host/acme/demo.git",
+            ),
+        ] {
+            assert_eq!(strip_credentials(url), want, "{url}");
+        }
     }
 }

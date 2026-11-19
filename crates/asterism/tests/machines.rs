@@ -1152,3 +1152,34 @@ async fn agent_on_machine_is_rejected() {
     assert!(hub_store(&d).tasks(None, true).unwrap().is_empty());
     assert!(machine_tasks(&fake).await.is_empty());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn slow_remote_create_within_clone_deadline_succeeds() {
+    let (_daemon, d, fake) = hub(Duration::from_millis(300)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, project_id, _origin) = machine_and_project(&d, dir.path()).await;
+
+    fake.pause_link();
+    let resume = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        fake.resume_link();
+        fake
+    });
+    let created = d
+        .client
+        .call::<_, TaskCreateResult>(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id,
+                title: "slow".into(),
+                machine_id: Some(m.id),
+                ..Default::default()
+            },
+        )
+        .await;
+    let fake = resume.await.unwrap();
+
+    let task = created.unwrap().task;
+    assert_eq!(task.machine_id, Some(m.id));
+    assert_eq!(machine_tasks(&fake).await.len(), 1);
+}

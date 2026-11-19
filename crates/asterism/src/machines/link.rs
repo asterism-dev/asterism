@@ -41,10 +41,23 @@ impl Machines {
         method: &str,
         params: P,
     ) -> Result<T> {
+        let timeout = self.shared(machine_id)?.settings.call_timeout;
+        self.call_with_timeout(machine_id, timeout, method, params)
+            .await
+    }
+
+    /// Like `call`, for work such as a first clone that can outlast `machine_call_timeout`.
+    pub async fn call_with_timeout<P: Serialize, T: DeserializeOwned>(
+        &self,
+        machine_id: i64,
+        timeout: Duration,
+        method: &str,
+        params: P,
+    ) -> Result<T> {
         let shared = self.shared(machine_id)?;
         let name = shared.machine().name;
         let client = shared.client().ok_or_else(|| offline(&name))?;
-        call(&client, &name, shared.settings.call_timeout, method, params).await
+        call(&client, &name, timeout, method, params).await
     }
 
     /// Output of a remote session; dropping the receiver detaches.
