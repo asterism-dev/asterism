@@ -3,8 +3,8 @@ use std::path::Path;
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::{
     method, ActivityKind, Event, IssueRef, Project, ProjectEnsureParams, Session, SessionKind,
-    SessionStartParams, SessionStatus, SessionWaitParams, SessionWaitResult, Task,
-    TaskCreateParams, TaskCreateResult, TaskDeleteParams,
+    SessionListParams, SessionStartParams, SessionStatus, SessionWaitParams, SessionWaitResult,
+    Task, TaskCreateParams, TaskCreateResult, TaskDeleteParams,
 };
 
 use super::{activity, issue_name, not_found, slugify, Daemon};
@@ -64,10 +64,28 @@ impl Daemon {
                 },
             )
             .await?;
-        // ponytail: a status event that beats this insert is dropped by the pump; reconcile on reconnect catches it.
         let id = self
             .store()
             .insert_remote_session(task_id, remote.id, &kind, remote.status)?;
+        // The pump drops status events that beat the insert; events after it are applied, so one re-read closes the gap.
+        let now: Result<Vec<Session>> = self
+            .machines()
+            .call(
+                machine_id,
+                method::SESSION_LIST,
+                SessionListParams {
+                    task_id: Some(remote_task),
+                },
+            )
+            .await;
+        if let Some(status) = now
+            .ok()
+            .and_then(|list| list.into_iter().find(|s| s.id == remote.id))
+            .map(|s| s.status)
+            .filter(|status| *status != remote.status)
+        {
+            self.apply_session_status(id, status);
+        }
         let session = self.session(id)?;
         self.emit(Event::SessionChanged(session.clone()));
         self.touch_task(task_id);
