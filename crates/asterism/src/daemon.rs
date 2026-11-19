@@ -155,6 +155,7 @@ fn plugin_env(paths: &Paths, extra: &[(String, String)]) -> Result<Vec<(String, 
 
 pub const STORE_REFRESH_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const PR_TICK: Duration = Duration::from_secs(15);
+const ARCHIVE_SWEEP: Duration = Duration::from_secs(3600);
 
 #[derive(Debug, Clone, Default)]
 struct StoreStatus {
@@ -2343,6 +2344,47 @@ impl Daemon {
         let task = self.task(task_id)?;
         self.emit(Event::TaskChanged(task.clone()));
         Ok(task)
+    }
+
+    pub async fn archive_cleanup_loop(self: Arc<Self>) {
+        loop {
+            tokio::time::sleep(ARCHIVE_SWEEP).await;
+            if let Err(e) = self.sweep_archived(unix_now()) {
+                eprintln!("asterismd: archive cleanup failed: {e}");
+            }
+        }
+    }
+
+    /// Deletes archived tasks past the configured age; unsaved work is kept unless forced.
+    pub fn sweep_archived(&self, now: i64) -> Result<()> {
+        let settings = node_settings::load(&self.paths)?.config.archive;
+        let Some(days) = settings.auto_delete_after_days else {
+            return Ok(());
+        };
+        let due = self.store().archived_due(now - i64::from(days) * 86_400)?;
+        for task in due {
+            let check = match self.delete_check(task.id) {
+                Ok(check) => check,
+                Err(e) => {
+                    eprintln!("asterismd: archive cleanup of task {} failed: {e}", task.id);
+                    continue;
+                }
+            };
+            if check.dirty && !settings.force {
+                continue;
+            }
+            let delete_branch =
+                settings.delete_branch && (settings.force || check.unmerged_commits == 0);
+            match self.delete_task(task.id, delete_branch) {
+                Ok(result) => {
+                    if let Some(warning) = result.warning {
+                        eprintln!("asterismd: archive cleanup of task {}: {warning}", task.id);
+                    }
+                }
+                Err(e) => eprintln!("asterismd: archive cleanup of task {} failed: {e}", task.id),
+            }
+        }
+        Ok(())
     }
 
     pub fn restore_task(self: &Arc<Self>, task_id: i64) -> Result<Task> {
