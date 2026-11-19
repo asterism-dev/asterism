@@ -2376,6 +2376,39 @@ async fn machine_status_lists_machine_agents() {
     );
 }
 
+#[tokio::test]
+async fn cleared_plugin_setting_is_reset_on_machine() {
+    let (daemon, d, fake) = hub(DEADLINE).await;
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+
+    let set = |value: Value| PluginSetSettingsParams {
+        name: "claude".into(),
+        values: [("trust_workspaces".to_string(), value)].into(),
+    };
+    let () = d
+        .call(method::PLUGIN_SET_SETTINGS, set(Value::Bool(true)))
+        .await;
+    daemon.push_agent_settings(m.id, "claude").await.unwrap();
+    let () = d.call(method::PLUGIN_SET_SETTINGS, set(Value::Null)).await;
+    daemon.push_agent_settings(m.id, "claude").await.unwrap();
+
+    let client = machine_client(&fake).await;
+    let settings: PluginSettings = client
+        .call(
+            method::PLUGIN_SETTINGS,
+            PluginNameParams {
+                name: "claude".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        settings.values.get("trust_workspaces"),
+        Some(&Value::Bool(true))
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn agent_settings_are_pushed_to_machine() {
     let (daemon, d, fake) = hub(DEADLINE).await;
