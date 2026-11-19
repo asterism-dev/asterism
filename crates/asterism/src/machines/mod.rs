@@ -149,6 +149,10 @@ impl Machines {
             .settings
             .events
             .send(Event::MachineRemoved { machine_id: id });
+        let _ = self
+            .settings
+            .events
+            .send(Event::MachineRemoved { machine_id: id });
         Ok(())
     }
 
@@ -170,10 +174,6 @@ impl Machines {
         for task_id in &active {
             daemon.archive_task(*task_id).await?;
         }
-        let _ = self
-            .settings
-            .events
-            .send(Event::MachineRemoved { machine_id: id });
         Ok(MachineForgetResult {
             archived_task_ids: active,
         })
