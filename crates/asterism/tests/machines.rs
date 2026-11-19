@@ -89,14 +89,16 @@ async fn subscribed_client(socket: &Path) -> Client {
 
 async fn start(role: Role, open_deadline: Duration) -> (D, FakeSsh) {
     let fake = FakeSsh::new();
+    let options = options(&fake, role, open_deadline);
+    start_with(fake, options).await
+}
+
+async fn start_with(fake: FakeSsh, options: DaemonOptions) -> (D, FakeSsh) {
     let home = tempfile::tempdir().unwrap();
     let paths = Paths {
         home: home.path().to_path_buf(),
     };
-    tokio::spawn(asterism_core::run_with_options(
-        paths.clone(),
-        options(&fake, role, open_deadline),
-    ));
+    tokio::spawn(asterism_core::run_with_options(paths.clone(), options));
     let client = subscribed_client(&paths.socket()).await;
     (
         D {
@@ -2903,6 +2905,101 @@ async fn forwarded_call_without_hub_fails_fast() {
             .unwrap(),
     );
     assert_eq!(err.kind(), ErrorKind::MachineOffline);
+}
+
+/// A machine daemon whose uplink counts as dead after `uplink_timeout` without a line from the hub.
+async fn start_machine(uplink_timeout: Duration) -> (D, FakeSsh) {
+    let fake = FakeSsh::new();
+    let options = DaemonOptions {
+        uplink_timeout,
+        ..options(&fake, Role::Machine, DEADLINE)
+    };
+    start_with(fake, options).await
+}
+
+async fn register_uplink(socket: &Path) -> (Client, UnboundedReceiver<String>) {
+    let hub = Client::connect_unix(socket).await.unwrap();
+    hello(&hub).await;
+    let _: Value = hub
+        .call(method::UPLINK_REGISTER, Value::Null)
+        .await
+        .unwrap();
+    let forwarded = hub.take_requests().unwrap();
+    (hub, forwarded)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn forwarded_call_fails_when_the_uplink_goes_silent() {
+    let (d, _fake) = start_machine(Duration::from_millis(500)).await;
+    let socket = d._home.path().join("asterismd.sock");
+    let cli = Client::connect_unix(&socket).await.unwrap();
+    hello(&cli).await;
+    let (_hub, mut forwarded) = register_uplink(&socket).await;
+
+    let started = Instant::now();
+    let err = rpc_error(
+        tokio::time::timeout(
+            DEADLINE,
+            cli.call::<_, Vec<Task>>(method::TASK_LIST, TaskListParams::default()),
+        )
+        .await
+        .unwrap(),
+    );
+    assert_eq!(err.kind(), ErrorKind::MachineOffline);
+    assert!(err.message.contains("the hub is not connected"), "{err}");
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert!(
+        forwarded.try_recv().is_ok(),
+        "the call went up before failing"
+    );
+
+    let started = Instant::now();
+    let err = rpc_error(
+        cli.call::<_, Vec<Task>>(method::TASK_LIST, TaskListParams::default())
+            .await,
+    );
+    assert_eq!(err.kind(), ErrorKind::MachineOffline);
+    assert!(started.elapsed() < Duration::from_millis(300));
+    assert!(forwarded.try_recv().is_err(), "a dead uplink is not tried");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn registering_a_new_uplink_fails_calls_pending_on_the_old_one() {
+    let (d, _fake) = start_machine(Duration::from_secs(60)).await;
+    let socket = d._home.path().join("asterismd.sock");
+    let cli = Client::connect_unix(&socket).await.unwrap();
+    hello(&cli).await;
+    let (_old, mut old_forwarded) = register_uplink(&socket).await;
+
+    let pending = tokio::spawn(async move {
+        let result = cli
+            .call::<_, Vec<Task>>(method::TASK_LIST, TaskListParams::default())
+            .await;
+        (cli, result)
+    });
+    tokio::time::timeout(DEADLINE, old_forwarded.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let (_new, mut new_forwarded) = register_uplink(&socket).await;
+    let (cli, result) = tokio::time::timeout(DEADLINE, pending)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rpc_error(result).kind(), ErrorKind::MachineOffline);
+
+    // Later calls go up the new uplink.
+    let next = tokio::spawn(async move {
+        cli.call::<_, Vec<Task>>(method::TASK_LIST, TaskListParams::default())
+            .await
+    });
+    let line = tokio::time::timeout(DEADLINE, new_forwarded.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let request: asterism_proto::rpc::Request = serde_json::from_str(&line).unwrap();
+    assert_eq!(request.method, method::TASK_LIST);
+    next.abort();
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -15,6 +15,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::{JoinHandle, JoinSet};
+use tokio::time::Instant;
 
 use crate::daemon::Daemon;
 use crate::error::{Error, Result};
@@ -65,6 +66,8 @@ pub(crate) struct Uplink {
     next_id: AtomicU64,
     /// `None` once the connection is gone, so no call can start waiting on it afterwards.
     pending: Mutex<Option<HashMap<u64, oneshot::Sender<Response>>>>,
+    last_line: Mutex<Instant>,
+    timeout: Duration,
 }
 
 impl Uplink {
@@ -80,8 +83,19 @@ impl Uplink {
         }
     }
 
+    /// A half-open link never reaches EOF, so silence past this instant counts as the hub being gone.
+    fn deadline(&self) -> Instant {
+        *lock(&self.last_line) + self.timeout
+    }
+
+    fn forget(&self, id: u64) {
+        if let Some(pending) = lock(&self.pending).as_mut() {
+            pending.remove(&id);
+        }
+    }
+
     /// Drops every waiting call's sender, which fails it with `MachineOffline`.
-    fn close(&self) {
+    pub(crate) fn close(&self) {
         lock(&self.pending).take();
     }
 }
@@ -90,11 +104,14 @@ fn hub_offline() -> Error {
     Error::new(ErrorKind::MachineOffline, "the hub is not connected")
 }
 
-/// Sends one call up to the hub and waits for its answer for as long as the uplink lives.
+/// Sends one call up to the hub and waits for its answer for as long as the uplink lives and keeps talking.
 async fn forward(daemon: &Daemon, method_name: &str, params: Value) -> Result<Value> {
     let uplink = daemon.uplink().ok_or_else(hub_offline)?;
+    if uplink.deadline() <= Instant::now() {
+        return Err(hub_offline());
+    }
     let id = uplink.next_id.fetch_add(1, Ordering::Relaxed);
-    let (tx, rx) = oneshot::channel();
+    let (tx, mut rx) = oneshot::channel();
     lock(&uplink.pending)
         .as_mut()
         .ok_or_else(hub_offline)?
@@ -102,7 +119,17 @@ async fn forward(daemon: &Daemon, method_name: &str, params: Value) -> Result<Va
     let line = serde_json::to_string(&Request::new(id, method_name, params))
         .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
     uplink.out.send(line).await.map_err(|_| hub_offline())?;
-    let response = rx.await.map_err(|_| hub_offline())?;
+    let response = loop {
+        tokio::select! {
+            response = &mut rx => break response.map_err(|_| hub_offline())?,
+            () = tokio::time::sleep_until(uplink.deadline()) => {
+                if uplink.deadline() <= Instant::now() {
+                    uplink.forget(id);
+                    return Err(hub_offline());
+                }
+            }
+        }
+    };
     match response.error {
         Some(e) => Err(Error::new(e.kind(), e.message)),
         None => Ok(response.result.unwrap_or(Value::Null)),
@@ -209,6 +236,7 @@ pub async fn run_conn(
 
 async fn handle_line(daemon: Arc<Daemon>, conn: Arc<Conn>, line: String) {
     if let Some(uplink) = conn.uplink.get() {
+        *lock(&uplink.last_line) = Instant::now();
         // Lines without a method are the hub's answers to calls this machine forwarded.
         if serde_json::from_str::<Value>(&line).is_ok_and(|v| v.get("method").is_none()) {
             uplink.resolve(&line);
@@ -373,6 +401,8 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
                     out: conn.out.clone(),
                     next_id: AtomicU64::new(1),
                     pending: Mutex::new(Some(HashMap::new())),
+                    last_line: Mutex::new(Instant::now()),
+                    timeout: daemon.uplink_timeout(),
                 })
             });
             daemon.set_uplink(uplink);

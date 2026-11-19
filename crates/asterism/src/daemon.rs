@@ -92,6 +92,7 @@ pub struct DaemonOptions {
     pub machine_open_deadline: Duration,
     pub machine_call_timeout: Duration,
     pub machine_clone_timeout: Duration,
+    pub uplink_timeout: Duration,
 }
 
 impl Default for DaemonOptions {
@@ -119,6 +120,7 @@ impl Default for DaemonOptions {
             machine_open_deadline: Duration::from_secs(30),
             machine_call_timeout: Duration::from_secs(30),
             machine_clone_timeout: Duration::from_secs(600),
+            uplink_timeout: Duration::from_secs(45),
         }
     }
 }
@@ -373,8 +375,17 @@ impl Daemon {
         self.options.role
     }
 
+    pub(crate) fn uplink_timeout(&self) -> Duration {
+        self.options.uplink_timeout
+    }
+
+    /// Fails the calls still waiting on a replaced uplink, which may be half-open.
     pub(crate) fn set_uplink(&self, uplink: &Arc<crate::rpc::Uplink>) {
-        *crate::lock(&self.uplink) = Arc::downgrade(uplink);
+        let mut current = crate::lock(&self.uplink);
+        if let Some(previous) = current.upgrade().filter(|p| !Arc::ptr_eq(p, uplink)) {
+            previous.close();
+        }
+        *current = Arc::downgrade(uplink);
     }
 
     pub(crate) fn uplink(&self) -> Option<Arc<crate::rpc::Uplink>> {
