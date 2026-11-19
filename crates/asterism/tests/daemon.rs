@@ -1340,3 +1340,16 @@ async fn sweep_force_deletes_dirty_worktree() {
     env.daemon.sweep_archived(later(1)).unwrap();
     assert!(gone(&env, &task));
 }
+
+#[tokio::test]
+async fn sweep_skips_worktree_whose_status_cannot_be_read() {
+    let env = setup();
+    auto_delete(&env, 1, false, false);
+    let task = new_task(&env, "unreadable").await;
+    let wt = Path::new(&task.worktree_path);
+    let git_dir = run_git(wt, &["rev-parse", "--absolute-git-dir"]);
+    std::fs::write(Path::new(git_dir.trim()).join("index"), "garbage").unwrap();
+    env.daemon.archive_task(task.id).unwrap();
+    env.daemon.sweep_archived(later(1)).unwrap();
+    assert!(env.daemon.task(task.id).unwrap().archived);
+}

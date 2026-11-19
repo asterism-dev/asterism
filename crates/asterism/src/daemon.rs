@@ -2370,11 +2370,18 @@ impl Daemon {
                     continue;
                 }
             };
-            if check.dirty && !settings.force {
+            let worktree = Path::new(&task.worktree_path);
+            let dirty_or_unknown =
+                check.dirty || (worktree.exists() && git::is_dirty(worktree).is_err());
+            if dirty_or_unknown && !settings.force {
                 continue;
             }
             let delete_branch =
                 settings.delete_branch && (settings.force || check.unmerged_commits == 0);
+            // The task may have been restored while earlier tasks were being swept.
+            if !self.task(task.id).is_ok_and(|t| t.archived) {
+                continue;
+            }
             match self.delete_task(task.id, delete_branch) {
                 Ok(result) => {
                     if let Some(warning) = result.warning {
