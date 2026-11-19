@@ -144,6 +144,20 @@ fn forwards(daemon: &Daemon, conn: &Conn, method_name: &str) -> bool {
         && machines::peer::machine_allowed(method_name)
 }
 
+const HUB_PROJECT_METHODS: &[&str] = &[
+    method::PROJECT_ADD,
+    method::PROJECT_REMOVE,
+    method::PROJECT_UPDATE,
+    method::PROJECT_WORKTREES,
+];
+
+/// A CLI on a machine works with hub project ids, which mean nothing to these machine-local methods.
+fn refuses_project_call(daemon: &Daemon, conn: &Conn, method_name: &str) -> bool {
+    daemon.role() == Role::Machine
+        && conn.uplink.get().is_none()
+        && HUB_PROJECT_METHODS.contains(&method_name)
+}
+
 impl Conn {
     // Awaiting (not try_send) so a briefly full queue delays a response instead of losing it.
     async fn send(&self, response: &Response) {
@@ -281,6 +295,11 @@ async fn handle_line(daemon: Arc<Daemon>, conn: Arc<Conn>, line: String) {
     }
     let result = if forwards(&daemon, &conn, &request.method) {
         forward(&daemon, &request.method, request.params).await
+    } else if refuses_project_call(&daemon, &conn, &request.method) {
+        Err(Error::new(
+            ErrorKind::InvalidParams,
+            "project commands are not available inside a remote session",
+        ))
     } else {
         dispatch(&daemon, &conn, request).await
     };

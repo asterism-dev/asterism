@@ -3003,6 +3003,38 @@ async fn registering_a_new_uplink_fails_calls_pending_on_the_old_one() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn project_commands_are_refused_inside_a_remote_session() {
+    let (d, _fake) = start_with_role(Role::Machine).await;
+    let socket = d._home.path().join("asterismd.sock");
+    let cli = Client::connect_unix(&socket).await.unwrap();
+    hello(&cli).await;
+    let params = serde_json::json!({ "project_id": 999, "path": "/tmp" });
+    for name in [
+        method::PROJECT_ADD,
+        method::PROJECT_REMOVE,
+        method::PROJECT_UPDATE,
+        method::PROJECT_WORKTREES,
+    ] {
+        let err = rpc_error(cli.call::<_, Value>(name, params.clone()).await);
+        assert_eq!(err.kind(), ErrorKind::InvalidParams, "{name}");
+        assert!(
+            err.message
+                .contains("not available inside a remote session"),
+            "{name}: {err}"
+        );
+    }
+
+    let (hub, _forwarded) = register_uplink(&socket).await;
+    let _: Value = hub
+        .call(
+            method::PROJECT_REMOVE,
+            serde_json::json!({ "project_id": 999 }),
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn uplink_register_forbidden_on_node() {
     let (d, _fake) = start_with_fake_ssh().await;
     let err = rpc_error(
