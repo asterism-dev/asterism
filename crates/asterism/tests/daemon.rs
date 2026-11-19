@@ -469,6 +469,34 @@ async fn delete_removes_sessions_worktree_and_optionally_the_branch() {
     assert!(!out.status.success());
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn delete_many_reports_each_task_as_an_activity_step() {
+    let env = setup();
+    let a = new_task(&env, "first").await;
+    let b = new_task(&env, "second").await;
+    // The second delete of `a` fails, but the activity still runs on to `b`.
+    let id = env.daemon.delete_tasks(&[a.id, a.id, b.id], false).unwrap();
+    assert!(eventually(|| env.daemon.activities()[0].finished_at.is_some()).await);
+    let activity = &env.daemon.activities()[0];
+    assert_eq!(activity.id, id);
+    assert_eq!(activity.kind, ActivityKind::DeleteTasks);
+    assert_eq!(activity.status, ActivityStatus::Done);
+    let steps: Vec<_> = activity
+        .steps
+        .iter()
+        .map(|s| (s.label.as_str(), s.status))
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            ("first", ActivityStatus::Done),
+            ("first", ActivityStatus::Failed),
+            ("second", ActivityStatus::Done)
+        ]
+    );
+    assert!(env.daemon.task(b.id).is_err());
+}
+
 #[tokio::test]
 async fn diff_shows_worktree_changes() {
     let env = setup();

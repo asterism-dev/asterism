@@ -21,3 +21,11 @@ export function anyRunning(list: Activity[]): boolean {
 export function activityFor(list: Activity[], token: string): Activity | undefined {
   return list.find((a) => a.token === token);
 }
+
+/** A toast message the moment a delete activity finishes with failed steps; null otherwise. */
+export function deleteFailures(prev: Activity | undefined, next: Activity): string | null {
+  if (next.kind !== 'delete_tasks' || !next.finished_at || prev?.finished_at) return null;
+  const failed = next.steps.filter((s) => s.status === 'failed');
+  if (!failed.length) return null;
+  return `${next.title} with problems — ${failed.map((s) => `${s.label}: ${s.detail}`).join('; ')}`;
+}

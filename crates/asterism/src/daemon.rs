@@ -2452,6 +2452,48 @@ impl Daemon {
         })
     }
 
+    /// Deletes in the background under one activity, returning its id; one failure doesn't stop the rest.
+    pub fn delete_tasks(self: &Arc<Self>, task_ids: &[i64], delete_branch: bool) -> Result<i64> {
+        if task_ids.is_empty() {
+            return Err(Error::new(ErrorKind::InvalidParams, "no tasks to delete"));
+        }
+        let tasks = task_ids
+            .iter()
+            .map(|&id| self.task(id))
+            .collect::<Result<Vec<_>>>()?;
+        let titles: Vec<&str> = tasks.iter().map(|t| t.title.as_str()).collect();
+        let activity = self.start_activity(
+            ActivityKind::DeleteTasks,
+            format!("Delete {} task(s)", tasks.len()),
+            None,
+            &titles,
+        );
+        let project_id = tasks.first().map(|t| t.project_id);
+        if tasks.iter().all(|t| Some(t.project_id) == project_id) {
+            self.set_activity_refs(activity, project_id, None);
+        }
+        let daemon = self.clone();
+        // Sequential: each delete runs git against the same repo.
+        tokio::task::spawn_blocking(move || {
+            let _guard = activity::ActivityGuard {
+                daemon: &daemon,
+                id: activity,
+            };
+            for task in tasks {
+                match daemon.delete_task(task.id, delete_branch) {
+                    Ok(TaskDeleteResult { warning: None }) => {
+                        daemon.advance_activity(activity, None)
+                    }
+                    Ok(TaskDeleteResult { warning: Some(e) }) => {
+                        daemon.fail_activity_step(activity, e, false)
+                    }
+                    Err(e) => daemon.fail_activity_step(activity, e.message, false),
+                }
+            }
+        });
+        Ok(activity)
+    }
+
     fn worktree_sharers(&self, task: &Task) -> Result<Vec<i64>> {
         Ok(self
             .store()

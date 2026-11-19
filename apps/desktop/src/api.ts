@@ -214,6 +214,8 @@ export const api = {
   deleteCheck: (taskId: number) => call<TaskDeleteCheck>('task.delete_check', { task_id: taskId }),
   deleteTask: (taskId: number, deleteBranch: boolean) =>
     call<TaskDeleteResult>('task.delete', { task_id: taskId, delete_branch: deleteBranch }),
+  deleteTasks: (taskIds: number[], deleteBranch: boolean) =>
+    call<number>('task.delete_many', { task_ids: taskIds, delete_branch: deleteBranch }),
   prList: (projectId?: number) => call<PrList>('pr.list', { project_id: projectId ?? null }),
   refreshPrs: (projectId: number) => call<PrList>('pr.refresh', { project_id: projectId }),
   projectTasks: (projectId: number) =>

@@ -192,7 +192,7 @@ export interface ActivityStep {
 }
 export interface Activity {
   id: number;
-  kind: 'clone' | 'create_task';
+  kind: 'clone' | 'create_task' | 'delete_tasks';
   title: string;
   token: string | null;
   project_id: number | null;
