@@ -1184,9 +1184,25 @@ async fn slow_remote_create_within_clone_deadline_succeeds() {
     assert_eq!(machine_tasks(&fake).await.len(), 1);
 }
 
-/// A task created on the machine; the hub's copy of its worktree path is broken so any local git/file/PTY use fails.
+/// A machine task whose hub ids differ from its machine ids and whose hub worktree path is broken, so only translated forwarding works.
 async fn remote_task(d: &D, fake: &FakeSsh, dir: &Path) -> (Machine, Task, PathBuf) {
-    let (m, project_id, _origin) = machine_and_project(d, dir).await;
+    let (m, project_id, origin) = machine_and_project(d, dir).await;
+    let _ = remote_shell(fake, &origin).await;
+    for title in ["local one", "local two"] {
+        let local = hub_task(d, project_id, title).await;
+        let _: Session = d
+            .call(
+                method::SESSION_START,
+                SessionStartParams {
+                    task_id: local,
+                    kind: SessionKind::Command {
+                        argv: vec!["sleep".into(), "60".into()],
+                    },
+                    prompt: None,
+                },
+            )
+            .await;
+    }
     let created: TaskCreateResult = d
         .call(
             method::TASK_CREATE,
@@ -1199,11 +1215,33 @@ async fn remote_task(d: &D, fake: &FakeSsh, dir: &Path) -> (Machine, Task, PathB
         )
         .await;
     let task = created.task;
-    let worktree = PathBuf::from(&machine_tasks(fake).await[0].worktree_path);
+    let (_, remote_id) = hub_store(d).task_remote(task.id).unwrap().unwrap();
+    assert_ne!(task.id, remote_id);
+    let worktree = PathBuf::from(
+        &machine_tasks(fake)
+            .await
+            .into_iter()
+            .find(|t| t.id == remote_id)
+            .unwrap()
+            .worktree_path,
+    );
     hub_store(d)
         .set_task_location(task.id, &task.slug, &task.branch, "/nonexistent/hub-copy")
         .unwrap();
     (m, task, worktree)
+}
+
+async fn machine_sessions(fake: &FakeSsh, remote_task_id: i64) -> Vec<Session> {
+    machine_client(fake)
+        .await
+        .call(
+            method::SESSION_LIST,
+            SessionListParams {
+                task_id: Some(remote_task_id),
+            },
+        )
+        .await
+        .unwrap()
 }
 
 async fn start_remote_shell(d: &D, task_id: i64) -> Session {
@@ -1330,14 +1368,13 @@ async fn remote_shell_round_trip() {
         [session.id]
     );
     let remote_id = hub_store(&d).session_remote(session.id).unwrap().unwrap();
+    assert_ne!(remote_id, session.id);
+    assert!(hub_store(&d).session(remote_id).unwrap().is_some());
+    let (_, remote_task_id) = hub_store(&d).task_remote(task.id).unwrap().unwrap();
+    let on_machine = machine_sessions(&fake, remote_task_id).await;
     assert_eq!(
-        machine_client(&fake)
-            .await
-            .call::<_, Vec<Session>>(method::SESSION_LIST, SessionListParams::default())
-            .await
-            .unwrap()[0]
-            .id,
-        remote_id
+        on_machine.iter().map(|s| s.id).collect::<Vec<_>>(),
+        [remote_id]
     );
 
     let attached: SessionAttachResult = d
@@ -1437,12 +1474,33 @@ async fn remote_shell_round_trip() {
         )
         .await;
     assert!(hub_store(&d).session(session.id).unwrap().is_none());
-    assert!(machine_client(&fake)
+    assert!(machine_sessions(&fake, remote_task_id).await.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn command_on_machine_reaches_exited_without_reconnect() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_m, task, _worktree) = remote_task(&d, &fake, dir.path()).await;
+
+    let session: Session = d
+        .call(
+            method::SESSION_START,
+            SessionStartParams {
+                task_id: task.id,
+                kind: SessionKind::Command {
+                    argv: vec!["true".into()],
+                },
+                prompt: None,
+            },
+        )
+        .await;
+
+    assert!(
+        common::eventually_within(Duration::from_secs(10), || session_status(&d, session.id)
+            == SessionStatus::Exited)
         .await
-        .call::<_, Vec<Session>>(method::SESSION_LIST, SessionListParams::default())
-        .await
-        .unwrap()
-        .is_empty());
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
