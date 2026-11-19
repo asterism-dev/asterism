@@ -1180,6 +1180,47 @@ async fn slow_remote_create_within_clone_deadline_succeeds() {
     assert_eq!(machine_tasks(&fake).await.len(), 1);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn machine_with_a_task_being_created_cannot_be_removed() {
+    let (daemon, d, fake) = hub(Duration::from_millis(300)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, project_id, _origin) = machine_and_project(&d, dir.path()).await;
+
+    fake.pause_link();
+    let client = subscribed_client(
+        &Paths {
+            home: d._home.path().to_path_buf(),
+        }
+        .socket(),
+    )
+    .await;
+    let create = tokio::spawn(async move {
+        client
+            .call::<_, TaskCreateResult>(
+                method::TASK_CREATE,
+                TaskCreateParams {
+                    project_id,
+                    title: "slow".into(),
+                    machine_id: Some(m.id),
+                    ..Default::default()
+                },
+            )
+            .await
+    });
+    assert!(
+        common::eventually_within(DEADLINE, || !hub_store(&d)
+            .tasks(Some(project_id), true)
+            .unwrap()
+            .is_empty())
+        .await
+    );
+
+    let err = daemon.machines().remove(m.id).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
+    fake.resume_link();
+    create.await.unwrap().unwrap();
+}
+
 /// A machine task whose hub ids differ from its machine ids and whose hub worktree path is broken, so only translated forwarding works.
 async fn remote_task(d: &D, fake: &FakeSsh, dir: &Path) -> (Machine, Task, PathBuf) {
     let (m, project_id, origin) = machine_and_project(d, dir).await;

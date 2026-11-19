@@ -166,12 +166,18 @@ impl Daemon {
             Some(name) if params.title.trim().is_empty() => name.clone(),
             _ => params.title.clone(),
         };
-        let id = self.store().insert_task(
-            project.id,
-            &title,
-            params.prompt.as_deref(),
-            base.as_deref().unwrap_or_default(),
-        )?;
+        let id = {
+            let store = self.store();
+            let id = store.insert_task(
+                project.id,
+                &title,
+                params.prompt.as_deref(),
+                base.as_deref().unwrap_or_default(),
+            )?;
+            // Linked to the machine from the start so `machine.remove` sees it; routing waits for the remote id.
+            store.set_task_machine(id, machine_id)?;
+            id
+        };
         let branch = checkout.clone().or(explicit_branch).unwrap_or_else(|| {
             match (&params.issue, issue_name) {
                 (Some(issue), Some(name)) => {

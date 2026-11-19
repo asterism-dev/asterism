@@ -360,6 +360,14 @@ impl Store {
         Ok(self.conn.last_insert_rowid())
     }
 
+    pub fn set_task_machine(&self, task_id: i64, machine_id: i64) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE tasks SET machine_id = ?2 WHERE id = ?1",
+            params![task_id, machine_id],
+        )?;
+        Ok(())
+    }
+
     pub fn set_task_remote(
         &self,
         task_id: i64,
