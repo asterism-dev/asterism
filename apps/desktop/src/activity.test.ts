@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { activityFor, anyRunning, formatDiffCount, upsertActivity } from './activity';
+import {
+  activityFor,
+  deleteFailures,
+  anyRunning,
+  formatDiffCount,
+  upsertActivity,
+} from './activity';
 import type { Activity } from './types';
 
 const act = (id: number, over: Partial<Activity> = {}): Activity => ({
@@ -57,5 +63,27 @@ describe('activityFor', () => {
   });
   it('is undefined when absent', () => {
     expect(activityFor([act(1)], 'a')).toBeUndefined();
+  });
+});
+
+describe('deleteFailures', () => {
+  const step = (label: string, status: 'done' | 'failed', detail: string | null = null) => ({
+    label,
+    status,
+    detail,
+  });
+  const running = act(1, { kind: 'delete_tasks', title: 'Delete 2 task(s)' });
+  const done = { ...running, status: 'done' as const, finished_at: 5 };
+
+  it('reports failed steps once the activity finishes', () => {
+    const next = { ...done, steps: [step('a', 'done'), step('b', 'failed', 'boom')] };
+    expect(deleteFailures(running, next)).toBe('Delete 2 task(s) with problems — b: boom');
+    expect(deleteFailures(next, next)).toBeNull();
+  });
+  it('stays quiet without failures or for other kinds', () => {
+    expect(deleteFailures(running, { ...done, steps: [step('a', 'done')] })).toBeNull();
+    expect(
+      deleteFailures(undefined, { ...done, kind: 'clone', steps: [step('a', 'failed', 'x')] }),
+    ).toBeNull();
   });
 });

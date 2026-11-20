@@ -12,7 +12,6 @@ const emit = defineEmits<{ close: []; deleted: [] }>();
 const warnings = ref<string[] | null>(null);
 const error = ref<string | null>(null);
 const deleteBranches = ref(false);
-const busy = ref(false);
 const confirmButton = ref<InstanceType<typeof Button>>();
 
 onMounted(async () => {
@@ -27,13 +26,11 @@ onMounted(async () => {
 });
 
 function close() {
-  if (!busy.value) emit('close');
+  emit('close');
 }
 
-async function confirm() {
-  busy.value = true;
-  await deleteTasks(props.tasks, deleteBranches.value);
-  busy.value = false;
+function confirm() {
+  void deleteTasks(props.tasks, deleteBranches.value);
   emit('deleted');
 }
 </script>
@@ -49,12 +46,12 @@ async function confirm() {
     <ul v-else-if="warnings.length">
       <li v-for="w in warnings" :key="w">{{ w }}</li>
     </ul>
-    <Checkbox v-model="deleteBranches" :disabled="busy">Delete branches</Checkbox>
+    <Checkbox v-model="deleteBranches">Delete branches</Checkbox>
     <template #actions>
-      <Button :disabled="busy" @click="close">Cancel</Button>
-      <Button ref="confirmButton" variant="danger" :disabled="busy || !warnings" @click="confirm">
-        {{ busy ? 'Deleting…' : 'Delete' }}
-      </Button>
+      <Button @click="close">Cancel</Button>
+      <Button ref="confirmButton" variant="danger" :disabled="!warnings" @click="confirm"
+        >Delete</Button
+      >
     </template>
   </Dialog>
 </template>

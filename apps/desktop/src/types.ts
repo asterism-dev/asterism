@@ -194,7 +194,7 @@ export interface ActivityStep {
 }
 export interface Activity {
   id: number;
-  kind: 'clone' | 'create_task';
+  kind: 'clone' | 'create_task' | 'delete_tasks';
   title: string;
   token: string | null;
   project_id: number | null;
@@ -314,8 +314,14 @@ export interface PathSettings {
   repos: string;
   worktrees: string;
 }
+export interface ArchiveSettings {
+  auto_delete_after_hours?: number | null;
+  delete_branch: boolean;
+  force: boolean;
+}
 export interface NodeConfig {
   paths: PathSettings;
+  archive: ArchiveSettings;
 }
 export interface NodeConfigInfo {
   config: NodeConfig;
