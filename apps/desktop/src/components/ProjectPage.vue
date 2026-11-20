@@ -17,6 +17,7 @@ import BulkDeleteDialog from './BulkDeleteDialog.vue';
 import PrBadge from './PrBadge.vue';
 import { prSummary } from '../prBadge';
 import { staleDefault } from '../baseBranch';
+import { machineOptions } from '../machines';
 import {
   filterTasks,
   formatSize,
@@ -104,6 +105,10 @@ function setDefaultBase(value: string) {
     .updateProject(props.projectId, value || null)
     .then(loadBranches)
     .catch(report);
+}
+
+function setDefaultMachine(id: number) {
+  api.setDefaultMachine(props.projectId, id || null).catch(report);
 }
 
 // A local copy so a failed move can put the select back.
@@ -327,6 +332,13 @@ watch(
               ]"
               :disabled="!branches"
               @update:model-value="setDefaultBase"
+            />
+          </Field>
+          <Field v-if="state.machines.length" label="Default machine">
+            <Select
+              :model-value="project?.default_machine_id ?? 0"
+              :options="machineOptions(state.machines)"
+              @update:model-value="setDefaultMachine"
             />
           </Field>
           <p v-if="staleDefault(branches)" class="muted">

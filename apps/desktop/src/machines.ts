@@ -3,6 +3,7 @@ import type {
   Machine,
   MachineSessionRef,
   MachineUpdatePreview,
+  Project,
   SessionKind,
   Task,
 } from './types';
@@ -21,6 +22,25 @@ export function machineStatusLine(m: Machine): string {
     case 'blocked':
       return `Needs attention: ${error ?? 'unknown error'}`;
   }
+}
+
+export const LOCAL_MACHINE = 0;
+
+export function machineOptions(machines: Machine[], disableUnready = false) {
+  return [
+    { value: LOCAL_MACHINE, label: 'Local' },
+    ...machines.map((m) => ({
+      value: m.id,
+      label: m.status.state === 'ready' ? m.name : `${m.name} — ${machineStatusLine(m)}`,
+      disabled: disableUnready && m.status.state !== 'ready',
+    })),
+  ];
+}
+
+export function defaultMachineFor(project: Project | undefined, machines: Machine[]): number {
+  const id = project?.default_machine_id;
+  const ready = machines.some((m) => m.id === id && m.status.state === 'ready');
+  return ready && id != null ? id : LOCAL_MACHINE;
 }
 
 export function taskMachine(

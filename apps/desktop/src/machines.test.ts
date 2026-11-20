@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import {
+  defaultMachineFor,
   forgetConfirmText,
   localTaskActions,
   machineAgents,
@@ -8,7 +9,7 @@ import {
   taskMachine,
   updateConfirmText,
 } from './machines';
-import type { AgentInfo, Machine, MachineSessionRef, Task } from './types';
+import type { AgentInfo, Machine, MachineSessionRef, Project, Task } from './types';
 
 it.each([
   [
@@ -173,4 +174,28 @@ it('forget without tasks', () => {
   expect(forgetConfirmText('box', [])).toBe(
     'Forget box? Its tasks will be archived here and anything left on the machine is abandoned:\nIt has no active tasks.',
   );
+});
+
+const projectWith = (default_machine_id?: number | null) =>
+  ({ id: 1, default_machine_id }) as Project;
+
+it('defaults to Local without a project default', () => {
+  expect(defaultMachineFor(undefined, [machine('ready')])).toBe(0);
+  expect(defaultMachineFor(projectWith(), [machine('ready')])).toBe(0);
+  expect(defaultMachineFor(projectWith(null), [machine('ready')])).toBe(0);
+});
+
+it('uses the project default machine when it is ready', () => {
+  expect(defaultMachineFor(projectWith(7), [machine('ready')])).toBe(7);
+});
+
+it.each(['connecting', 'offline', 'blocked'] as const)(
+  'falls back to Local when the default machine is %s',
+  (st) => {
+    expect(defaultMachineFor(projectWith(7), [machine(st)])).toBe(0);
+  },
+);
+
+it('falls back to Local when the default machine no longer exists', () => {
+  expect(defaultMachineFor(projectWith(9), [machine('ready')])).toBe(0);
 });

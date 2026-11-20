@@ -211,6 +211,8 @@ export const api = {
     call<ProjectBranches>('project.branches', { project_id: projectId }),
   updateProject: (projectId: number, defaultBase: string | null) =>
     call<Project>('project.update', { project_id: projectId, default_base: defaultBase }),
+  setDefaultMachine: (projectId: number, machineId: number | null) =>
+    call<Project>('project.set_default_machine', { project_id: projectId, machine_id: machineId }),
   archiveTask: (taskId: number) => call<Task>('task.archive', { task_id: taskId }),
   restoreTask: (taskId: number) => call<Task>('task.restore', { task_id: taskId }),
   deleteCheck: (taskId: number) => call<TaskDeleteCheck>('task.delete_check', { task_id: taskId }),

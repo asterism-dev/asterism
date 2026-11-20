@@ -12,7 +12,12 @@ import {
 import { activityFor } from '../activity';
 import { api, errorMessage, RpcError } from '../api';
 import { baseChoice } from '../baseBranch';
-import { machineAgents, machineStatusLine } from '../machines';
+import {
+  defaultMachineFor,
+  LOCAL_MACHINE,
+  machineAgents,
+  machineOptions as machineOptionsFor,
+} from '../machines';
 import { leaveSettings } from '../settingsGuard';
 import { matchAction } from '../shortcuts';
 import { addSession, addTask, state, toast } from '../store';
@@ -57,35 +62,11 @@ const sessionOptions = computed(() => [
   { value: 'agent' as const, label: 'Agent', disabled: !agents.value.length },
   { value: 'shell' as const, label: 'Shell' },
 ]);
-const LOCAL = 0;
-const LAST_MACHINE_KEY = 'asterism.lastMachine';
-const machineOptions = computed(() => [
-  { value: LOCAL, label: 'Local' },
-  ...state.machines.map((m) => ({
-    value: m.id,
-    label: m.status.state === 'ready' ? m.name : `${m.name} — ${machineStatusLine(m)}`,
-    disabled: m.status.state !== 'ready',
-  })),
-]);
-function loadLastMachine() {
-  try {
-    const id = Number(localStorage.getItem(LAST_MACHINE_KEY));
-    return state.machines.some((m) => m.id === id && m.status.state === 'ready') ? id : LOCAL;
-  } catch {
-    return LOCAL;
-  }
-}
-const machineId = ref(loadLastMachine());
+const machineOptions = computed(() => machineOptionsFor(state.machines, true));
+const machineId = ref(LOCAL_MACHINE);
 const agents = computed(() =>
   machineAgents(state.machines.find((m) => m.id === machineId.value) ?? null, state.agents),
 );
-watch(machineId, (id) => {
-  try {
-    localStorage.setItem(LAST_MACHINE_KEY, String(id));
-  } catch {
-    // The choice just isn't remembered.
-  }
-});
 const TABS = [
   { value: 'conversation', label: 'Initial Conversation' },
   { value: 'workspace', label: 'Workspace Settings' },
@@ -178,6 +159,10 @@ watch(
     mode.value = 'new';
     checkout.value = '';
     clearPrefill();
+    machineId.value = defaultMachineFor(
+      state.projects.find((p) => p.id === projectId.value),
+      state.machines,
+    );
     loadProject();
   },
   { immediate: true },
@@ -316,6 +301,15 @@ async function submit() {
     <template #title>
       Create Task in
       <Select v-model="projectId" :options="projectOptions" class="project" aria-label="Project" />
+      <template v-if="state.machines.length">
+        on
+        <Select
+          v-model="machineId"
+          :options="machineOptions"
+          class="project"
+          aria-label="Machine"
+        />
+      </template>
     </template>
     <form class="create-task" @submit.prevent="submit">
       <TextInput
@@ -335,13 +329,6 @@ async function submit() {
         @issue="onIssue"
         @pr="onPr"
         @open-settings="openSettings"
-      />
-
-      <Select
-        v-if="state.machines.length"
-        v-model="machineId"
-        :options="machineOptions"
-        aria-label="Machine"
       />
 
       <Tabs v-model="tab" :tabs="TABS" keep-mounted>

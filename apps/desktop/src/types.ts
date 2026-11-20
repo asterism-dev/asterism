@@ -29,6 +29,7 @@ export interface Project {
   created_at: number;
   default_base: string | null;
   workspace_id: number;
+  default_machine_id?: number | null;
 }
 export interface Workspace {
   id: number;
