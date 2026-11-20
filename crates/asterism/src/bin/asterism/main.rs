@@ -291,7 +291,7 @@ enum ReviewCmd {
 
 #[derive(Subcommand)]
 enum TaskCmd {
-    /// Create a task with its own branch and worktree, optionally starting an agent.
+    /// Create a task with its own branch and worktree; starts an agent (default: claude), --no-agent creates the task only.
     #[command(alias = "create")]
     New {
         /// Required unless --issue is given.
@@ -303,6 +303,8 @@ enum TaskCmd {
         project: Option<String>,
         #[arg(long)]
         agent: Option<String>,
+        #[arg(long, conflicts_with = "agent")]
+        no_agent: bool,
         #[arg(long)]
         prompt: Option<String>,
         /// Branch or ref to start from (default: the project's default base).
@@ -527,11 +529,13 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
             title_flag,
             project,
             agent,
+            no_agent,
             prompt,
             base,
             issue,
         }) => {
             let title = title.or(title_flag);
+            let agent = (!no_agent).then(|| agent.unwrap_or_else(|| "claude".into()));
             let project_id = resolve_project(&client, project).await?;
             // Also fetches origin, so the default and `--base origin/…` see the remote's current state.
             let branches: ProjectBranches = client
@@ -587,7 +591,18 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
                     }
                 }
             };
-            let created: TaskCreateResult = client.call(method::TASK_CREATE, params).await?;
+            let created: TaskCreateResult = match client.call(method::TASK_CREATE, params).await {
+                Err(ClientError::Rpc(e)) if e.kind() == ErrorKind::AgentUnavailable => {
+                    return Err(ClientError::Rpc(RpcError::new(
+                        e.kind(),
+                        format!(
+                            "{}; pass --no-agent to create the task without one",
+                            e.message
+                        ),
+                    )));
+                }
+                result => result?,
+            };
             print(json, &created, || {
                 let mut out = task_line(&created.task);
                 if let Some(session) = &created.session {

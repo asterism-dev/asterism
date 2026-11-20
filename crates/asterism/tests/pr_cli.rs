@@ -39,7 +39,7 @@ fn tasks_show_their_pull_request() {
     child.stdin.take().unwrap().write_all(b"t\n").unwrap();
     assert!(child.wait_with_output().unwrap().status.success());
 
-    let created = node.json(&["task", "new", "Fix login"]);
+    let created = node.json(&["task", "new", "--no-agent", "Fix login"]);
     let branch = created["task"]["branch"].as_str().unwrap().to_string();
     std::fs::write(&prs, serde_json::json!({ (branch): {"number": 7, "url": "https://echo.test/pr/7", "title": "T", "state": "open",
         "review": "none", "checks": {"state": "failure", "failing": ["lint"]}} }).to_string()).unwrap();

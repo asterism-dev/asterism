@@ -5,7 +5,7 @@ use common::Node;
 #[test]
 fn review_comments_prints_open_local_threads() {
     let node = Node::new();
-    let created = node.json(&["task", "new", "t"]);
+    let created = node.json(&["task", "new", "--no-agent", "t"]);
     let id = created["task"]["id"].as_i64().unwrap();
     let wt = created["task"]["worktree_path"].as_str().unwrap();
     std::fs::write(std::path::Path::new(wt).join("a.rs"), "one\n").unwrap();
@@ -35,7 +35,7 @@ fn review_comments_prints_open_local_threads() {
 #[test]
 fn review_checks_needs_a_pull_request() {
     let node = Node::new();
-    let created = node.json(&["task", "new", "t"]);
+    let created = node.json(&["task", "new", "--no-agent", "t"]);
     let id = created["task"]["id"].as_i64().unwrap().to_string();
     let out = node.cmd(&["review", "checks", "--task", &id]);
     assert!(!out.status.success());

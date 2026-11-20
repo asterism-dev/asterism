@@ -13,7 +13,7 @@ fn stderr(out: &std::process::Output) -> String {
 #[test]
 fn task_new_autostarts_the_daemon_and_creates_a_worktree() {
     let node = Node::new();
-    let created = node.json(&["task", "new", "Fix login"]);
+    let created = node.json(&["task", "new", "--no-agent", "Fix login"]);
     assert_eq!(created["task"]["branch"], "asterism/1-fix-login");
     assert!(
         Path::new(created["task"]["worktree_path"].as_str().unwrap())
@@ -29,7 +29,7 @@ fn task_new_autostarts_the_daemon_and_creates_a_worktree() {
 #[test]
 fn session_send_read_wait_kill() {
     let node = Node::new();
-    let task = node.json(&["task", "new", "shell"])["task"]["id"].to_string();
+    let task = node.json(&["task", "new", "--no-agent", "shell"])["task"]["id"].to_string();
     let session = node.json(&[
         "session",
         "start",
@@ -58,7 +58,7 @@ fn session_send_read_wait_kill() {
 #[test]
 fn wait_timeout_is_an_error() {
     let node = Node::new();
-    let task = node.json(&["task", "new", "busy"])["task"]["id"].to_string();
+    let task = node.json(&["task", "new", "--no-agent", "busy"])["task"]["id"].to_string();
     let session = node.json(&[
         "session",
         "start",
@@ -77,7 +77,7 @@ fn wait_timeout_is_an_error() {
 #[test]
 fn archive_restore_and_delete_from_the_cli() {
     let node = Node::new();
-    let created = node.json(&["task", "new", "lifecycle"]);
+    let created = node.json(&["task", "new", "--no-agent", "lifecycle"]);
     let id = created["task"]["id"].to_string();
     let worktree = created["task"]["worktree_path"]
         .as_str()
@@ -95,7 +95,7 @@ fn archive_restore_and_delete_from_the_cli() {
 #[test]
 fn hook_reports_status_and_is_silent_outside_sessions() {
     let node = Node::new();
-    let task = node.json(&["task", "new", "hooked"])["task"]["id"].to_string();
+    let task = node.json(&["task", "new", "--no-agent", "hooked"])["task"]["id"].to_string();
     let session =
         node.json(&["session", "start", &task, "--", "sh", "-c", "sleep 30"])["id"].to_string();
 
@@ -147,17 +147,24 @@ fn project_flag_accepts_id_or_name() {
     let node = Node::new();
     let project = node.json(&["project", "add"]);
     let name = project["name"].as_str().unwrap();
-    let by_name = node.json(&["task", "new", "named", "--project", name]);
+    let by_name = node.json(&["task", "new", "--no-agent", "named", "--project", name]);
     assert_eq!(by_name["task"]["project_id"], project["id"]);
 
-    let out = node.cmd(&["task", "new", "x", "--project", "does-not-exist"]);
+    let out = node.cmd(&[
+        "task",
+        "new",
+        "--no-agent",
+        "x",
+        "--project",
+        "does-not-exist",
+    ]);
     assert_eq!(out.status.code(), Some(1));
 }
 
 #[test]
 fn json_mode_is_parseable_for_commands_without_a_result() {
     let node = Node::new();
-    let task = node.json(&["task", "new", "k"])["task"]["id"].to_string();
+    let task = node.json(&["task", "new", "--no-agent", "k"])["task"]["id"].to_string();
     let session =
         node.json(&["session", "start", &task, "--", "sh", "-c", "sleep 30"])["id"].to_string();
     assert_eq!(
@@ -208,7 +215,7 @@ fn hook_with_hung_stdin_returns_promptly() {
 #[test]
 fn claude_hook_payloads_are_normalized_by_the_plugin() {
     let node = Node::new();
-    let task = node.json(&["task", "new", "idle prompt"])["task"]["id"].to_string();
+    let task = node.json(&["task", "new", "--no-agent", "idle prompt"])["task"]["id"].to_string();
     let session =
         node.json(&["session", "start", &task, "--", "sh", "-c", "sleep 30"])["id"].to_string();
     let hook = |event: &str, payload: &[u8]| {
@@ -247,7 +254,7 @@ fn claude_subagent_hooks_track_start_and_stop() {
     use asterism_proto::PROTO_VERSION;
 
     let node = Node::new();
-    let task = node.json(&["task", "new", "subagents"])["task"]["id"].to_string();
+    let task = node.json(&["task", "new", "--no-agent", "subagents"])["task"]["id"].to_string();
     let session =
         node.json(&["session", "start", &task, "--", "sh", "-c", "sleep 30"])["id"].to_string();
     let hook = |event: &str, payload: &[u8]| {
@@ -333,7 +340,7 @@ fn claude_subagent_hooks_track_start_and_stop() {
 fn autostarted_daemon_drops_the_callers_claude_env() {
     let node = Node::new();
     let created = node
-        .command(&["--json", "task", "new", "env"])
+        .command(&["--json", "task", "new", "--no-agent", "env"])
         .env("CLAUDECODE", "1")
         .output()
         .unwrap();
@@ -360,7 +367,14 @@ fn autostarted_daemon_drops_the_callers_claude_env() {
 fn task_new_takes_a_base_and_project_set_base_changes_the_default() {
     let node = Node::new();
     run_git(node.repo(), &["branch", "develop"]);
-    let created = node.json(&["task", "new", "on develop", "--base", "develop"]);
+    let created = node.json(&[
+        "task",
+        "new",
+        "--no-agent",
+        "on develop",
+        "--base",
+        "develop",
+    ]);
     assert_eq!(created["task"]["base_branch"], "develop");
 
     assert_eq!(
@@ -368,15 +382,76 @@ fn task_new_takes_a_base_and_project_set_base_changes_the_default() {
         "develop"
     );
     assert_eq!(
-        node.json(&["task", "new", "by default"])["task"]["base_branch"],
+        node.json(&["task", "new", "--no-agent", "by default"])["task"]["base_branch"],
         "develop"
     );
     assert!(node.json(&["project", "set-base", "auto"])["default_base"].is_null());
 
-    let out = node.cmd(&["task", "new", "bad", "--base", "nope"]);
+    let out = node.cmd(&["task", "new", "--no-agent", "bad", "--base", "nope"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(
         stderr(&out).contains("does not point to a commit"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+fn json_stdout(out: &std::process::Output) -> serde_json::Value {
+    assert!(out.status.success(), "{}", stderr(out));
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+
+#[test]
+fn task_new_without_agent_flag_starts_claude() {
+    use std::os::unix::fs::PermissionsExt;
+    let node = Node::new();
+    let bin = tempfile::tempdir().unwrap();
+    let claude = bin.path().join("claude");
+    std::fs::write(&claude, "#!/bin/sh\nexec cat\n").unwrap();
+    std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+
+    let out = node
+        .command(&["--json", "task", "new", "x"])
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    let created = json_stdout(&out);
+    assert_eq!(
+        created["session"]["kind"],
+        serde_json::json!({"type": "agent", "name": "claude"})
+    );
+}
+
+#[test]
+fn task_new_no_agent_starts_no_session() {
+    let node = Node::new();
+    let created = node.json(&["task", "new", "x", "--no-agent"]);
+    assert!(created["session"].is_null());
+}
+
+#[test]
+fn task_new_hints_no_agent_when_claude_is_missing() {
+    let node = Node::new();
+    let out = node
+        .command(&["task", "new", "x"])
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("--no-agent"), "{}", stderr(&out));
+}
+
+#[test]
+fn task_new_rejects_agent_with_no_agent() {
+    let node = Node::new();
+    let out = node.cmd(&["task", "new", "x", "--agent", "claude", "--no-agent"]);
+    assert!(
+        stderr(&out).contains("cannot be used with"),
         "{}",
         stderr(&out)
     );
