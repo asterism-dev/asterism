@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use asterism_proto::client::{Client, ClientError};
+use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::{
     method, ClientKind, Event, HelloParams, HelloResult, Machine, MachineState, Role, Session,
     SessionListParams, SessionStatus,
@@ -241,6 +242,22 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
         let Some(events) = client.take_events() else {
             return Failure::Offline("the machine's event stream is gone".into());
         };
+        let Some(requests) = client.take_requests() else {
+            return Failure::Offline("the machine's request stream is gone".into());
+        };
+        // Calls the machine forwards before `peer::serve` starts wait in the client's request queue.
+        match tokio::time::timeout(
+            settings.health_timeout,
+            client.call::<_, Value>(method::UPLINK_REGISTER, Value::Null),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {}
+            // An older daemon kept for its sessions does not forward, so it needs no uplink.
+            Ok(Err(ClientError::Rpc(e))) if e.kind() == ErrorKind::MethodNotFound => {}
+            Ok(Err(e)) => return link.failure(e).await,
+            Err(_) => return Failure::Offline("the machine daemon did not answer".into()),
+        }
         match tokio::time::timeout(
             settings.health_timeout,
             client.call::<_, Value>(method::SUBSCRIBE, Value::Null),
@@ -258,8 +275,11 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
             state.machine.status.state = MachineState::Ready;
             state.machine.status.error = None;
             state.machine.status.update_available = update_available;
-            state.client = Some(client);
+            state.machine.status.agents = hello.agents;
+            state.client = Some(client.clone());
         });
+        // After Ready, so a queued forwarded call that calls back down the pipe finds the client.
+        pump.spawn(super::peer::serve(shared.clone(), client, requests));
         return link.supervise(settings).await;
     }
 }

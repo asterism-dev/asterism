@@ -1,15 +1,20 @@
+use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::{
-    method, ActivityKind, Event, IssueRef, Project, ProjectEnsureParams, Session, SessionKind,
-    SessionListParams, SessionStartParams, SessionStatus, SessionWaitParams, SessionWaitResult,
-    Task, TaskCreateParams, TaskCreateResult, TaskDeleteParams,
+    method, ActivityKind, AgentConfigSetParams, Event, IssueRef, PluginSetSettingsParams, Project,
+    ProjectEnsureParams, Session, SessionKind, SessionListParams, SessionStartParams,
+    SessionStatus, SessionWaitParams, SessionWaitResult, Task, TaskCreateParams, TaskCreateResult,
+    TaskDeleteParams,
 };
 
 use super::{activity, issue_name, not_found, slugify, Daemon};
 use crate::error::{Error, Result};
 use crate::git;
+use crate::plugins::settings;
+use serde_json::Value;
 
 fn trimmed(value: &Option<String>) -> Option<String> {
     value
@@ -20,6 +25,40 @@ fn trimmed(value: &Option<String>) -> Option<String> {
 }
 
 impl Daemon {
+    /// Copies the hub's settings for `agent` to the machine; secret plugin settings stay behind.
+    pub async fn push_agent_settings(self: &Arc<Self>, machine_id: i64, agent: &str) -> Result<()> {
+        let plugin = self
+            .agent_infos()
+            .into_iter()
+            .find(|a| a.name == agent)
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::NotFound,
+                    format!("agent {agent} is not installed"),
+                )
+            })?
+            .plugin;
+        let values: BTreeMap<String, Value> =
+            settings::non_secret_values(self.paths(), &plugin, &self.plugin_schema(&plugin)?)?
+                .into_iter()
+                .collect();
+        let params = AgentConfigSetParams {
+            agent: agent.into(),
+            config: self.agent_config(agent)?,
+        };
+        let () = self
+            .machines()
+            .call(machine_id, method::AGENT_CONFIG_SET, params)
+            .await?;
+        let params = PluginSetSettingsParams {
+            name: plugin,
+            values,
+        };
+        self.machines()
+            .call(machine_id, method::PLUGIN_SET_SETTINGS, params)
+            .await
+    }
+
     /// The machine a task lives on and the task's id there; `None` for a local task.
     pub(super) fn remote_task(&self, task_id: i64) -> Result<Option<(i64, i64)>> {
         Ok(self.store().task_remote(task_id)?)
@@ -39,18 +78,39 @@ impl Daemon {
             .map(|(machine_id, _)| (machine_id, remote_id)))
     }
 
+    /// Fails with `AgentUnavailable` unless the machine reported `agent` as available.
+    fn ensure_machine_agent(&self, machine_id: i64, agent: &str) -> Result<()> {
+        let machine = self
+            .machines()
+            .list()?
+            .into_iter()
+            .find(|m| m.id == machine_id)
+            .ok_or_else(|| not_found("machine", machine_id))?;
+        if machine
+            .status
+            .agents
+            .iter()
+            .any(|a| a.name == agent && a.available)
+        {
+            Ok(())
+        } else {
+            Err(Error::new(
+                ErrorKind::AgentUnavailable,
+                format!("agent {agent} is not available on {}", machine.name),
+            ))
+        }
+    }
+
     pub(super) async fn start_remote_session(
-        &self,
+        self: &Arc<Self>,
         machine_id: i64,
         remote_task: i64,
         task_id: i64,
         params: SessionStartParams,
     ) -> Result<Session> {
-        if matches!(params.kind, SessionKind::Agent { .. }) {
-            return Err(Error::new(
-                ErrorKind::InvalidParams,
-                "agents on machines are not supported yet",
-            ));
+        if let SessionKind::Agent { name } = &params.kind {
+            self.ensure_machine_agent(machine_id, name)?;
+            self.push_agent_settings(machine_id, name).await?;
         }
         let kind = params.kind.clone();
         let remote: Session = self
@@ -139,15 +199,12 @@ impl Daemon {
 
     /// `task.create` for a machine: the machine clones origin, creates and pushes the branch; the hub keeps a linked row.
     pub(super) async fn create_remote_task(
-        &self,
+        self: &Arc<Self>,
         machine_id: i64,
         params: TaskCreateParams,
     ) -> Result<TaskCreateResult> {
-        if params.agent.is_some() {
-            return Err(Error::new(
-                ErrorKind::InvalidParams,
-                "agents on machines are not supported yet",
-            ));
+        if let Some(agent) = &params.agent {
+            self.ensure_machine_agent(machine_id, agent)?;
         }
         let project = self
             .store()
@@ -199,7 +256,11 @@ impl Daemon {
             ActivityKind::CreateTask,
             title.clone(),
             params.activity_token.clone(),
-            &["Create worktree", "Push branch"],
+            if params.agent.is_some() {
+                &["Create worktree", "Push branch", "Start agent"]
+            } else {
+                &["Create worktree", "Push branch"]
+            },
         );
         let _guard = activity::ActivityGuard {
             daemon: self,
@@ -236,6 +297,7 @@ impl Daemon {
                         checkout,
                         push: true,
                         on_conflict: params.on_conflict,
+                        issue: params.issue.clone(),
                         ..Default::default()
                     },
                 )
@@ -278,9 +340,36 @@ impl Daemon {
         }
         let task = self.task(id)?;
         self.emit(Event::TaskChanged(task.clone()));
+        let session = match params.agent {
+            Some(name) => {
+                let started = self
+                    .start_remote_session(
+                        machine_id,
+                        remote_task.id,
+                        id,
+                        SessionStartParams {
+                            task_id: id,
+                            kind: SessionKind::Agent { name },
+                            prompt: params.prompt,
+                        },
+                    )
+                    .await;
+                match started {
+                    Ok(session) => {
+                        self.advance_activity(activity, None);
+                        Some(session)
+                    }
+                    Err(e) => {
+                        self.fail_activity_step(activity, e.message.clone(), true);
+                        return Err(e);
+                    }
+                }
+            }
+            None => None,
+        };
         Ok(TaskCreateResult {
             task,
-            session: None,
+            session,
             warning: created.warning,
         })
     }

@@ -20,7 +20,7 @@ const SSH_OPTIONS: &[&str] = &[
     "-o",
     "ServerAliveCountMax=2",
 ];
-const BINARIES: [&str; 2] = ["asterismd", "asterism"];
+const BINARIES: [&str; 3] = ["asterismd", "asterism", "asterism-plugin-claude"];
 const INSTALL_DIR: &str = r#"d="$HOME/.asterism-machine/bin/$1""#;
 
 pub fn default_ssh_bin() -> PathBuf {
@@ -178,8 +178,9 @@ pub async fn ensure_installed(
         run(ssh, &upload, &[&key, name], Some(file), None).await?;
     }
 
+    let files = BINARIES.map(|name| format!(r#""$d/{name}""#)).join(" ");
     let verify = format!(
-        r#"{INSTALL_DIR}; if command -v sha256sum >/dev/null 2>&1; then sha256sum "$d/asterismd" "$d/asterism"; else shasum -a 256 "$d/asterismd" "$d/asterism"; fi"#
+        r#"{INSTALL_DIR}; if command -v sha256sum >/dev/null 2>&1; then sha256sum {files}; else shasum -a 256 {files}; fi"#
     );
     let sums = run(ssh, &verify, &[&key], None, Some(deadline)).await?;
     let remote: Vec<&str> = sums

@@ -573,6 +573,8 @@ export interface MachineStatus {
   platform: string | null;
   error: string | null;
   update_available: boolean;
+  /** Absent on older daemons. */
+  agents?: AgentInfo[];
 }
 export interface Machine {
   id: number;

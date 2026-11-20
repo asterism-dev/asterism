@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use asterism_proto::rpc::{ErrorKind, Request, Response, RpcError};
@@ -12,12 +13,14 @@ use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::{JoinHandle, JoinSet};
+use tokio::time::Instant;
 
 use crate::daemon::Daemon;
 use crate::error::{Error, Result};
 use crate::lock;
+use crate::machines;
 use crate::plugins::process::HostFn;
 use crate::remote;
 
@@ -32,6 +35,7 @@ const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 pub enum Peer {
     Local,
     Remote { device_id: i64 },
+    Machine { machine_id: i64 },
 }
 
 const REMOTE_DENIED: &[&str] = &[
@@ -52,6 +56,106 @@ struct Conn {
     out: mpsc::Sender<String>,
     forwarders: Mutex<HashMap<String, JoinHandle<()>>>,
     peer: Peer,
+    /// Set once the hub registers this connection as a machine daemon's uplink.
+    uplink: OnceLock<Arc<Uplink>>,
+}
+
+/// The hub's connection on a machine daemon; the machine's calls to the hub go out over it.
+pub(crate) struct Uplink {
+    out: mpsc::Sender<String>,
+    next_id: AtomicU64,
+    /// `None` once the connection is gone, so no call can start waiting on it afterwards.
+    pending: Mutex<Option<HashMap<u64, oneshot::Sender<Response>>>>,
+    last_line: Mutex<Instant>,
+    timeout: Duration,
+}
+
+impl Uplink {
+    fn resolve(&self, line: &str) {
+        let Ok(response) = serde_json::from_str::<Response>(line) else {
+            return;
+        };
+        if let Some(tx) = lock(&self.pending)
+            .as_mut()
+            .and_then(|pending| pending.remove(&response.id))
+        {
+            let _ = tx.send(response);
+        }
+    }
+
+    /// A half-open link never reaches EOF, so silence past this instant counts as the hub being gone.
+    fn deadline(&self) -> Instant {
+        *lock(&self.last_line) + self.timeout
+    }
+
+    fn forget(&self, id: u64) {
+        if let Some(pending) = lock(&self.pending).as_mut() {
+            pending.remove(&id);
+        }
+    }
+
+    /// Drops every waiting call's sender, which fails it with `MachineOffline`.
+    pub(crate) fn close(&self) {
+        lock(&self.pending).take();
+    }
+}
+
+fn hub_offline() -> Error {
+    Error::new(ErrorKind::MachineOffline, "the hub is not connected")
+}
+
+/// Sends one call up to the hub and waits for its answer for as long as the uplink lives and keeps talking.
+async fn forward(daemon: &Daemon, method_name: &str, params: Value) -> Result<Value> {
+    let uplink = daemon.uplink().ok_or_else(hub_offline)?;
+    if uplink.deadline() <= Instant::now() {
+        return Err(hub_offline());
+    }
+    let id = uplink.next_id.fetch_add(1, Ordering::Relaxed);
+    let (tx, mut rx) = oneshot::channel();
+    lock(&uplink.pending)
+        .as_mut()
+        .ok_or_else(hub_offline)?
+        .insert(id, tx);
+    let line = serde_json::to_string(&Request::new(id, method_name, params))
+        .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+    uplink.out.send(line).await.map_err(|_| hub_offline())?;
+    let response = loop {
+        tokio::select! {
+            response = &mut rx => break response.map_err(|_| hub_offline())?,
+            () = tokio::time::sleep_until(uplink.deadline()) => {
+                if uplink.deadline() <= Instant::now() {
+                    uplink.forget(id);
+                    return Err(hub_offline());
+                }
+            }
+        }
+    };
+    match response.error {
+        Some(e) => Err(Error::new(e.kind(), e.message)),
+        None => Ok(response.result.unwrap_or(Value::Null)),
+    }
+}
+
+/// On a machine, hub-owned calls from local clients go to the hub; the uplink's own calls never do, or they would loop.
+fn forwards(daemon: &Daemon, conn: &Conn, method_name: &str) -> bool {
+    daemon.role() == Role::Machine
+        && conn.uplink.get().is_none()
+        && method_name != method::HELLO
+        && machines::peer::machine_allowed(method_name)
+}
+
+const HUB_PROJECT_METHODS: &[&str] = &[
+    method::PROJECT_ADD,
+    method::PROJECT_REMOVE,
+    method::PROJECT_UPDATE,
+    method::PROJECT_WORKTREES,
+];
+
+/// A CLI on a machine works with hub project ids, which mean nothing to these machine-local methods.
+fn refuses_project_call(daemon: &Daemon, conn: &Conn, method_name: &str) -> bool {
+    daemon.role() == Role::Machine
+        && conn.uplink.get().is_none()
+        && HUB_PROJECT_METHODS.contains(&method_name)
 }
 
 impl Conn {
@@ -119,7 +223,7 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: UnixStream) {
     run_conn(daemon, Peer::Local, lines_rx, out).await;
 }
 
-pub(crate) async fn run_conn(
+pub async fn run_conn(
     daemon: Arc<Daemon>,
     peer: Peer,
     mut incoming: mpsc::Receiver<String>,
@@ -129,6 +233,7 @@ pub(crate) async fn run_conn(
         out,
         forwarders: Mutex::new(HashMap::new()),
         peer,
+        uplink: OnceLock::new(),
     });
     // Dropping the set on disconnect aborts in-flight requests such as an unbounded `wait`.
     let mut requests = JoinSet::new();
@@ -138,9 +243,20 @@ pub(crate) async fn run_conn(
     }
     requests.shutdown().await;
     conn.stop_all();
+    if let Some(uplink) = conn.uplink.get() {
+        uplink.close();
+    }
 }
 
 async fn handle_line(daemon: Arc<Daemon>, conn: Arc<Conn>, line: String) {
+    if let Some(uplink) = conn.uplink.get() {
+        *lock(&uplink.last_line) = Instant::now();
+        // Lines without a method are the hub's answers to calls this machine forwarded.
+        if serde_json::from_str::<Value>(&line).is_ok_and(|v| v.get("method").is_none()) {
+            uplink.resolve(&line);
+            return;
+        }
+    }
     let request = match serde_json::from_str::<Request>(&line) {
         Ok(request) => request,
         Err(e) => {
@@ -153,6 +269,17 @@ async fn handle_line(daemon: Arc<Daemon>, conn: Arc<Conn>, line: String) {
         }
     };
     let id = request.id;
+    if let Peer::Machine { machine_id } = conn.peer {
+        let response =
+            match machines::peer::dispatch(&daemon, machine_id, &request.method, request.params)
+                .await
+            {
+                Ok(result) => Response::ok(id, result),
+                Err(e) => Response::err(id, e.into()),
+            };
+        conn.send(&response).await;
+        return;
+    }
     if matches!(conn.peer, Peer::Remote { .. }) && remote_denied(&request.method) {
         let message = format!("{} is not available remotely", request.method);
         conn.send(&Response::err(
@@ -166,7 +293,17 @@ async fn handle_line(daemon: Arc<Daemon>, conn: Arc<Conn>, line: String) {
         attach(&daemon, &conn, id, request.params).await;
         return;
     }
-    let response = match dispatch(&daemon, &conn, request).await {
+    let result = if forwards(&daemon, &conn, &request.method) {
+        forward(&daemon, &request.method, request.params).await
+    } else if refuses_project_call(&daemon, &conn, &request.method) {
+        Err(Error::new(
+            ErrorKind::InvalidParams,
+            "project commands are not available inside a remote session",
+        ))
+    } else {
+        dispatch(&daemon, &conn, request).await
+    };
+    let response = match result {
         Ok(result) => Response::ok(id, result),
         Err(e) => Response::err(id, e.into()),
     };
@@ -269,6 +406,25 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
             daemon
                 .machines()
                 .retry(params::<MachineIdParams>(raw)?.machine_id)?;
+            Ok(Value::Null)
+        }
+        method::UPLINK_REGISTER => {
+            if daemon.role() != Role::Machine || conn.peer != Peer::Local {
+                return Err(Error::new(
+                    ErrorKind::Forbidden,
+                    "only the hub can register as a machine daemon's uplink",
+                ));
+            }
+            let uplink = conn.uplink.get_or_init(|| {
+                Arc::new(Uplink {
+                    out: conn.out.clone(),
+                    next_id: AtomicU64::new(1),
+                    pending: Mutex::new(Some(HashMap::new())),
+                    last_line: Mutex::new(Instant::now()),
+                    timeout: daemon.uplink_timeout(),
+                })
+            });
+            daemon.set_uplink(uplink);
             Ok(Value::Null)
         }
         method::MACHINE_TEST => to_value(

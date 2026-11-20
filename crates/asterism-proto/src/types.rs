@@ -115,6 +115,7 @@ pub mod method {
     pub const MACHINE_REMOVE: &str = "machine.remove";
     pub const MACHINE_RETRY: &str = "machine.retry";
     pub const MACHINE_TEST: &str = "machine.test";
+    pub const UPLINK_REGISTER: &str = "uplink.register";
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -1802,6 +1803,8 @@ pub struct MachineStatus {
     pub platform: Option<String>,
     pub error: Option<String>,
     pub update_available: bool,
+    #[serde(default)]
+    pub agents: Vec<AgentInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

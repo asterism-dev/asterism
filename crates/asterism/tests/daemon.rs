@@ -885,7 +885,7 @@ async fn remove_force_kills_stubborn_sessions() {
     let session = start(
         &env,
         &task,
-        sh("trap '' HUP TERM INT; echo pid=$$; while true; do sleep 1; done"),
+        sh("trap '' HUP TERM INT; (while true; do sleep 1; done) & echo pid=$$ child=$!; while true; do sleep 1; done"),
     )
     .await;
     let read = async || {
@@ -898,25 +898,27 @@ async fn remove_force_kills_stubborn_sessions() {
             .unwrap()
             .text
     };
-    assert!(eventually_async(async || read().await.contains("pid=")).await);
+    assert!(eventually_async(async || read().await.contains("child=")).await);
     let text = read().await;
-    let pid = text
-        .split("pid=")
-        .nth(1)
-        .unwrap()
-        .split_whitespace()
-        .next()
-        .unwrap()
-        .to_string();
-    let alive = || {
+    let field = |name: &str| {
+        text.split(name)
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .to_string()
+    };
+    let (pid, child) = (field("pid="), field("child="));
+    let alive = |pid: &str| {
         std::process::Command::new("kill")
-            .args(["-0", &pid])
+            .args(["-0", pid])
             .output()
             .unwrap()
             .status
             .success()
     };
-    assert!(alive());
+    assert!(alive(&pid) && alive(&child));
     let started = std::time::Instant::now();
     env.daemon.remove_session(session.id).await.unwrap();
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
@@ -925,8 +927,13 @@ async fn remove_force_kills_stubborn_sessions() {
         ErrorKind::NotFound
     );
     assert!(
-        eventually(|| !alive()).await,
+        eventually(|| !alive(&pid)).await,
         "process {pid} survived remove"
+    );
+    // Only a kill of the whole process group ends the child; procps `kill -KILL -<pgid>` is unreliable.
+    assert!(
+        eventually(|| !alive(&child)).await,
+        "child {child} of the session survived remove"
     );
 }
 
@@ -1112,6 +1119,30 @@ fn hello_reports_role_and_executable() {
         hello.exe,
         std::env::current_exe().unwrap().to_string_lossy()
     );
+}
+
+#[test]
+fn machine_role_loads_only_builtin_agent_plugins() {
+    let home = tempfile::tempdir().unwrap();
+    let paths = Paths {
+        home: home.path().to_path_buf(),
+    };
+    common::link_fixture(&paths);
+    let daemon = Daemon::with_options(
+        paths,
+        asterism_core::daemon::DaemonOptions {
+            role: Role::Machine,
+            ..common::daemon_options()
+        },
+    )
+    .unwrap();
+    let names: Vec<String> = daemon
+        .plugin_list()
+        .unwrap()
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    assert_eq!(names, ["claude"]);
 }
 
 #[test]

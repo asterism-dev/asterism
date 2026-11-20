@@ -63,6 +63,8 @@ pub struct Sources {
     /// Plugin name → directory of its current installed version.
     pub installed: BTreeMap<String, PathBuf>,
     pub disabled: BTreeSet<String>,
+    /// Keeps only built-in plugins that declare agents.
+    pub agents_only: bool,
 }
 
 #[derive(Debug, Default)]
@@ -111,14 +113,22 @@ impl Registry {
         };
         let linked = sources.links.iter().map(read(PluginOrigin::Linked));
         let installed = sources.installed.iter().map(read(PluginOrigin::Installed));
-        let builtin = BUILTIN.iter().map(|(name, text)| {
-            candidate(
-                name,
-                PluginOrigin::Builtin,
-                sources.builtin_dir.clone(),
-                Ok(text.to_string()),
-            )
-        });
+        let builtin = BUILTIN
+            .iter()
+            .map(|(name, text)| {
+                candidate(
+                    name,
+                    PluginOrigin::Builtin,
+                    sources.builtin_dir.clone(),
+                    Ok(text.to_string()),
+                )
+            })
+            .filter(|p| {
+                !sources.agents_only
+                    || p.manifest
+                        .as_ref()
+                        .is_some_and(|m| !m.provides.agent.is_empty())
+            });
         let mut plugins: Vec<Arc<Plugin>> = Vec::new();
         let mut claimed: Vec<(CapabilityKind, String, String)> = Vec::new();
         for mut plugin in linked.chain(installed).chain(builtin) {
@@ -264,6 +274,7 @@ mod tests {
                 .collect(),
             installed: BTreeMap::new(),
             disabled: std::collections::BTreeSet::new(),
+            agents_only: false,
         }
     }
 

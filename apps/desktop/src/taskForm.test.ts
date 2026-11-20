@@ -95,11 +95,11 @@ describe('taskForm', () => {
     });
   });
 
-  it('sends machine_id and drops agent and prompt for a machine task', () => {
+  it('sends machine_id, agent and prompt for a machine task', () => {
     expect(createRequest(form({ machineId: 3 }))).toMatchObject({
       machine_id: 3,
-      agent: null,
-      prompt: null,
+      agent: 'claude',
+      prompt: 'do it',
     });
     expect(createRequest(form()).machine_id).toBeNull();
   });

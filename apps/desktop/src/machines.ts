@@ -1,4 +1,4 @@
-import type { Machine, Task } from './types';
+import type { AgentInfo, Machine, Task } from './types';
 
 export function machineStatusLine(m: Machine): string {
   const { state, platform, error, update_available } = m.status;
@@ -29,8 +29,21 @@ export function machineBlocksInput(task: Task, machines: Machine[], loaded: bool
   return loaded && taskMachine(task, machines)?.ready === false;
 }
 
-/** Agents and Finder only work on this Mac, so machine tasks offer neither. */
-export function localTaskActions<A>(task: Task, agents: A[]): { agents: A[]; reveal: boolean } {
-  const local = task.machine_id == null;
-  return { agents: local ? agents : [], reveal: local };
+export function machineAgents(machine: Machine | null, localAgents: AgentInfo[]): AgentInfo[] {
+  const agents = machine ? (machine.status.agents ?? []) : localAgents;
+  return agents.filter((a) => a.available);
+}
+
+/** Finder only works on this Mac; agents come from the task's machine. */
+export function localTaskActions(
+  task: Task,
+  machines: Machine[],
+  localAgents: AgentInfo[],
+): { agents: AgentInfo[]; reveal: boolean } {
+  const machine = machines.find((m) => m.id === task.machine_id) ?? null;
+  const remote = task.machine_id != null;
+  return {
+    agents: remote ? machineAgents(machine, []) : machineAgents(null, localAgents),
+    reveal: !remote,
+  };
 }

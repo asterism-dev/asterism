@@ -1,6 +1,12 @@
 import { expect, it } from 'vitest';
-import { localTaskActions, machineBlocksInput, machineStatusLine, taskMachine } from './machines';
-import type { Machine, Task } from './types';
+import {
+  localTaskActions,
+  machineAgents,
+  machineBlocksInput,
+  machineStatusLine,
+  taskMachine,
+} from './machines';
+import type { AgentInfo, Machine, Task } from './types';
 
 it.each([
   [
@@ -70,11 +76,37 @@ it('machineBlocksInput only blocks once the machine list is known', () => {
   expect(machineBlocksInput(task(7), [], false)).toBe(false);
 });
 
-it('localTaskActions offers agents and reveal only for local tasks', () => {
-  expect(localTaskActions(task(null), ['claude'])).toEqual({ agents: ['claude'], reveal: true });
-  expect(localTaskActions(task(undefined), ['claude'])).toEqual({
-    agents: ['claude'],
-    reveal: true,
+const agent = (name: string, available = true) => ({ name, available }) as AgentInfo;
+const withAgents = (agents?: AgentInfo[]) => {
+  const m = machine('ready');
+  return { ...m, status: { ...m.status, agents } } as Machine;
+};
+
+it('machineAgents returns local agents for Local', () => {
+  expect(machineAgents(null, [agent('claude'), agent('x', false)])).toEqual([agent('claude')]);
+});
+
+it('machineAgents returns the available agents of a machine', () => {
+  const m = withAgents([agent('claude'), agent('codex', false)]);
+  expect(machineAgents(m, [agent('local-only')])).toEqual([agent('claude')]);
+});
+
+it('machineAgents is empty for a machine without agents', () => {
+  expect(machineAgents(withAgents(), [agent('claude')])).toEqual([]);
+  expect(machineAgents(withAgents([]), [agent('claude')])).toEqual([]);
+});
+
+it('localTaskActions offers local agents and reveal for local tasks', () => {
+  const local = [agent('claude')];
+  expect(localTaskActions(task(null), [], local)).toEqual({ agents: local, reveal: true });
+  expect(localTaskActions(task(undefined), [], local)).toEqual({ agents: local, reveal: true });
+});
+
+it('localTaskActions offers the machine agents but never reveal for remote tasks', () => {
+  const m = withAgents([agent('codex')]);
+  expect(localTaskActions(task(7), [m], [agent('claude')])).toEqual({
+    agents: [agent('codex')],
+    reveal: false,
   });
-  expect(localTaskActions(task(7), ['claude'])).toEqual({ agents: [], reveal: false });
+  expect(localTaskActions(task(9), [m], [agent('claude')])).toEqual({ agents: [], reveal: false });
 });

@@ -1,6 +1,7 @@
 pub mod conn;
 pub mod install;
 mod link;
+pub(crate) mod peer;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};

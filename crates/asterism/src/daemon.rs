@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, Weak};
 use std::time::Duration;
 
 use asterism_plugin::protocol::{
@@ -92,6 +92,7 @@ pub struct DaemonOptions {
     pub machine_open_deadline: Duration,
     pub machine_call_timeout: Duration,
     pub machine_clone_timeout: Duration,
+    pub uplink_timeout: Duration,
 }
 
 impl Default for DaemonOptions {
@@ -119,6 +120,7 @@ impl Default for DaemonOptions {
             machine_open_deadline: Duration::from_secs(30),
             machine_call_timeout: Duration::from_secs(30),
             machine_clone_timeout: Duration::from_secs(600),
+            uplink_timeout: Duration::from_secs(45),
         }
     }
 }
@@ -214,6 +216,8 @@ pub struct Daemon {
     next_activity_id: AtomicI64,
     pub(crate) remote: crate::remote::Hub,
     machines: crate::machines::Machines,
+    /// On a machine, the hub's connection; weak so a closed connection never lingers here.
+    uplink: Mutex<Weak<crate::rpc::Uplink>>,
 }
 
 #[derive(Default)]
@@ -252,7 +256,7 @@ impl Daemon {
         };
         Ok(Arc::new_cyclic(move |daemon| {
             let host = crate::rpc::host_fn(daemon.clone());
-            let plugins = PluginSet::load(&paths, &builtin_dir, &runtime, &host);
+            let plugins = PluginSet::load(&paths, &builtin_dir, &runtime, &host, options.role);
             let machines = crate::machines::Machines::new(
                 daemon.clone(),
                 options.role,
@@ -291,6 +295,7 @@ impl Daemon {
                 next_activity_id: AtomicI64::new(1),
                 remote: crate::remote::Hub::new(),
                 machines,
+                uplink: Mutex::new(Weak::new()),
             }
         }))
     }
@@ -364,6 +369,27 @@ impl Daemon {
 
     pub fn machines(&self) -> &crate::machines::Machines {
         &self.machines
+    }
+
+    pub(crate) fn role(&self) -> Role {
+        self.options.role
+    }
+
+    pub(crate) fn uplink_timeout(&self) -> Duration {
+        self.options.uplink_timeout
+    }
+
+    /// Fails the calls still waiting on a replaced uplink, which may be half-open.
+    pub(crate) fn set_uplink(&self, uplink: &Arc<crate::rpc::Uplink>) {
+        let mut current = crate::lock(&self.uplink);
+        if let Some(previous) = current.upgrade().filter(|p| !Arc::ptr_eq(p, uplink)) {
+            previous.close();
+        }
+        *current = Arc::downgrade(uplink);
+    }
+
+    pub(crate) fn uplink(&self) -> Option<Arc<crate::rpc::Uplink>> {
+        crate::lock(&self.uplink).upgrade()
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
@@ -932,6 +958,7 @@ impl Daemon {
             &self.builtin_dir,
             &self.runtime,
             &self.host,
+            self.options.role,
         ));
         let old = std::mem::replace(
             &mut *self
@@ -3020,11 +3047,14 @@ impl Daemon {
         let session = self.session(id)?;
         self.emit(Event::SessionChanged(session.clone()));
         self.touch_task(task.id);
-        let daemon = self.clone();
-        let project_id = task.project_id;
-        tokio::spawn(async move {
-            let _ = daemon.refresh_prs(project_id).await;
-        });
+        // A machine has no forge plugins; the hub tracks PRs.
+        if self.options.role != Role::Machine {
+            let daemon = self.clone();
+            let project_id = task.project_id;
+            tokio::spawn(async move {
+                let _ = daemon.refresh_prs(project_id).await;
+            });
+        }
         Ok(session)
     }
 

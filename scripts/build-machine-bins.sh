@@ -1,10 +1,10 @@
 #!/bin/sh
-# Builds target/machine/<platform>/{asterismd,asterism} for the platforms the daemon installs on machines.
+# Builds target/machine/<platform>/{asterismd,asterism,asterism-plugin-claude} for the platforms the daemon installs on machines.
 set -eu
 cd "$(dirname "$0")/.."
 
 RUST_IMAGE=rust:1.99.1-alpine
-BINS="asterismd asterism"
+BINS="asterismd asterism asterism-plugin-claude"
 
 # ponytail: amd64 builds run emulated on Apple silicon and are slow; switch to cargo-zigbuild if this gets in the way.
 for pair in amd64:x86_64 arm64:aarch64; do
@@ -12,12 +12,12 @@ for pair in amd64:x86_64 arm64:aarch64; do
 	arch=${pair#*:}
 	docker run --rm --platform "linux/$docker_arch" \
 		-v "$PWD":/src -v "asterism-machine-cargo-$arch":/usr/local/cargo/registry -w /src \
-		"$RUST_IMAGE" sh -c "apk add --no-cache build-base && cargo build -p asterism --bin asterismd --bin asterism --release --target-dir target/linux-$arch"
+		"$RUST_IMAGE" sh -c "apk add --no-cache build-base && cargo build -p asterism --bin asterismd --bin asterism --bin asterism-plugin-claude --release --target-dir target/linux-$arch"
 	mkdir -p "target/machine/linux-$arch"
 	for bin in $BINS; do cp "target/linux-$arch/release/$bin" "target/machine/linux-$arch/"; done
 done
 
-cargo build -p asterism --bin asterismd --bin asterism
+cargo build -p asterism --bin asterismd --bin asterism --bin asterism-plugin-claude
 # A cargo config or CARGO_TARGET_DIR may move the host build out of ./target.
 host_target=$(cargo metadata --format-version 1 --no-deps | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')
 case "$(uname -s)-$(uname -m)" in

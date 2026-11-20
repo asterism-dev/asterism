@@ -41,6 +41,9 @@ while [ $# -gt 0 ]; do
 done
 shift
 # Like real ssh, the remote side gets none of our environment (e.g. ASTERISM_SOCKET).
+if [ -f "$root/shell" ]; then
+  exec env -i HOME={home} PATH=/usr/bin:/bin SHELL="$(cat "$root/shell")" sh -c "$*"
+fi
 exec env -i HOME={home} PATH="$PATH" sh -c "$*"
 "#,
             root = sh_quote(root.path()),
@@ -54,6 +57,11 @@ exec env -i HOME={home} PATH="$PATH" sh -c "$*"
         std::fs::create_dir_all(&bins).unwrap();
         symlink(env!("CARGO_BIN_EXE_asterismd"), bins.join("asterismd")).unwrap();
         symlink(env!("CARGO_BIN_EXE_asterism"), bins.join("asterism")).unwrap();
+        symlink(
+            env!("CARGO_BIN_EXE_asterism-plugin-claude"),
+            bins.join("asterism-plugin-claude"),
+        )
+        .unwrap();
         Self { root, home }
     }
 
@@ -90,6 +98,15 @@ exec env -i HOME={home} PATH="$PATH" sh -c "$*"
     /// Every later invocation sleeps forever, like an unreachable host.
     pub fn hang(&self) {
         std::fs::write(self.root.path().join("hang"), "").unwrap();
+    }
+
+    /// The remote side gets `shell` as `SHELL` and only the system dirs on `PATH`, like a bare ssh login.
+    pub fn set_login_shell(&self, shell: &Path) {
+        std::fs::write(
+            self.root.path().join("shell"),
+            shell.as_os_str().as_encoded_bytes(),
+        )
+        .unwrap();
     }
 
     pub fn invocations(&self) -> usize {
