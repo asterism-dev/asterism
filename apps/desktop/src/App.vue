@@ -7,6 +7,7 @@ import {
   sendNotification,
 } from '@tauri-apps/plugin-notification';
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { deleteFailures } from './activity';
 import { api, errorMessage } from './api';
 import FileTreeBar from './components/FileTreeBar.vue';
 import MainDock from './components/MainDock.vue';
@@ -15,7 +16,8 @@ import ProjectPage from './components/ProjectPage.vue';
 import Sidebar from './components/Sidebar.vue';
 import TopBar from './components/TopBar.vue';
 import { layoutEpoch, pruneLayouts, togglePane } from './dock/main';
-import { SIDEBAR, clampWidth } from './dock/model';
+import { SIDEBAR, clampWidth, floatKey, workspaceKey } from './dock/model';
+import { remove } from './dock/storage';
 import { sidebar } from './dock/sidebar';
 import { isTreeOpen } from './fileTreeBar';
 import AddProjectDialog from './components/AddProjectDialog.vue';
@@ -143,6 +145,15 @@ onMounted(async () => {
         !state.tasks.some((t) => t.id === event.params.id);
       // Before applyEvent, so a removed session can still be matched to its task.
       forwardEvent(event);
+      if (event.method === 'activity.changed') {
+        const prev = state.activities.find((a) => a.id === event.params.id);
+        const failures = deleteFailures(prev, event.params);
+        if (failures) toast(failures);
+      }
+      if (event.method === 'task.removed') {
+        remove(workspaceKey(event.params.task_id));
+        remove(floatKey(event.params.task_id));
+      }
       const waiting = applyEvent(state, event);
       if (event.method === 'plugins.changed' || event.method === 'stores.changed')
         refreshPluginUpdates().catch(() => {});

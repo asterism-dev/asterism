@@ -45,6 +45,7 @@ pub mod method {
     pub const TASK_RESTORE: &str = "task.restore";
     pub const TASK_DELETE_CHECK: &str = "task.delete_check";
     pub const TASK_DELETE: &str = "task.delete";
+    pub const TASK_DELETE_MANY: &str = "task.delete_many";
     pub const SESSION_LIST: &str = "session.list";
     pub const SESSION_START: &str = "session.start";
     pub const SESSION_KILL: &str = "session.kill";
@@ -351,6 +352,26 @@ pub struct PathSettings {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NodeConfig {
     pub paths: PathSettings,
+    #[serde(default)]
+    pub archive: ArchiveSettings,
+}
+
+/// Automatic deletion of archived tasks; their worktree is always removed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ArchiveSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_delete_after_hours: Option<u32>,
+    #[serde(default)]
+    pub delete_branch: bool,
+    /// Also delete when uncommitted changes or unmerged commits would be lost.
+    #[serde(default)]
+    pub force: bool,
+}
+
+impl ArchiveSettings {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1149,6 +1170,13 @@ pub struct TaskDeleteParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskDeleteManyParams {
+    pub task_ids: Vec<i64>,
+    #[serde(default)]
+    pub delete_branch: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskDeleteCheck {
     pub dirty: bool,
     pub branch: String,
@@ -1724,6 +1752,7 @@ pub struct AgentConfigSetParams {
 pub enum ActivityKind {
     Clone,
     CreateTask,
+    DeleteTasks,
 }
 
 /// `Pending` is only used on steps.

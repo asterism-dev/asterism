@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import { onUnmounted, ref } from 'vue';
 import { relativeTime } from '../projects';
 import { state } from '../store';
 import ActivitySteps from './ActivitySteps.vue';
 
-const now = Date.now() / 1000;
+const now = ref(Date.now() / 1000);
+const tick = setInterval(() => (now.value = Date.now() / 1000), 10_000);
+onUnmounted(() => clearInterval(tick));
 </script>
 
 <template>

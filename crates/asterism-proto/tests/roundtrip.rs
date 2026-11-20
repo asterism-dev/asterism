@@ -162,6 +162,7 @@ fn project_and_path_types_roundtrip() {
                 repos: "~/r".into(),
                 worktrees: "~/w".into(),
             },
+            ..Default::default()
         },
         defaults: PathSettings {
             repos: "/h/repos".into(),

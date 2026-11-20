@@ -50,7 +50,8 @@ pub fn defaults(paths: &Paths) -> PathSettings {
 }
 
 pub fn load(paths: &Paths) -> Result<NodeConfigInfo> {
-    let stored = Config::load(&paths.config())?.paths;
+    let file = Config::load(&paths.config())?;
+    let stored = file.paths;
     let defaults = defaults(paths);
     let config = NodeConfig {
         paths: PathSettings {
@@ -59,12 +60,16 @@ pub fn load(paths: &Paths) -> Result<NodeConfigInfo> {
                 .worktrees
                 .unwrap_or_else(|| defaults.worktrees.clone()),
         },
+        archive: file.archive,
     };
     Ok(NodeConfigInfo { config, defaults })
 }
 
 /// Also creates both directories, so a successful validation leaves them in place.
 pub fn validate(config: &NodeConfig) -> Result<()> {
+    if config.archive.auto_delete_after_hours == Some(0) {
+        return Err(invalid("auto-delete hours must be at least 1".into()));
+    }
     let mut resolved = Vec::new();
     for (label, value) in [
         ("repositories", &config.paths.repos),
@@ -92,6 +97,7 @@ pub fn save(paths: &Paths, config: &NodeConfig) -> Result<()> {
         repos: keep(&config.paths.repos, &defaults.repos),
         worktrees: keep(&config.paths.worktrees, &defaults.worktrees),
     };
+    file.archive = config.archive.clone();
     let text =
         toml::to_string(&file).map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
     write_atomic(&paths.config(), &text)
@@ -138,6 +144,7 @@ pub fn layout_owner_repo(origin: Option<&str>, project_name: &str) -> (String, S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use asterism_proto::types::ArchiveSettings;
 
     fn temp_paths() -> (tempfile::TempDir, Paths) {
         let dir = tempfile::tempdir().unwrap();
@@ -146,6 +153,41 @@ mod tests {
         };
         paths.ensure_dirs().unwrap();
         (dir, paths)
+    }
+
+    #[test]
+    fn archive_defaults_to_disabled() {
+        let (_dir, paths) = temp_paths();
+        assert_eq!(
+            load(&paths).unwrap().config.archive,
+            ArchiveSettings::default()
+        );
+    }
+
+    #[test]
+    fn archive_roundtrips() {
+        let (_dir, paths) = temp_paths();
+        let mut config = load(&paths).unwrap().config;
+        config.archive = ArchiveSettings {
+            auto_delete_after_hours: Some(14),
+            delete_branch: true,
+            force: false,
+        };
+        save(&paths, &config).unwrap();
+        assert_eq!(load(&paths).unwrap().config, config);
+    }
+
+    #[test]
+    fn archive_hours_must_be_positive() {
+        let (_dir, paths) = temp_paths();
+        let before = std::fs::read_to_string(paths.config()).ok();
+        let mut config = load(&paths).unwrap().config;
+        config.archive.auto_delete_after_hours = Some(0);
+        assert_eq!(
+            save(&paths, &config).unwrap_err().kind,
+            ErrorKind::InvalidParams
+        );
+        assert_eq!(std::fs::read_to_string(paths.config()).ok(), before);
     }
 
     #[test]
@@ -171,6 +213,7 @@ mod tests {
                 repos: repos.clone(),
                 worktrees: defaults(&paths).worktrees,
             },
+            ..Default::default()
         };
         save(&paths, &config).unwrap();
         assert_eq!(load(&paths).unwrap().config, config);
@@ -193,6 +236,7 @@ mod tests {
                     repos: bad.into(),
                     worktrees: defaults(&paths).worktrees,
                 },
+                ..Default::default()
             };
             assert_eq!(
                 save(&paths, &config).unwrap_err().kind,
@@ -212,6 +256,7 @@ mod tests {
                 repos: repos.display().to_string(),
                 worktrees: "relative".into(),
             },
+            ..Default::default()
         };
         assert!(save(&paths, &config).is_err());
         assert!(!repos.exists());

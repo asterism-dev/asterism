@@ -175,6 +175,7 @@ fn plugin_env(paths: &Paths, extra: &[(String, String)]) -> Result<Vec<(String, 
 
 pub const STORE_REFRESH_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const PR_TICK: Duration = Duration::from_secs(15);
+const ARCHIVE_SWEEP: Duration = Duration::from_secs(3600);
 
 #[derive(Debug, Clone, Default)]
 struct StoreStatus {
@@ -2431,6 +2432,54 @@ impl Daemon {
         Ok(task)
     }
 
+    pub async fn archive_cleanup_loop(self: Arc<Self>) {
+        loop {
+            tokio::time::sleep(ARCHIVE_SWEEP).await;
+            if let Err(e) = self.sweep_archived(unix_now()).await {
+                eprintln!("asterismd: archive cleanup failed: {e}");
+            }
+        }
+    }
+
+    /// Deletes archived tasks past the configured age; unsaved work is kept unless forced.
+    pub async fn sweep_archived(self: &Arc<Self>, now: i64) -> Result<()> {
+        let settings = node_settings::load(&self.paths)?.config.archive;
+        let Some(hours) = settings.auto_delete_after_hours else {
+            return Ok(());
+        };
+        let due = self.store().archived_due(now - i64::from(hours) * 3600)?;
+        for task in due {
+            let check = match self.delete_check(task.id).await {
+                Ok(check) => check,
+                Err(e) => {
+                    eprintln!("asterismd: archive cleanup of task {} failed: {e}", task.id);
+                    continue;
+                }
+            };
+            let worktree = Path::new(&task.worktree_path);
+            let dirty_or_unknown =
+                check.dirty || (worktree.exists() && git::is_dirty(worktree).is_err());
+            if dirty_or_unknown && !settings.force {
+                continue;
+            }
+            let delete_branch =
+                settings.delete_branch && (settings.force || check.unmerged_commits == 0);
+            // The task may have been restored while earlier tasks were being swept.
+            if !self.task(task.id).is_ok_and(|t| t.archived) {
+                continue;
+            }
+            match self.delete_task(task.id, delete_branch).await {
+                Ok(result) => {
+                    if let Some(warning) = result.warning {
+                        eprintln!("asterismd: archive cleanup of task {}: {warning}", task.id);
+                    }
+                }
+                Err(e) => eprintln!("asterismd: archive cleanup of task {} failed: {e}", task.id),
+            }
+        }
+        Ok(())
+    }
+
     pub async fn restore_task(self: &Arc<Self>, task_id: i64) -> Result<Task> {
         let task = self.task(task_id)?;
         if !task.archived {
@@ -2594,6 +2643,48 @@ impl Daemon {
         self.drop_pr(task_id);
         self.emit(Event::TaskRemoved { task_id });
         Ok(())
+    }
+
+    /// Deletes in the background under one activity, returning its id; one failure doesn't stop the rest.
+    pub fn delete_tasks(self: &Arc<Self>, task_ids: &[i64], delete_branch: bool) -> Result<i64> {
+        if task_ids.is_empty() {
+            return Err(Error::new(ErrorKind::InvalidParams, "no tasks to delete"));
+        }
+        let tasks = task_ids
+            .iter()
+            .map(|&id| self.task(id))
+            .collect::<Result<Vec<_>>>()?;
+        let titles: Vec<&str> = tasks.iter().map(|t| t.title.as_str()).collect();
+        let activity = self.start_activity(
+            ActivityKind::DeleteTasks,
+            format!("Delete {} task(s)", tasks.len()),
+            None,
+            &titles,
+        );
+        let project_id = tasks.first().map(|t| t.project_id);
+        if tasks.iter().all(|t| Some(t.project_id) == project_id) {
+            self.set_activity_refs(activity, project_id, None);
+        }
+        let daemon = self.clone();
+        // Sequential: each delete runs git against the same repo.
+        tokio::spawn(async move {
+            let _guard = activity::ActivityGuard {
+                daemon: &daemon,
+                id: activity,
+            };
+            for task in tasks {
+                match daemon.delete_task(task.id, delete_branch).await {
+                    Ok(TaskDeleteResult { warning: None }) => {
+                        daemon.advance_activity(activity, None)
+                    }
+                    Ok(TaskDeleteResult { warning: Some(e) }) => {
+                        daemon.fail_activity_step(activity, e, false)
+                    }
+                    Err(e) => daemon.fail_activity_step(activity, e.message, false),
+                }
+            }
+        });
+        Ok(activity)
     }
 
     fn worktree_sharers(&self, task: &Task) -> Result<Vec<i64>> {

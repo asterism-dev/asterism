@@ -544,7 +544,11 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             let p: TaskDeleteParams = params(raw)?;
             to_value(daemon.delete_task(p.task_id, p.delete_branch).await?)
         }
-        method::TASK_DIFF => to_value(daemon.diff(params::<TaskIdParams>(raw)?.task_id).await?),
+        method::TASK_DELETE_MANY => {
+            let p: TaskDeleteManyParams = params(raw)?;
+            to_value(daemon.delete_tasks(&p.task_ids, p.delete_branch)?)
+        }
+                method::TASK_DIFF => to_value(daemon.diff(params::<TaskIdParams>(raw)?.task_id).await?),
         method::ACTIVITY_LIST => to_value(daemon.activities()),
         method::REVIEW_GET => to_value(daemon.review_get(&params(raw)?).await?),
         method::REVIEW_SET_VIEWED => {

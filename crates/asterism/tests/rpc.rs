@@ -525,6 +525,7 @@ async fn project_and_path_methods_are_routed() {
                         repos: "rel".into(),
                         worktrees: "rel".into(),
                     },
+                    ..Default::default()
                 },
             },
         )
