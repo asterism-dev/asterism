@@ -1,3 +1,9 @@
+## v0.31.0 (2026-11-20)
+
+### Feat
+
+- **machines**: run tasks and sessions on machines (#37)
+
 ## v0.30.0 (2026-11-20)
 
 ### Feat
