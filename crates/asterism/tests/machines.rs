@@ -765,6 +765,7 @@ async fn machine_gone_with_tasks() -> (D, FakeSsh, Vec<i64>) {
         .call(method::MACHINE_TASKS, MachineIdParams { machine_id: m.id })
         .await;
     assert_eq!(listed.iter().map(|t| t.id).collect::<Vec<_>>(), ids);
+    let events = d.events();
     let calls = fake.invocations();
     let forgotten = tokio::time::timeout(
         Duration::from_secs(1),
@@ -777,6 +778,13 @@ async fn machine_gone_with_tasks() -> (D, FakeSsh, Vec<i64>) {
     .expect("forget must not wait on the machine")
     .unwrap();
     assert_eq!(forgotten.archived_task_ids, ids);
+    let after = events_after_removed(events, m.id, Duration::from_millis(300)).await;
+    assert!(
+        !after
+            .iter()
+            .any(|e| matches!(e, Event::MachineRemoved { machine_id } if *machine_id == m.id)),
+        "machine.removed sent once"
+    );
     assert!(
         fake.invocations() <= calls + 1,
         "ssh retry in flight at most"

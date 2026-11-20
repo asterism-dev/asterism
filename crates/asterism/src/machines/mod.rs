@@ -149,10 +149,6 @@ impl Machines {
             .settings
             .events
             .send(Event::MachineRemoved { machine_id: id });
-        let _ = self
-            .settings
-            .events
-            .send(Event::MachineRemoved { machine_id: id });
         Ok(())
     }
 
@@ -170,6 +166,10 @@ impl Machines {
             store.machine_active_tasks(id)?
         };
         self.remove_row_and_connection(id)?;
+        let _ = self
+            .settings
+            .events
+            .send(Event::MachineRemoved { machine_id: id });
         // With the row gone, archiving finds no machine to ask and archives locally.
         for task_id in &active {
             daemon.archive_task(*task_id).await?;
