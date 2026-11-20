@@ -47,6 +47,8 @@ enum Cmd {
     #[command(subcommand)]
     Task(TaskCmd),
     #[command(subcommand)]
+    Machine(MachineCmd),
+    #[command(subcommand)]
     Review(ReviewCmd),
     #[command(subcommand)]
     Session(SessionCmd),
@@ -244,6 +246,20 @@ enum ProjectCmd {
 }
 
 #[derive(Subcommand)]
+enum MachineCmd {
+    /// Register a machine reachable over ssh, e.g. user@host or an ssh config alias.
+    Add {
+        name: String,
+        destination: String,
+    },
+    List,
+    /// Remove a machine; fails while it still has tasks.
+    Remove {
+        machine: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum PrCmd {
     /// Fetch the pull request status of a project's tasks now.
     Refresh {
@@ -311,6 +327,9 @@ enum TaskCmd {
         /// Create the task from an issue, e.g. linear:TRA-1343 or github-issues:#42.
         #[arg(long)]
         issue: Option<String>,
+        /// Run the task on this machine (id or name) instead of locally.
+        #[arg(long)]
+        machine: Option<String>,
     },
     List {
         #[arg(long)]
@@ -530,9 +549,14 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
             prompt,
             base,
             issue,
+            machine,
         }) => {
             let title = title.or(title_flag);
             let project_id = resolve_project(&client, project).await?;
+            let machine_id = match machine {
+                Some(m) => Some(resolve_machine(&client, &m).await?),
+                None => None,
+            };
             // Also fetches origin, so the default and `--base origin/…` see the remote's current state.
             let branches: ProjectBranches = client
                 .call(method::PROJECT_BRANCHES, ProjectIdParams { project_id })
@@ -569,6 +593,7 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
                             url: details.url,
                             branch: Some(details.branch).filter(|b| !b.is_empty()),
                         }),
+                        machine_id,
                         ..Default::default()
                     }
                 }
@@ -583,6 +608,7 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
                         agent,
                         base,
                         issue: None,
+                        machine_id,
                         ..Default::default()
                     }
                 }
@@ -596,6 +622,23 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
                 }
                 out
             });
+        }
+        Cmd::Machine(MachineCmd::Add { name, destination }) => {
+            let machine: Machine = client
+                .call(method::MACHINE_ADD, MachineAddParams { name, destination })
+                .await?;
+            print(json, &machine, || machine_line(&machine));
+        }
+        Cmd::Machine(MachineCmd::List) => {
+            let machines: Vec<Machine> = client.call(method::MACHINE_LIST, ()).await?;
+            print(json, &machines, || lines(&machines, machine_line));
+        }
+        Cmd::Machine(MachineCmd::Remove { machine }) => {
+            let machine_id = resolve_machine(&client, &machine).await?;
+            client
+                .call::<_, ()>(method::MACHINE_REMOVE, MachineIdParams { machine_id })
+                .await?;
+            print_ok(json);
         }
         Cmd::Issue(IssueCmd::Search {
             source,
@@ -1184,6 +1227,15 @@ async fn hook(event: HookArg, agent_ref: Option<String>, subagent: Option<Subage
     let _ = client.call::<_, ()>(method::SESSION_HOOK, params).await;
 }
 
+async fn resolve_machine(client: &Client, wanted: &str) -> Result<i64, ClientError> {
+    let machines: Vec<Machine> = client.call(method::MACHINE_LIST, ()).await?;
+    machines
+        .iter()
+        .find(|m| m.id.to_string() == wanted || m.name == wanted)
+        .map(|m| m.id)
+        .ok_or_else(|| invalid(format!("no machine with id or name {wanted}")))
+}
+
 async fn resolve_project(client: &Client, project: Option<String>) -> Result<i64, ClientError> {
     if let Some(wanted) = project {
         let projects: Vec<Project> = client.call(method::PROJECT_LIST, ()).await?;
@@ -1597,6 +1649,16 @@ async fn run_external(client: &Client, args: Vec<String>) -> Result<(), ClientEr
 
 fn project_line(p: &Project) -> String {
     format!("{}\t{}\t{}", p.id, p.name, p.path)
+}
+
+fn machine_line(m: &Machine) -> String {
+    format!(
+        "{}\t{}\t{}\t{}",
+        m.id,
+        m.name,
+        m.destination,
+        label(&m.status.state)
+    )
 }
 
 fn pr_suffix(pr: Option<&PullRequest>) -> String {

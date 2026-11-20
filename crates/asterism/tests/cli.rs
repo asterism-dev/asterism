@@ -381,3 +381,31 @@ fn task_new_takes_a_base_and_project_set_base_changes_the_default() {
         stderr(&out)
     );
 }
+
+#[test]
+fn machine_add_list_remove_and_task_new_on_a_machine() {
+    let node = Node::new();
+    // The first call autostarts the daemon, which keeps this ssh so the machine stays unreachable.
+    let out = node
+        .command(&["--json", "machine", "add", "vm", "vm.invalid"])
+        .env("ASTERISM_SSH", "/usr/bin/false")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let added: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(added["destination"], "vm.invalid");
+    assert_eq!(node.json(&["machine", "list"])[0]["name"], "vm");
+
+    let unknown = node.cmd(&["task", "new", "x", "--machine", "nope"]);
+    assert!(stderr(&unknown).contains("no machine with id or name nope"));
+    // Only the remote-task path needs an origin, so this shows the task was routed to the machine.
+    let remote = node.cmd(&["task", "new", "x", "--machine", "vm"]);
+    assert!(
+        stderr(&remote).contains("project has no origin remote"),
+        "{}",
+        stderr(&remote)
+    );
+
+    assert!(node.cmd(&["machine", "remove", "vm"]).status.success());
+    assert_eq!(node.json(&["machine", "list"]), serde_json::json!([]));
+}
