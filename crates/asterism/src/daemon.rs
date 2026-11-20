@@ -1211,6 +1211,27 @@ impl Daemon {
         Ok(project)
     }
 
+    pub fn set_project_default_machine(
+        &self,
+        params: ProjectSetDefaultMachineParams,
+    ) -> Result<Project> {
+        let project = {
+            let store = self.store();
+            if let Some(id) = params.machine_id {
+                store.machine(id)?.ok_or_else(|| not_found("machine", id))?;
+            }
+            store
+                .project(params.project_id)?
+                .ok_or_else(|| not_found("project", params.project_id))?;
+            store.set_project_default_machine(params.project_id, params.machine_id)?;
+            store
+                .project(params.project_id)?
+                .ok_or_else(|| not_found("project", params.project_id))?
+        };
+        self.emit(Event::ProjectChanged(project.clone()));
+        Ok(project)
+    }
+
     fn resolve_workspace(&self, id: Option<i64>) -> Result<Workspace> {
         Self::resolve_workspace_in(&self.store(), id)
     }

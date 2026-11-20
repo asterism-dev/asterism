@@ -148,6 +148,7 @@ const HUB_PROJECT_METHODS: &[&str] = &[
     method::PROJECT_ADD,
     method::PROJECT_REMOVE,
     method::PROJECT_UPDATE,
+    method::PROJECT_SET_DEFAULT_MACHINE,
     method::PROJECT_WORKTREES,
 ];
 
@@ -610,6 +611,9 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             blocking(move || to_value(daemon.project_branches(id)?)).await
         }
         method::PROJECT_UPDATE => to_value(daemon.update_project(params(raw)?)?),
+        method::PROJECT_SET_DEFAULT_MACHINE => {
+            to_value(daemon.set_project_default_machine(params(raw)?)?)
+        }
         method::PROJECT_MOVE => to_value(daemon.move_project(params(raw)?)?),
         method::WORKSPACE_LIST => to_value(daemon.workspaces()?),
         method::WORKSPACE_CREATE => to_value(daemon.create_workspace(params(raw)?)?),

@@ -2751,6 +2751,7 @@ async fn machine_peer_denies_forbidden_methods() {
         method::SHUTDOWN,
         method::PLUGIN_SET_SETTINGS,
         method::PROJECT_ADD,
+        method::PROJECT_SET_DEFAULT_MACHINE,
         method::SESSION_HOOK,
         method::AGENT_CONFIG_SET,
     ] {
@@ -3258,6 +3259,7 @@ async fn project_commands_are_refused_inside_a_remote_session() {
         method::PROJECT_ADD,
         method::PROJECT_REMOVE,
         method::PROJECT_UPDATE,
+        method::PROJECT_SET_DEFAULT_MACHINE,
         method::PROJECT_WORKTREES,
     ] {
         let err = rpc_error(cli.call::<_, Value>(name, params.clone()).await);
@@ -3528,4 +3530,148 @@ async fn update_preview_of_unreachable_machine_uses_mirrors() {
         "{preview:?}"
     );
     fake.recover();
+}
+
+async fn set_default_machine(d: &D, project_id: i64, machine_id: Option<i64>) -> Project {
+    d.call(
+        method::PROJECT_SET_DEFAULT_MACHINE,
+        ProjectSetDefaultMachineParams {
+            project_id,
+            machine_id,
+        },
+    )
+    .await
+}
+
+async fn expect_default_cleared(events: &mut UnboundedReceiver<Event>, project_id: i64) {
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let Event::ProjectChanged(p) = event {
+            if p.id == project_id && p.default_machine_id.is_none() {
+                return;
+            }
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn default_machine_is_set_and_cleared() {
+    let (d, fake) = start_with_fake_ssh().await;
+    fake.hang();
+    let m = add_machine(&d, "vm").await;
+    let repo = tempfile::tempdir().unwrap();
+    let project = project_in(&d, repo.path()).await;
+    assert_eq!(project.default_machine_id, None);
+
+    let set = set_default_machine(&d, project.id, Some(m.id)).await;
+    assert_eq!(set.default_machine_id, Some(m.id));
+    let listed: Vec<Project> = d.call(method::PROJECT_LIST, Value::Null).await;
+    assert_eq!(listed[0].default_machine_id, Some(m.id));
+
+    let cleared = set_default_machine(&d, project.id, None).await;
+    assert_eq!(cleared.default_machine_id, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn default_machine_must_exist() {
+    let (d, fake) = start_with_fake_ssh().await;
+    fake.hang();
+    let m = add_machine(&d, "vm").await;
+    let repo = tempfile::tempdir().unwrap();
+    let project = project_in(&d, repo.path()).await;
+
+    let e = rpc_error(
+        d.client
+            .call::<_, Project>(
+                method::PROJECT_SET_DEFAULT_MACHINE,
+                ProjectSetDefaultMachineParams {
+                    project_id: project.id,
+                    machine_id: Some(m.id + 99),
+                },
+            )
+            .await,
+    );
+    assert_eq!(e.kind(), ErrorKind::NotFound);
+    let e = rpc_error(
+        d.client
+            .call::<_, Project>(
+                method::PROJECT_SET_DEFAULT_MACHINE,
+                ProjectSetDefaultMachineParams {
+                    project_id: project.id + 99,
+                    machine_id: Some(m.id),
+                },
+            )
+            .await,
+    );
+    assert_eq!(e.kind(), ErrorKind::NotFound);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn removing_a_machine_clears_the_default() {
+    let (d, fake) = start_with_fake_ssh().await;
+    fake.hang();
+    let m = add_machine(&d, "vm").await;
+    let repo = tempfile::tempdir().unwrap();
+    let project = project_in(&d, repo.path()).await;
+    set_default_machine(&d, project.id, Some(m.id)).await;
+    let mut events = d.events();
+
+    d.call::<_, Value>(method::MACHINE_REMOVE, MachineIdParams { machine_id: m.id })
+        .await;
+    expect_default_cleared(&mut events, project.id).await;
+    let listed: Vec<Project> = d.call(method::PROJECT_LIST, Value::Null).await;
+    assert_eq!(listed[0].default_machine_id, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn forgetting_a_machine_clears_the_default() {
+    let (d, fake) = start_with_fake_ssh().await;
+    fake.fail_with("ssh: Could not resolve hostname vm", 255);
+    let m = add_machine(&d, "vm").await;
+    let repo = tempfile::tempdir().unwrap();
+    let project = project_in(&d, repo.path()).await;
+    set_default_machine(&d, project.id, Some(m.id)).await;
+    let mut events = d.events();
+
+    let _: MachineForgetResult = d
+        .call(method::MACHINE_FORGET, MachineIdParams { machine_id: m.id })
+        .await;
+    expect_default_cleared(&mut events, project.id).await;
+    let listed: Vec<Project> = d.call(method::PROJECT_LIST, Value::Null).await;
+    assert_eq!(listed[0].default_machine_id, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn task_on_machine_without_agents_gets_a_shell() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    machine_login_path(&fake, &dir.path().join("login"), false);
+    let (m, project_id, _origin) = machine_and_project(&d, dir.path()).await;
+    assert!(machine(&d, m.id)
+        .await
+        .status
+        .agents
+        .iter()
+        .all(|a| !a.available));
+
+    let created: TaskCreateResult = d
+        .call(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id,
+                title: "shell only".into(),
+                machine_id: Some(m.id),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(created.session.is_none());
+    let session = start_remote_shell(&d, created.task.id).await;
+    let (_, remote_task_id) = hub_store(&d).task_remote(created.task.id).unwrap().unwrap();
+    let on_machine = machine_sessions(&fake, remote_task_id).await;
+    assert_eq!(on_machine.len(), 1);
+    assert!(hub_store(&d).session_remote(session.id).unwrap().is_some());
 }

@@ -107,6 +107,7 @@ pub mod method {
     pub const PR_REFRESH: &str = "pr.refresh";
     pub const PROJECT_BRANCHES: &str = "project.branches";
     pub const PROJECT_UPDATE: &str = "project.update";
+    pub const PROJECT_SET_DEFAULT_MACHINE: &str = "project.set_default_machine";
     pub const PR_SEARCH: &str = "pr.search";
     pub const SESSION_SUBAGENTS: &str = "session.subagents";
     pub const PLUGIN_UI_FILE: &str = "plugin.ui_file";
@@ -204,6 +205,9 @@ pub struct Project {
     pub default_base: Option<String>,
     #[serde(default)]
     pub workspace_id: i64,
+    /// Machine preselected for new tasks; `None` means local.
+    #[serde(default)]
+    pub default_machine_id: Option<i64>,
 }
 
 /// Empty `repos`/`worktrees` mean the global `[paths]` from config.toml.
@@ -290,6 +294,13 @@ pub struct ProjectUpdateParams {
     pub project_id: i64,
     #[serde(default)]
     pub default_base: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectSetDefaultMachineParams {
+    pub project_id: i64,
+    #[serde(default)]
+    pub machine_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

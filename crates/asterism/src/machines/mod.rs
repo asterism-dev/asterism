@@ -115,11 +115,28 @@ impl Machines {
     }
 
     fn remove_row_and_connection(&self, id: i64) -> Result<()> {
-        if !self.daemon()?.store().remove_machine(id)? {
-            return Err(Error::new(
-                ErrorKind::NotFound,
-                format!("no machine with id {id}"),
-            ));
+        let daemon = self.daemon()?;
+        let cleared = {
+            let store = daemon.store();
+            let pointing: Vec<i64> = store
+                .projects()?
+                .into_iter()
+                .filter(|p| p.default_machine_id == Some(id))
+                .map(|p| p.id)
+                .collect();
+            if !store.remove_machine(id)? {
+                return Err(Error::new(
+                    ErrorKind::NotFound,
+                    format!("no machine with id {id}"),
+                ));
+            }
+            pointing
+                .into_iter()
+                .filter_map(|p| store.project(p).transpose())
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for project in cleared {
+            daemon.emit(Event::ProjectChanged(project));
         }
         // Aborting drops the task's ssh children, which are killed on drop.
         if let Some(live) = lock(&self.live).remove(&id) {
