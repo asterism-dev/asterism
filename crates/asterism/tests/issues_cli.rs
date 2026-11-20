@@ -47,7 +47,13 @@ fn issue_search_lists_hits() {
 #[test]
 fn tasks_are_created_from_issues() {
     let node = linked_with_token();
-    let created = node.json(&["task", "create", "--issue", "echo-issues:ECH-1"]);
+    let created = node.json(&[
+        "task",
+        "create",
+        "--no-agent",
+        "--issue",
+        "echo-issues:ECH-1",
+    ]);
     assert_eq!(created["task"]["title"], "ech-1-fix-login-timeout");
     assert_eq!(created["task"]["branch"], "feature/ech-1-fix-login-timeout");
     assert_eq!(created["task"]["issue"]["key"], "ECH-1");
