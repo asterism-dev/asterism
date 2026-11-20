@@ -5,6 +5,8 @@ import {
   localTaskActions,
   machineAgents,
   machineBlocksInput,
+  machineSummary,
+  machineTaskList,
   machineStatusLine,
   taskMachine,
   updateConfirmText,
@@ -198,4 +200,27 @@ it.each(['connecting', 'offline', 'blocked'] as const)(
 
 it('falls back to Local when the default machine no longer exists', () => {
   expect(defaultMachineFor(projectWith(9), [machine('ready')])).toBe(0);
+});
+
+const agents = (...a: [string, boolean][]): Machine => {
+  const m = machine('ready');
+  m.status.agents = a.map(
+    ([name, available]) => ({ name, available, display_name: name }) as AgentInfo,
+  );
+  return m;
+};
+const t = (id: number, machine_id: number | null, archived = false) =>
+  ({ id, machine_id, archived }) as Task;
+
+it('machineTaskList keeps active tasks of that machine only', () => {
+  const tasks = [t(1, 7), t(2, 7, true), t(3, 8), t(4, null)];
+  expect(machineTaskList(machine('ready'), tasks).map((x) => x.id)).toEqual([1]);
+});
+
+it('machineSummary lists installed agents and active task count', () => {
+  const m = agents(['claude', true], ['codex', false]);
+  expect(machineSummary(m, [t(1, 7), t(2, 7)])).toBe('claude · 2 active tasks');
+  expect(machineSummary(m, [t(1, 7)])).toBe('claude · 1 active task');
+  expect(machineSummary(m, [])).toBe('claude');
+  expect(machineSummary(machine('offline'), [])).toBe('');
 });

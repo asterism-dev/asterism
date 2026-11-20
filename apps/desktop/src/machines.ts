@@ -111,3 +111,17 @@ export function forgetConfirmText(name: string, tasks: Task[]): string {
     ...(tasks.length ? tasks.map((t) => `- ${t.title}`) : ['It has no active tasks.']),
   ].join('\n');
 }
+
+export function machineTaskList(m: Machine, tasks: Task[]): Task[] {
+  return tasks.filter((t) => t.machine_id === m.id && !t.archived);
+}
+
+export function machineSummary(m: Machine, tasks: Task[]): string {
+  const count = machineTaskList(m, tasks).length;
+  return [
+    ...machineAgents(m, []).map((a) => a.display_name || a.name),
+    count > 0 && `${count} active ${count === 1 ? 'task' : 'tasks'}`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
