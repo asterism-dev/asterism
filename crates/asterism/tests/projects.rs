@@ -104,6 +104,44 @@ async fn clone_places_repo_under_owner_and_registers_it() {
 }
 
 #[tokio::test]
+async fn ensure_clones_once_and_reuses() {
+    let env = setup(false);
+    let url = bare_origin(env.home.path());
+    let first = env.daemon.ensure_project(&url).await.unwrap();
+    let marker = env.home.path().join("h/repos/acme/demo/marker");
+    std::fs::write(&marker, "x").unwrap();
+    let second = env.daemon.ensure_project(&url).await.unwrap();
+    assert_eq!(first.id, second.id);
+    assert!(marker.exists());
+    assert_eq!(env.daemon.projects().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn concurrent_ensures_share_one_clone() {
+    let env = setup(false);
+    let url = bare_origin(env.home.path());
+    let (a, b) = tokio::join!(
+        env.daemon.ensure_project(&url),
+        env.daemon.ensure_project(&url)
+    );
+    assert_eq!(a.unwrap().id, b.unwrap().id);
+    assert_eq!(env.daemon.projects().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn ensure_reports_unreachable_origin() {
+    let env = setup(false);
+    let err = env
+        .daemon
+        .ensure_project("file:///definitely/missing/acme/nothing.git")
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::Git);
+    assert!(env.daemon.projects().unwrap().is_empty());
+    assert!(!env.home.path().join("h/repos/acme/nothing").exists());
+}
+
+#[tokio::test]
 async fn failed_clone_removes_partial_target() {
     let env = setup(false);
     let err = env
@@ -316,8 +354,14 @@ async fn worktrees_are_grouped_by_owner_and_root_changes_keep_existing_tasks() {
     );
 
     std::fs::write(Path::new(&first.worktree_path).join("new.txt"), "x\n").unwrap();
-    assert!(env.daemon.diff(first.id).unwrap().patch.contains("+x"));
-    env.daemon.delete_task(first.id, false).unwrap();
+    assert!(env
+        .daemon
+        .diff(first.id)
+        .await
+        .unwrap()
+        .patch
+        .contains("+x"));
+    env.daemon.delete_task(first.id, false).await.unwrap();
     assert!(!Path::new(&first.worktree_path).exists());
 }
 
@@ -801,10 +845,14 @@ async fn pruned_base_still_counts_unmerged_commits() {
     assert!(!git::resolves(Path::new(&project.path), "origin/feature"));
 
     assert_eq!(
-        env.daemon.delete_check(task.id).unwrap().unmerged_commits,
+        env.daemon
+            .delete_check(task.id)
+            .await
+            .unwrap()
+            .unmerged_commits,
         1
     );
-    assert!(env.daemon.diff(task.id).is_ok());
+    assert!(env.daemon.diff(task.id).await.is_ok());
 }
 
 #[tokio::test]

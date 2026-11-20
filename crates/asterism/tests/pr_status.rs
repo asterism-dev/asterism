@@ -143,7 +143,7 @@ async fn prs_are_matched_to_tasks_and_changes_are_emitted_once() {
         PrState::Merged
     );
 
-    env.daemon.archive_task(b.id).unwrap();
+    env.daemon.archive_task(b.id).await.unwrap();
     assert!(drain(&mut rx).contains(&(b.id, None)));
     assert!(env
         .daemon
@@ -198,7 +198,7 @@ async fn deleting_a_task_drops_its_pr() {
     write(&env.prs, json!({ (a.branch.clone()): pr(7, "open") }));
     env.daemon.refresh_prs(a.project_id).await.unwrap();
     let mut rx = env.daemon.subscribe();
-    env.daemon.delete_task(a.id, true).unwrap();
+    env.daemon.delete_task(a.id, true).await.unwrap();
     assert_eq!(drain(&mut rx), vec![(a.id, None)]);
     assert!(env.daemon.pr_list(None).prs.is_empty());
 }

@@ -36,10 +36,12 @@ import {
 import { loadMoreOpen, saveMoreOpen } from '../workspaces';
 import { leaveSettings } from '../settingsGuard';
 import { startSession } from '../sessionActions';
+import { localTaskActions, taskMachine } from '../machines';
 import { withHint } from '../shortcuts';
 import { archiveTask, deleteTask } from '../taskActions';
 import Kbd from './Kbd.vue';
 import NotificationsView from './NotificationsView.vue';
+import MachineBadge from './MachineBadge.vue';
 import PrBadge from './PrBadge.vue';
 import StatusIndicator from './StatusIndicator.vue';
 import WorkspaceRail from './WorkspaceRail.vue';
@@ -86,6 +88,7 @@ let clock: ReturnType<typeof setInterval> | undefined;
 const formatDate = (seconds: number) =>
   new Date(seconds * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const report = (e: unknown) => toast(errorMessage(e));
+const machineOf = (t: Task) => taskMachine(t, state.machines);
 
 function openIssue(url: string) {
   openUrl(url).catch(report);
@@ -185,14 +188,19 @@ function projectMenu(e: MouseEvent, p: Project) {
 }
 
 function taskMenu(e: MouseEvent, t: Task) {
-  const agents = state.agents.filter((a) => a.available);
+  const local = localTaskActions(
+    t,
+    state.agents.filter((a) => a.available),
+  );
   showMenu(e, [
-    ...agents.map((a) => ({
+    ...local.agents.map((a) => ({
       label: `New ${a.display_name || a.name} session`,
       action: () => startSession(t.id, { type: 'agent', name: a.name }),
     })),
     { label: 'New shell', action: () => startSession(t.id, { type: 'shell' }) },
-    { label: 'Reveal worktree', action: () => revealItemInDir(t.worktree_path).catch(report) },
+    ...(local.reveal
+      ? [{ label: 'Reveal worktree', action: () => revealItemInDir(t.worktree_path).catch(report) }]
+      : []),
     {
       label: 'Copy branch name',
       action: () =>
@@ -325,7 +333,7 @@ function taskMenu(e: MouseEvent, t: Task) {
                       {{ relativeTime(t.last_activity_at, now) }}
                     </span>
                   </div>
-                  <div v-if="t.issue || state.prs[t.id]" class="line meta">
+                  <div v-if="t.issue || state.prs[t.id] || machineOf(t)" class="line meta">
                     <a
                       v-if="t.issue"
                       class="issue-key muted"
@@ -335,6 +343,7 @@ function taskMenu(e: MouseEvent, t: Task) {
                       >{{ t.issue.key }}</a
                     >
                     <PrBadge v-if="state.prs[t.id]" :pr="state.prs[t.id]!" />
+                    <MachineBadge v-if="machineOf(t)" v-bind="machineOf(t)!" />
                   </div>
                 </div>
               </template>

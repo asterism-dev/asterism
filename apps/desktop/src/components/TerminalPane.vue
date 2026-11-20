@@ -5,14 +5,20 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { api, decodeBase64, errorMessage, RpcError } from '../api';
 import { openFile } from '../dock/main';
 import { findFileLinks } from '../fileLinks';
+import { machineBlocksInput } from '../machines';
 import { matchAction } from '../shortcuts';
 import { isConnected, refresh, state, toast } from '../store';
 
 const props = defineProps<{ sessionId: number; taskId: number; live: boolean }>();
+
+const offline = computed(() => {
+  const task = state.tasks.find((t) => t.id === props.taskId);
+  return !!task && machineBlocksInput(task, state.machines, state.machinesLoaded);
+});
 
 const RESIZE_DEBOUNCE_MS = 50;
 const FINAL_SCREEN_LINES = 2000;
@@ -132,7 +138,7 @@ onMounted(() => {
   fit.fit();
   if (props.live) {
     term.onData((data) => {
-      if (!replaying) void api.send(props.sessionId, data);
+      if (!replaying && !offline.value) void api.send(props.sessionId, data);
     });
     if (isConnected(state.node)) attach();
   } else {
@@ -163,6 +169,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="el" class="terminal"></div>
+  <div v-if="offline && live" class="offline">Machine offline</div>
 </template>
 
 <style scoped>
@@ -171,5 +178,15 @@ onBeforeUnmount(() => {
   inset: 0;
   padding: 6px;
   background: #111217;
+}
+.offline {
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--select);
+  color: var(--muted);
 }
 </style>

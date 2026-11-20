@@ -26,6 +26,7 @@ const form = (over: Partial<TaskForm> = {}): TaskForm => ({
   push: true,
   issue: null,
   onConflict: null,
+  machineId: null,
   ...over,
 });
 const pr = (over: Partial<PrHit> = {}): PrHit => ({
@@ -90,7 +91,17 @@ describe('taskForm', () => {
       checkout: null,
       push: true,
       on_conflict: null,
+      machine_id: null,
     });
+  });
+
+  it('sends machine_id and drops agent and prompt for a machine task', () => {
+    expect(createRequest(form({ machineId: 3 }))).toMatchObject({
+      machine_id: 3,
+      agent: null,
+      prompt: null,
+    });
+    expect(createRequest(form()).machine_id).toBeNull();
   });
 
   it('passes the conflict choice through', () => {

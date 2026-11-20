@@ -72,6 +72,13 @@ function onStatus(status: NodeStatus) {
   state.node = status;
   if (!wasConnected && isConnected(status)) {
     // Archived tasks keep their layout for a later restore, so only deleted tasks are pruned.
+    api
+      .machines()
+      .then((machines) => {
+        state.machines = machines;
+        state.machinesLoaded = true;
+      })
+      .catch(() => {});
     refresh()
       .then(() => api.allTasks())
       .then((all) => pruneLayouts(all.map((t) => t.id)))

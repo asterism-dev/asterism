@@ -371,7 +371,10 @@ async fn checkout_warns_when_the_local_branch_differs_from_origin() {
         .await
         .unwrap();
     assert_eq!(current.warning, None);
-    env.daemon.delete_task(current.task.id, false).unwrap();
+    env.daemon
+        .delete_task(current.task.id, false)
+        .await
+        .unwrap();
 
     let other = tempfile::tempdir().unwrap();
     run_git(
@@ -443,7 +446,7 @@ async fn worktrees_mirror_the_branch_path_and_deleting_tidies_parents() {
         .parent()
         .unwrap()
         .to_path_buf();
-    env.daemon.delete_task(second.task.id, false).unwrap();
+    env.daemon.delete_task(second.task.id, false).await.unwrap();
     assert!(
         !parent.exists(),
         "empty {} should be removed",
@@ -775,7 +778,11 @@ async fn shared_worktrees_survive_until_their_last_task_is_deleted() {
         .await
         .unwrap();
     assert_eq!(
-        env.daemon.delete_check(first.task.id).unwrap().shared_with,
+        env.daemon
+            .delete_check(first.task.id)
+            .await
+            .unwrap()
+            .shared_with,
         vec![second.task.id]
     );
     let listed = env.daemon.project_worktrees(env.project_id).unwrap();
@@ -785,7 +792,7 @@ async fn shared_worktrees_survive_until_their_last_task_is_deleted() {
         .unwrap();
     assert_eq!(shared.task_ids, vec![first.task.id, second.task.id]);
 
-    env.daemon.delete_task(first.task.id, true).unwrap();
+    env.daemon.delete_task(first.task.id, true).await.unwrap();
     assert!(Path::new(&second.task.worktree_path).exists());
     assert!(asterism_core::git::branch_exists(
         env.repo.path(),
@@ -794,11 +801,12 @@ async fn shared_worktrees_survive_until_their_last_task_is_deleted() {
     assert!(env
         .daemon
         .delete_check(second.task.id)
+        .await
         .unwrap()
         .shared_with
         .is_empty());
 
-    env.daemon.delete_task(second.task.id, true).unwrap();
+    env.daemon.delete_task(second.task.id, true).await.unwrap();
     assert!(!Path::new(&second.task.worktree_path).exists());
     assert!(!asterism_core::git::branch_exists(
         env.repo.path(),
@@ -819,7 +827,7 @@ async fn branches_list_worktrees_under_the_root_with_their_tasks() {
         .create_task(explicit(&env, "b", "feature/x", Some(OnConflict::Reuse)))
         .await
         .unwrap();
-    env.daemon.archive_task(second.task.id).unwrap();
+    env.daemon.archive_task(second.task.id).await.unwrap();
     orphan_worktree(&env, &["-b", "loose"], "loose");
 
     let mut listed = env

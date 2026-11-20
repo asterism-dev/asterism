@@ -39,6 +39,7 @@ use crate::store::Store;
 use crate::{git, hibernate, lock, node_settings, repo_source, status};
 
 mod activity;
+mod remote_task;
 mod review;
 mod worktree_conflict;
 
@@ -89,6 +90,8 @@ pub struct DaemonOptions {
     pub machine_health_timeout: Duration,
     pub machine_backoff_max: Duration,
     pub machine_open_deadline: Duration,
+    pub machine_call_timeout: Duration,
+    pub machine_clone_timeout: Duration,
 }
 
 impl Default for DaemonOptions {
@@ -114,6 +117,8 @@ impl Default for DaemonOptions {
             machine_backoff_max: Duration::from_secs(30),
             // Covers a fresh ssh handshake plus `attach` spawning the daemon, which the health deadline does not.
             machine_open_deadline: Duration::from_secs(30),
+            machine_call_timeout: Duration::from_secs(30),
+            machine_clone_timeout: Duration::from_secs(600),
         }
     }
 }
@@ -201,6 +206,7 @@ pub struct Daemon {
     store_status: Mutex<BTreeMap<String, StoreStatus>>,
     pr_status: Mutex<PrStatus>,
     waking: tokio::sync::Mutex<()>,
+    ensuring: tokio::sync::Mutex<()>,
     /// Subagents per session, kept after exit until the session is removed.
     subagents: Mutex<HashMap<i64, SessionSubagents>>,
     review_cache: Mutex<review::ReviewCache>,
@@ -257,6 +263,8 @@ impl Daemon {
                     health_timeout: options.machine_health_timeout,
                     backoff_max: options.machine_backoff_max,
                     open_deadline: options.machine_open_deadline,
+                    call_timeout: options.machine_call_timeout,
+                    daemon: daemon.clone(),
                     events: events.clone(),
                     installs: Mutex::default(),
                 },
@@ -276,6 +284,7 @@ impl Daemon {
                 store_status: Mutex::new(BTreeMap::new()),
                 pr_status: Mutex::new(PrStatus::default()),
                 waking: tokio::sync::Mutex::new(()),
+                ensuring: tokio::sync::Mutex::new(()),
                 subagents: Mutex::new(HashMap::new()),
                 review_cache: Mutex::new(review::ReviewCache::default()),
                 activities: Mutex::new(VecDeque::new()),
@@ -373,7 +382,7 @@ impl Daemon {
         lock(&self.store)
     }
 
-    fn emit(&self, event: Event) {
+    pub(crate) fn emit(&self, event: Event) {
         let _ = self.events.send(event);
     }
 
@@ -1640,6 +1649,23 @@ impl Daemon {
         Ok(project)
     }
 
+    fn project_with_origin(&self, url: &str) -> Result<Option<Project>> {
+        Ok(self
+            .projects()?
+            .into_iter()
+            .find(|p| git::remote_url(Path::new(&p.path), "origin").as_deref() == Some(url)))
+    }
+
+    pub async fn ensure_project(self: &Arc<Self>, url: &str) -> Result<Project> {
+        let url = url.trim();
+        // ponytail: one lock for all urls; clones are rare, per-url locks if ensures start queueing.
+        let _ensuring = self.ensuring.lock().await;
+        if let Some(project) = self.project_with_origin(url)? {
+            return Ok(project);
+        }
+        self.clone_project(url, None, None, None).await
+    }
+
     pub async fn clone_copy(self: &Arc<Self>, p: ProjectCloneCopyParams) -> Result<Project> {
         let project = self
             .store()
@@ -1810,6 +1836,9 @@ impl Daemon {
         self: &Arc<Self>,
         params: TaskCreateParams,
     ) -> Result<TaskCreateResult> {
+        if let Some(machine_id) = params.machine_id {
+            return self.create_remote_task(machine_id, params).await;
+        }
         if let Some(name) = &params.agent {
             self.ensure_agent_available(name)?;
         }
@@ -2359,23 +2388,41 @@ impl Daemon {
     }
 
     /// Stops the task's sessions; worktree, uncommitted changes and branch stay.
-    pub fn archive_task(&self, task_id: i64) -> Result<Task> {
+    pub async fn archive_task(&self, task_id: i64) -> Result<Task> {
         let task = self.task(task_id)?;
         if task.archived {
             return Ok(task);
         }
-        let sessions = self.store().sessions(Some(task_id))?;
-        for stored in sessions {
-            if let Ok(live) = self.live(stored.session.id) {
-                live.stopping.store(true, Ordering::Relaxed);
-                let _ = live.pty.kill();
-            } else if stored.session.status == SessionStatus::Hibernated {
-                self.store()
-                    .set_session_status(stored.session.id, SessionStatus::Exited)?;
-                self.emit(Event::SessionStatusChanged {
-                    session_id: stored.session.id,
-                    status: SessionStatus::Exited,
-                });
+        if let Some((machine, remote)) = self.remote_task(task_id)? {
+            let params = TaskArchiveParams {
+                task_id: remote,
+                force: false,
+            };
+            let _: Task = self
+                .machines()
+                .call(machine, method::TASK_ARCHIVE, params)
+                .await?;
+            // The machine's exit events may never arrive if the link drops now, and reconcile skips archived tasks.
+            let mirrors = self.store().sessions(Some(task_id))?;
+            for stored in mirrors {
+                if stored.session.status != SessionStatus::Exited {
+                    self.apply_session_status(stored.session.id, SessionStatus::Exited);
+                }
+            }
+        } else {
+            let sessions = self.store().sessions(Some(task_id))?;
+            for stored in sessions {
+                if let Ok(live) = self.live(stored.session.id) {
+                    live.stopping.store(true, Ordering::Relaxed);
+                    let _ = live.pty.kill();
+                } else if stored.session.status == SessionStatus::Hibernated {
+                    self.store()
+                        .set_session_status(stored.session.id, SessionStatus::Exited)?;
+                    self.emit(Event::SessionStatusChanged {
+                        session_id: stored.session.id,
+                        status: SessionStatus::Exited,
+                    });
+                }
             }
         }
         self.store().set_task_archived(task_id)?;
@@ -2388,21 +2435,21 @@ impl Daemon {
     pub async fn archive_cleanup_loop(self: Arc<Self>) {
         loop {
             tokio::time::sleep(ARCHIVE_SWEEP).await;
-            if let Err(e) = self.sweep_archived(unix_now()) {
+            if let Err(e) = self.sweep_archived(unix_now()).await {
                 eprintln!("asterismd: archive cleanup failed: {e}");
             }
         }
     }
 
     /// Deletes archived tasks past the configured age; unsaved work is kept unless forced.
-    pub fn sweep_archived(&self, now: i64) -> Result<()> {
+    pub async fn sweep_archived(self: &Arc<Self>, now: i64) -> Result<()> {
         let settings = node_settings::load(&self.paths)?.config.archive;
         let Some(hours) = settings.auto_delete_after_hours else {
             return Ok(());
         };
         let due = self.store().archived_due(now - i64::from(hours) * 3600)?;
         for task in due {
-            let check = match self.delete_check(task.id) {
+            let check = match self.delete_check(task.id).await {
                 Ok(check) => check,
                 Err(e) => {
                     eprintln!("asterismd: archive cleanup of task {} failed: {e}", task.id);
@@ -2421,7 +2468,7 @@ impl Daemon {
             if !self.task(task.id).is_ok_and(|t| t.archived) {
                 continue;
             }
-            match self.delete_task(task.id, delete_branch) {
+            match self.delete_task(task.id, delete_branch).await {
                 Ok(result) => {
                     if let Some(warning) = result.warning {
                         eprintln!("asterismd: archive cleanup of task {}: {warning}", task.id);
@@ -2433,11 +2480,32 @@ impl Daemon {
         Ok(())
     }
 
-    pub fn restore_task(self: &Arc<Self>, task_id: i64) -> Result<Task> {
+    pub async fn restore_task(self: &Arc<Self>, task_id: i64) -> Result<Task> {
         let task = self.task(task_id)?;
         if !task.archived {
             return Ok(task);
         }
+        if let Some((machine, remote)) = self.remote_task(task_id)? {
+            let params = TaskIdParams { task_id: remote };
+            let _: Task = self
+                .machines()
+                .call(machine, method::TASK_RESTORE, params)
+                .await?;
+        } else {
+            self.off_runtime(move |d| d.restore_worktree(&task)).await?;
+        }
+        self.store().set_task_active(task_id)?;
+        let task = self.task(task_id)?;
+        self.emit(Event::TaskChanged(task.clone()));
+        let daemon = self.clone();
+        let project_id = task.project_id;
+        tokio::spawn(async move {
+            let _ = daemon.refresh_prs(project_id).await;
+        });
+        Ok(task)
+    }
+
+    fn restore_worktree(&self, task: &Task) -> Result<()> {
         let worktree = PathBuf::from(&task.worktree_path);
         let repo = self.project_path(task.project_id)?;
         if worktree.exists() {
@@ -2462,18 +2530,22 @@ impl Daemon {
             // Tasks archived before archiving kept worktrees get theirs back from the branch.
             git::add_existing_worktree(&repo, &worktree, &task.branch)?;
         }
-        self.store().set_task_active(task_id)?;
-        let task = self.task(task_id)?;
-        self.emit(Event::TaskChanged(task.clone()));
-        let daemon = self.clone();
-        let project_id = task.project_id;
-        tokio::spawn(async move {
-            let _ = daemon.refresh_prs(project_id).await;
-        });
-        Ok(task)
+        Ok(())
     }
 
-    pub fn delete_check(&self, task_id: i64) -> Result<TaskDeleteCheck> {
+    pub async fn delete_check(self: &Arc<Self>, task_id: i64) -> Result<TaskDeleteCheck> {
+        if let Some((machine, remote)) = self.remote_task(task_id)? {
+            let params = TaskIdParams { task_id: remote };
+            return self
+                .machines()
+                .call(machine, method::TASK_DELETE_CHECK, params)
+                .await;
+        }
+        self.off_runtime(move |d| d.local_delete_check(task_id))
+            .await
+    }
+
+    fn local_delete_check(&self, task_id: i64) -> Result<TaskDeleteCheck> {
         let task = self.task(task_id)?;
         let repo = self.project_path(task.project_id)?;
         let worktree = Path::new(&task.worktree_path);
@@ -2492,7 +2564,33 @@ impl Daemon {
         })
     }
 
-    pub fn delete_task(&self, task_id: i64, delete_branch: bool) -> Result<TaskDeleteResult> {
+    pub async fn delete_task(
+        self: &Arc<Self>,
+        task_id: i64,
+        delete_branch: bool,
+    ) -> Result<TaskDeleteResult> {
+        if let Some((machine, remote)) = self.remote_task(task_id)? {
+            let params = TaskDeleteParams {
+                task_id: remote,
+                delete_branch,
+            };
+            let result = match self
+                .machines()
+                .call(machine, method::TASK_DELETE, params)
+                .await
+            {
+                // The machine was removed or no longer has the task, so nothing is left to delete there.
+                Err(e) if e.kind == ErrorKind::NotFound => TaskDeleteResult { warning: None },
+                other => other?,
+            };
+            self.forget_task(task_id)?;
+            return Ok(result);
+        }
+        self.off_runtime(move |d| d.delete_local_task(task_id, delete_branch))
+            .await
+    }
+
+    fn delete_local_task(&self, task_id: i64, delete_branch: bool) -> Result<TaskDeleteResult> {
         let task = self.task(task_id)?;
         let repo = self.project_path(task.project_id)?;
         let sessions = self.store().sessions(Some(task_id))?;
@@ -2518,11 +2616,20 @@ impl Daemon {
                 }
             }
         }
-        let removed_notifications = {
+        self.forget_task(task_id)?;
+        Ok(TaskDeleteResult {
+            warning: (!warnings.is_empty()).then(|| warnings.join("; ")),
+        })
+    }
+
+    /// Deletes the task's rows, its sessions and notifications, and announces it.
+    fn forget_task(&self, task_id: i64) -> Result<()> {
+        let (sessions, removed_notifications) = {
             let store = self.store();
+            let sessions = store.sessions(Some(task_id))?;
             store.delete_task_sessions(task_id)?;
             store.delete_task(task_id)?;
-            store.delete_task_notifications(task_id)?
+            (sessions, store.delete_task_notifications(task_id)?)
         };
         for id in removed_notifications {
             self.emit(Event::NotificationRemoved { id });
@@ -2535,9 +2642,7 @@ impl Daemon {
         }
         self.drop_pr(task_id);
         self.emit(Event::TaskRemoved { task_id });
-        Ok(TaskDeleteResult {
-            warning: (!warnings.is_empty()).then(|| warnings.join("; ")),
-        })
+        Ok(())
     }
 
     /// Deletes in the background under one activity, returning its id; one failure doesn't stop the rest.
@@ -2562,13 +2667,13 @@ impl Daemon {
         }
         let daemon = self.clone();
         // Sequential: each delete runs git against the same repo.
-        tokio::task::spawn_blocking(move || {
+        tokio::spawn(async move {
             let _guard = activity::ActivityGuard {
                 daemon: &daemon,
                 id: activity,
             };
             for task in tasks {
-                match daemon.delete_task(task.id, delete_branch) {
+                match daemon.delete_task(task.id, delete_branch).await {
                     Ok(TaskDeleteResult { warning: None }) => {
                         daemon.advance_activity(activity, None)
                     }
@@ -2673,26 +2778,59 @@ impl Daemon {
         Ok(PathBuf::from(project.path))
     }
 
-    pub fn diff(&self, task_id: i64) -> Result<TaskDiffResult> {
-        let task = self.task(task_id)?;
-        let base = self.effective_base(&self.project_path(task.project_id)?, &task);
-        Ok(TaskDiffResult {
-            patch: git::diff(Path::new(&task.worktree_path), &base)?,
+    pub async fn diff(self: &Arc<Self>, task_id: i64) -> Result<TaskDiffResult> {
+        if let Some((machine, remote)) = self.remote_task(task_id)? {
+            let params = TaskIdParams { task_id: remote };
+            return self
+                .machines()
+                .call(machine, method::TASK_DIFF, params)
+                .await;
+        }
+        self.off_runtime(move |d| {
+            let task = d.task(task_id)?;
+            let base = d.effective_base(&d.project_path(task.project_id)?, &task);
+            Ok(TaskDiffResult {
+                patch: git::diff(Path::new(&task.worktree_path), &base)?,
+            })
         })
+        .await
     }
 
-    pub fn list_dir(&self, params: TaskListDirParams) -> Result<Vec<DirEntry>> {
-        let task = self.task(params.task_id)?;
-        let worktree = Path::new(&task.worktree_path);
-        let base = self.effective_base(&self.project_path(task.project_id)?, &task);
-        let changed = git::changed_paths(worktree, &base).unwrap_or_default();
-        files::list_dir(worktree, &params.path, &changed)
+    pub async fn list_dir(self: &Arc<Self>, params: TaskListDirParams) -> Result<Vec<DirEntry>> {
+        if let Some((machine, remote)) = self.remote_task(params.task_id)? {
+            let params = TaskListDirParams {
+                task_id: remote,
+                ..params
+            };
+            return self
+                .machines()
+                .call(machine, method::TASK_LIST_DIR, params)
+                .await;
+        }
+        self.off_runtime(move |d| {
+            let task = d.task(params.task_id)?;
+            let worktree = Path::new(&task.worktree_path);
+            let base = d.effective_base(&d.project_path(task.project_id)?, &task);
+            let changed = git::changed_paths(worktree, &base).unwrap_or_default();
+            files::list_dir(worktree, &params.path, &changed)
+        })
+        .await
     }
 
-    pub fn diff_stat(&self, task_id: i64) -> Result<DiffStat> {
-        let task = self.task(task_id)?;
-        let base = self.effective_base(&self.project_path(task.project_id)?, &task);
-        git::diff_stat(Path::new(&task.worktree_path), &base)
+    pub async fn diff_stat(self: &Arc<Self>, task_id: i64) -> Result<DiffStat> {
+        if let Some((machine, remote)) = self.remote_task(task_id)? {
+            let params = TaskIdParams { task_id: remote };
+            return self
+                .machines()
+                .call(machine, method::TASK_DIFF_STAT, params)
+                .await;
+        }
+        self.off_runtime(move |d| {
+            let task = d.task(task_id)?;
+            let base = d.effective_base(&d.project_path(task.project_id)?, &task);
+            git::diff_stat(Path::new(&task.worktree_path), &base)
+        })
+        .await
     }
 
     /// The task's base, or the project's default once that base is gone (e.g. a pruned remote branch).
@@ -2706,15 +2844,28 @@ impl Daemon {
             .unwrap_or_else(|| task.base_branch.clone())
     }
 
-    pub fn file(&self, params: TaskFileParams) -> Result<TaskFileResult> {
-        let task = self.task(params.task_id)?;
-        let home = std::env::var_os("HOME").map(PathBuf::from);
-        files::read(
-            Path::new(&task.worktree_path),
-            home.as_deref(),
-            &params.path,
-            params.known_mtime,
-        )
+    pub async fn file(self: &Arc<Self>, params: TaskFileParams) -> Result<TaskFileResult> {
+        if let Some((machine, remote)) = self.remote_task(params.task_id)? {
+            let params = TaskFileParams {
+                task_id: remote,
+                ..params
+            };
+            return self
+                .machines()
+                .call(machine, method::TASK_FILE, params)
+                .await;
+        }
+        self.off_runtime(move |d| {
+            let task = d.task(params.task_id)?;
+            let home = std::env::var_os("HOME").map(PathBuf::from);
+            files::read(
+                Path::new(&task.worktree_path),
+                home.as_deref(),
+                &params.path,
+                params.known_mtime,
+            )
+        })
+        .await
     }
 
     pub fn agent_infos(&self) -> Vec<AgentInfo> {
@@ -2821,6 +2972,11 @@ impl Daemon {
                 ErrorKind::InvalidParams,
                 format!("task {} is archived", task.id),
             ));
+        }
+        if let Some((machine, remote)) = self.remote_task(task.id)? {
+            return self
+                .start_remote_session(machine, remote, task.id, params)
+                .await;
         }
         let (argv, extra_env) = match &params.kind {
             SessionKind::Agent { name } => {
@@ -2950,7 +3106,6 @@ impl Daemon {
         ));
 
         let daemon = self.clone();
-        let task_id = task.id;
         tokio::spawn(async move {
             while status_rx.changed().await.is_ok() {
                 let mut status = *status_rx.borrow_and_update();
@@ -2976,19 +3131,25 @@ impl Daemon {
                     }
                     daemon.end_subagents(id);
                 }
-                let _ = daemon.store().set_session_status(id, status);
-                daemon.emit(Event::SessionStatusChanged {
-                    session_id: id,
-                    status,
-                });
-                daemon.track_waiting(id, task_id, status);
-                daemon.touch_task(task_id);
+                daemon.apply_session_status(id, status);
                 if matches!(status, SessionStatus::Exited | SessionStatus::Hibernated) {
                     break;
                 }
             }
         });
         Ok(())
+    }
+
+    /// Records a session's new status and tells clients; shared by local sessions and machine mirrors.
+    pub(crate) fn apply_session_status(&self, session_id: i64, status: SessionStatus) {
+        let Ok(Some(stored)) = self.store().session(session_id) else {
+            return;
+        };
+        let task_id = stored.session.task_id;
+        let _ = self.store().set_session_status(session_id, status);
+        self.emit(Event::SessionStatusChanged { session_id, status });
+        self.track_waiting(session_id, task_id, status);
+        self.touch_task(task_id);
     }
 
     pub fn notifications(&self) -> Result<Vec<NotificationEntry>> {
@@ -3127,6 +3288,15 @@ impl Daemon {
 
     /// Stops the session if it still runs, then forgets it entirely.
     pub async fn remove_session(&self, id: i64) -> Result<()> {
+        if let Some((machine, remote)) = self.remote_session(id)? {
+            let params = SessionIdParams { session_id: remote };
+            let () = self
+                .machines()
+                .call(machine, method::SESSION_REMOVE, params)
+                .await?;
+            self.forget_remote_session(id);
+            return Ok(());
+        }
         let _waking = self.waking.lock().await;
         let task_id = self.session(id)?.task_id;
         // Taken out first so the status forwarder sees it gone and reports nothing after `session.removed`.
@@ -3151,13 +3321,30 @@ impl Daemon {
         Ok(())
     }
 
-    pub fn kill_session(&self, id: i64) -> Result<()> {
+    pub async fn kill_session(&self, id: i64) -> Result<()> {
+        if let Some((machine, remote)) = self.remote_session(id)? {
+            let params = SessionIdParams { session_id: remote };
+            return self
+                .machines()
+                .call(machine, method::SESSION_KILL, params)
+                .await;
+        }
         let live = self.live(id)?;
         live.stopping.store(true, Ordering::Relaxed);
         Ok(live.pty.kill()?)
     }
 
     pub async fn send(self: &Arc<Self>, params: SessionSendParams) -> Result<()> {
+        if let Some((machine, remote)) = self.remote_session(params.session_id)? {
+            let params = SessionSendParams {
+                session_id: remote,
+                ..params
+            };
+            return self
+                .machines()
+                .call(machine, method::SESSION_SEND, params)
+                .await;
+        }
         let woke = self.live(params.session_id).is_err();
         let live = self.live_or_wake(params.session_id).await?;
         if woke {
@@ -3187,12 +3374,22 @@ impl Daemon {
         Ok(())
     }
 
-    pub fn resize(&self, params: SessionResizeParams) -> Result<()> {
+    pub async fn resize(&self, params: SessionResizeParams) -> Result<()> {
         if params.rows == 0 || params.cols == 0 {
             return Err(Error::new(
                 ErrorKind::InvalidParams,
                 "rows and cols must be at least 1",
             ));
+        }
+        if let Some((machine, remote)) = self.remote_session(params.session_id)? {
+            let params = SessionResizeParams {
+                session_id: remote,
+                ..params
+            };
+            return self
+                .machines()
+                .call(machine, method::SESSION_RESIZE, params)
+                .await;
         }
         Ok(self
             .live(params.session_id)?
@@ -3200,7 +3397,17 @@ impl Daemon {
             .resize(params.rows, params.cols)?)
     }
 
-    pub fn read(&self, params: SessionReadParams) -> Result<SessionReadResult> {
+    pub async fn read(&self, params: SessionReadParams) -> Result<SessionReadResult> {
+        if let Some((machine, remote)) = self.remote_session(params.session_id)? {
+            let params = SessionReadParams {
+                session_id: remote,
+                ..params
+            };
+            return self
+                .machines()
+                .call(machine, method::SESSION_READ, params)
+                .await;
+        }
         let id = params.session_id;
         let text = match self.live(id) {
             Ok(live) => live.pty.history(),
@@ -3223,6 +3430,9 @@ impl Daemon {
     }
 
     pub async fn wait(&self, params: SessionWaitParams) -> Result<SessionStatus> {
+        if let Some((machine, remote)) = self.remote_session(params.session_id)? {
+            return self.wait_remote(machine, remote, params).await;
+        }
         let mut rx = match self.live(params.session_id) {
             Ok(live) => live.status.subscribe(),
             Err(_) => return Ok(self.session(params.session_id)?.status),
@@ -3508,11 +3718,18 @@ impl Daemon {
         }
     }
 
-    pub fn subagents(&self, session_id: i64) -> Vec<Subagent> {
-        lock(&self.subagents)
+    pub async fn subagents(&self, session_id: i64) -> Result<Vec<Subagent>> {
+        if let Some((machine, remote)) = self.remote_session(session_id)? {
+            let params = SessionSubagentsParams { session_id: remote };
+            return self
+                .machines()
+                .call(machine, method::SESSION_SUBAGENTS, params)
+                .await;
+        }
+        Ok(lock(&self.subagents)
             .get(&session_id)
             .map(|s| s.list.clone())
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
 
     fn subagent_hook(&self, session_id: i64, event: HookEvent, hook: SubagentHook) {
@@ -3609,6 +3826,10 @@ impl Daemon {
             ) {
                 continue;
             }
+            // A machine session keeps running there; its mirror is reconciled when the machine reconnects.
+            if self.store().session_remote(session.id)?.is_some() {
+                continue;
+            }
             let resumed = match self.task(session.task_id) {
                 Ok(task) if !task.archived => {
                     let resume = self
@@ -3645,6 +3866,11 @@ impl Daemon {
             if !resumed {
                 self.store()
                     .set_session_status(session.id, SessionStatus::Exited)?;
+                // A hub may have listed this session before the write; its mirror follows the event.
+                self.emit(Event::SessionStatusChanged {
+                    session_id: session.id,
+                    status: SessionStatus::Exited,
+                });
             }
         }
         Ok(())

@@ -3,22 +3,23 @@ use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use asterism_proto::client::{Client, ClientError};
 use asterism_proto::types::{
     method, ClientKind, Event, HelloParams, HelloResult, Machine, MachineState, Role, Session,
-    SessionListParams,
+    SessionListParams, SessionStatus,
 };
 use asterism_proto::PROTO_VERSION;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::Child;
-use tokio::sync::{broadcast, Notify};
-use tokio::task::JoinHandle;
+use tokio::sync::{broadcast, mpsc, Notify};
+use tokio::task::{JoinHandle, JoinSet};
 
 use super::install::{self, InstallError, Ssh};
+use crate::daemon::Daemon;
 use crate::lock;
 
 const ATTACH: &str = r#"ASTERISM_HOME="$HOME/.asterism-machine" ASTERISM_ROLE=machine exec "$HOME/.asterism-machine/bin/$1/asterism" attach"#;
@@ -39,7 +40,9 @@ pub(crate) struct Settings {
     pub health_timeout: Duration,
     pub backoff_max: Duration,
     pub open_deadline: Duration,
+    pub call_timeout: Duration,
     pub events: broadcast::Sender<Event>,
+    pub daemon: Weak<Daemon>,
     /// Per destination, so `machine.test` never uploads over a running install.
     pub installs: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
@@ -82,9 +85,11 @@ struct State {
 
 /// What the registry and the connection task share for one machine.
 pub(crate) struct Shared {
-    settings: Arc<Settings>,
+    pub(super) settings: Arc<Settings>,
     state: Mutex<State>,
     retry: Notify,
+    /// `attach_output` subscribers per remote session id; kept across reconnects.
+    pub(super) outputs: Mutex<HashMap<i64, Vec<mpsc::Sender<Vec<u8>>>>>,
 }
 
 impl Shared {
@@ -97,6 +102,7 @@ impl Shared {
                 closed: false,
             }),
             retry: Notify::new(),
+            outputs: Mutex::default(),
         }
     }
 
@@ -179,7 +185,7 @@ pub(crate) async fn run(shared: Arc<Shared>) {
 }
 
 /// Runs until the connection is lost; resets `backoff` once the machine daemon answers.
-async fn connect(shared: &Shared, backoff: &mut Duration) -> Failure {
+async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
     shared.set(MachineState::Connecting, None);
     let settings = &shared.settings;
     let destination = shared.machine().destination;
@@ -213,7 +219,9 @@ async fn connect(shared: &Shared, backoff: &mut Duration) -> Failure {
             )
             .await;
             match sessions {
-                Ok(Ok(sessions)) if sessions.is_empty() && !upgraded => {
+                Ok(Ok(sessions))
+                    if sessions.iter().all(|s| s.status == SessionStatus::Exited) && !upgraded =>
+                {
                     let _ = link
                         .client
                         .call::<_, Value>(method::SHUTDOWN, Value::Null)
@@ -230,6 +238,22 @@ async fn connect(shared: &Shared, backoff: &mut Duration) -> Failure {
         }
         *backoff = INITIAL_BACKOFF.min(settings.backoff_max);
         let client = link.client.clone();
+        let Some(events) = client.take_events() else {
+            return Failure::Offline("the machine's event stream is gone".into());
+        };
+        match tokio::time::timeout(
+            settings.health_timeout,
+            client.call::<_, Value>(method::SUBSCRIBE, Value::Null),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => return link.failure(e).await,
+            Err(_) => return Failure::Offline("the machine daemon did not answer".into()),
+        }
+        // Dropped with this connection, which aborts the pump.
+        let mut pump = JoinSet::new();
+        pump.spawn(super::link::pump(shared.clone(), client.clone(), events));
         shared.update(|state| {
             state.machine.status.state = MachineState::Ready;
             state.machine.status.error = None;

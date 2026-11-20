@@ -7,7 +7,7 @@ use asterism_core::daemon::Daemon;
 use asterism_core::paths::Paths;
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
-use common::{eventually, init_repo, run_git};
+use common::{eventually, eventually_async, init_repo, run_git};
 use tempfile::TempDir;
 
 struct Env {
@@ -147,17 +147,18 @@ async fn session_send_read_wait_and_kill() {
         })
         .await
         .unwrap();
-    let read = |d: &Daemon| {
+    let read = async |d: &Daemon| {
         d.read(SessionReadParams {
             session_id: session.id,
             lines: 5,
         })
+        .await
         .unwrap()
         .text
     };
-    assert!(eventually(|| read(&env.daemon).contains("ping")).await);
+    assert!(eventually_async(async || read(&env.daemon).await.contains("ping")).await);
 
-    env.daemon.kill_session(session.id).unwrap();
+    env.daemon.kill_session(session.id).await.unwrap();
     let status = env
         .daemon
         .wait(SessionWaitParams {
@@ -173,7 +174,7 @@ async fn session_send_read_wait_and_kill() {
             .await
     );
     assert_eq!(
-        env.daemon.kill_session(session.id).unwrap_err().kind,
+        env.daemon.kill_session(session.id).await.unwrap_err().kind,
         ErrorKind::NotFound
     );
 }
@@ -238,14 +239,17 @@ async fn async_subagents_finish_through_their_alias() {
     ] {
         env.daemon.hook(params).unwrap();
     }
-    assert_eq!(env.daemon.subagents(id)[0].status, SubagentStatus::Running);
+    assert_eq!(
+        env.daemon.subagents(id).await.unwrap()[0].status,
+        SubagentStatus::Running
+    );
     for stop in ["unknown", "a1", "a1"] {
         env.daemon
             .hook(subagent_hook(id, HookEvent::SubagentStop, stop, false))
             .unwrap();
     }
 
-    let list = env.daemon.subagents(id);
+    let list = env.daemon.subagents(id).await.unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].id, "t1");
     assert_eq!(list[0].status, SubagentStatus::Done);
@@ -286,7 +290,7 @@ async fn subagents_are_tracked_per_session() {
         .hook(subagent_hook(id, HookEvent::SubagentStop, "nope", false))
         .unwrap();
 
-    let list = env.daemon.subagents(id);
+    let list = env.daemon.subagents(id).await.unwrap();
     assert_eq!(list.len(), 2);
     assert_eq!(list[0].status, SubagentStatus::Done);
     assert!(list[0].ended_at.is_some());
@@ -301,7 +305,7 @@ async fn subagents_are_tracked_per_session() {
         }
     }
     assert_eq!((started, updated), (2, 2));
-    assert!(env.daemon.subagents(999_999).is_empty());
+    assert!(env.daemon.subagents(999_999).await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -318,15 +322,17 @@ async fn running_subagents_end_with_their_session_and_go_with_it() {
         ))
         .unwrap();
     assert!(
-        eventually(|| env
+        eventually_async(async || env
             .daemon
             .subagents(session.id)
+            .await
+            .unwrap()
             .first()
             .is_some_and(|s| s.status == SubagentStatus::Ended))
         .await
     );
     env.daemon.remove_session(session.id).await.unwrap();
-    assert!(env.daemon.subagents(session.id).is_empty());
+    assert!(env.daemon.subagents(session.id).await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -362,11 +368,11 @@ async fn archive_keeps_worktree_changes_and_restore_brings_the_task_back() {
     let scratch = Path::new(&task.worktree_path).join("scratch.txt");
     std::fs::write(&scratch, "wip").unwrap();
 
-    let archived = env.daemon.archive_task(task.id).unwrap();
+    let archived = env.daemon.archive_task(task.id).await.unwrap();
     assert!(archived.archived);
     assert_eq!(std::fs::read_to_string(&scratch).unwrap(), "wip");
 
-    let restored = env.daemon.restore_task(task.id).unwrap();
+    let restored = env.daemon.restore_task(task.id).await.unwrap();
     assert!(!restored.archived);
     assert_eq!(std::fs::read_to_string(&scratch).unwrap(), "wip");
 }
@@ -375,13 +381,13 @@ async fn archive_keeps_worktree_changes_and_restore_brings_the_task_back() {
 async fn restore_recreates_a_removed_worktree_from_its_branch() {
     let env = setup();
     let task = new_task(&env, "legacy").await;
-    env.daemon.archive_task(task.id).unwrap();
+    env.daemon.archive_task(task.id).await.unwrap();
     run_git(
         env.repo.path(),
         &["worktree", "remove", "--force", &task.worktree_path],
     );
 
-    env.daemon.restore_task(task.id).unwrap();
+    env.daemon.restore_task(task.id).await.unwrap();
     assert!(Path::new(&task.worktree_path).join("README.md").exists());
 }
 
@@ -389,7 +395,7 @@ async fn restore_recreates_a_removed_worktree_from_its_branch() {
 async fn restore_fails_cleanly_without_the_branch() {
     let env = setup();
     let task = new_task(&env, "gone").await;
-    env.daemon.archive_task(task.id).unwrap();
+    env.daemon.archive_task(task.id).await.unwrap();
     run_git(
         env.repo.path(),
         &["worktree", "remove", "--force", &task.worktree_path],
@@ -397,7 +403,7 @@ async fn restore_fails_cleanly_without_the_branch() {
     run_git(env.repo.path(), &["branch", "-D", &task.branch]);
 
     assert_eq!(
-        env.daemon.restore_task(task.id).unwrap_err().kind,
+        env.daemon.restore_task(task.id).await.unwrap_err().kind,
         ErrorKind::NotFound
     );
     assert!(env.daemon.task(task.id).unwrap().archived);
@@ -407,7 +413,7 @@ async fn restore_fails_cleanly_without_the_branch() {
 async fn delete_check_reports_dirty_and_unmerged_work() {
     let env = setup();
     let task = new_task(&env, "check").await;
-    let clean = env.daemon.delete_check(task.id).unwrap();
+    let clean = env.daemon.delete_check(task.id).await.unwrap();
     assert_eq!(
         clean,
         TaskDeleteCheck {
@@ -424,7 +430,7 @@ async fn delete_check_reports_dirty_and_unmerged_work() {
     run_git(wt, &["add", "."]);
     run_git(wt, &["commit", "-qm", "work"]);
     std::fs::write(wt.join("more.txt"), "y").unwrap();
-    let busy = env.daemon.delete_check(task.id).unwrap();
+    let busy = env.daemon.delete_check(task.id).await.unwrap();
     assert!(busy.dirty);
     assert_eq!(busy.unmerged_commits, 1);
 }
@@ -436,7 +442,7 @@ async fn delete_removes_sessions_worktree_and_optionally_the_branch() {
     let session = start(&env, &keep, sh("sleep 30")).await;
     let mut events = env.daemon.subscribe();
     assert_eq!(
-        env.daemon.delete_task(keep.id, false).unwrap(),
+        env.daemon.delete_task(keep.id, false).await.unwrap(),
         TaskDeleteResult { warning: None }
     );
     assert!(!Path::new(&keep.worktree_path).exists());
@@ -454,7 +460,7 @@ async fn delete_removes_sessions_worktree_and_optionally_the_branch() {
     assert_eq!(saw, (true, true));
 
     let drop = new_task(&env, "drop branch").await;
-    env.daemon.delete_task(drop.id, true).unwrap();
+    env.daemon.delete_task(drop.id, true).await.unwrap();
     let out = std::process::Command::new("git")
         .args([
             "-C",
@@ -506,7 +512,7 @@ async fn diff_shows_worktree_changes() {
         "new line\n",
     )
     .unwrap();
-    let patch = env.daemon.diff(task.id).unwrap().patch;
+    let patch = env.daemon.diff(task.id).await.unwrap().patch;
     assert!(patch.contains("+new line"), "{patch}");
 }
 
@@ -530,7 +536,7 @@ async fn project_with_active_tasks_cannot_be_removed() {
         env.daemon.remove_project(task.project_id).unwrap_err().kind,
         ErrorKind::InvalidParams
     );
-    env.daemon.archive_task(task.id).unwrap();
+    env.daemon.archive_task(task.id).await.unwrap();
     env.daemon.remove_project(task.project_id).unwrap();
 }
 
@@ -538,7 +544,7 @@ async fn project_with_active_tasks_cannot_be_removed() {
 async fn task_ids_are_not_reused_after_project_removal() {
     let env = setup();
     let first = new_task(&env, "again").await;
-    env.daemon.archive_task(first.id).unwrap();
+    env.daemon.archive_task(first.id).await.unwrap();
     env.daemon.remove_project(first.project_id).unwrap();
     let second = new_task(&env, "again").await;
     assert_ne!(first.branch, second.branch);
@@ -561,12 +567,22 @@ async fn restart_marks_non_resumable_sessions_exited() {
         common::daemon_options(),
     )
     .unwrap();
+    let mut events = restarted.subscribe();
     restarted.recover().await.unwrap();
     assert_eq!(
         restarted.session(session.id).unwrap().status,
         SessionStatus::Exited
     );
-    env.daemon.kill_session(session.id).unwrap();
+    // A hub mirroring this daemon may have listed the session before recover marked it.
+    let mut announced = false;
+    while let Ok(event) = events.try_recv() {
+        announced |= matches!(
+            event,
+            Event::SessionStatusChanged { session_id, status: SessionStatus::Exited } if session_id == session.id
+        );
+    }
+    assert!(announced, "recover did not announce the exited session");
+    env.daemon.kill_session(session.id).await.unwrap();
 }
 
 #[tokio::test]
@@ -574,25 +590,34 @@ async fn zero_sized_resize_is_rejected() {
     let env = setup();
     let task = new_task(&env, "resize").await;
     let session = start(&env, &task, sh("echo alive; cat")).await;
-    let resize = |rows, cols| {
-        env.daemon.resize(SessionResizeParams {
-            session_id: session.id,
-            rows,
-            cols,
-        })
+    let resize = async |rows, cols| {
+        env.daemon
+            .resize(SessionResizeParams {
+                session_id: session.id,
+                rows,
+                cols,
+            })
+            .await
     };
-    assert_eq!(resize(0, 80).unwrap_err().kind, ErrorKind::InvalidParams);
-    assert_eq!(resize(24, 0).unwrap_err().kind, ErrorKind::InvalidParams);
-    let read = || {
+    assert_eq!(
+        resize(0, 80).await.unwrap_err().kind,
+        ErrorKind::InvalidParams
+    );
+    assert_eq!(
+        resize(24, 0).await.unwrap_err().kind,
+        ErrorKind::InvalidParams
+    );
+    let read = async || {
         env.daemon
             .read(SessionReadParams {
                 session_id: session.id,
                 lines: 5,
             })
+            .await
             .unwrap()
             .text
     };
-    assert!(eventually(|| read().contains("alive")).await);
+    assert!(eventually_async(async || read().await.contains("alive")).await);
 }
 
 #[tokio::test]
@@ -611,6 +636,7 @@ async fn read_includes_scrollback() {
             rows: 24,
             cols: 80,
         })
+        .await
         .unwrap();
     env.daemon
         .send(SessionSendParams {
@@ -620,17 +646,18 @@ async fn read_includes_scrollback() {
         })
         .await
         .unwrap();
-    let read = || {
+    let read = async || {
         env.daemon
             .read(SessionReadParams {
                 session_id: session.id,
                 lines: 60,
             })
+            .await
             .unwrap()
             .text
     };
-    assert!(eventually(|| read().contains("line100")).await);
-    let text = read();
+    assert!(eventually_async(async || read().await.contains("line100")).await);
+    let text = read().await;
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines.len(), 60, "{text}");
     assert_eq!(lines[0], "line41");
@@ -652,19 +679,24 @@ async fn exited_sessions_stay_readable() {
         .await
         .unwrap();
     assert_eq!(status, SessionStatus::Exited);
-    let read = || {
-        env.daemon.read(SessionReadParams {
-            session_id: session.id,
-            lines: 10,
-        })
+    let read = async || {
+        env.daemon
+            .read(SessionReadParams {
+                session_id: session.id,
+                lines: 10,
+            })
+            .await
     };
-    assert!(eventually(|| read().is_ok_and(|r| r.text.contains("done-marker"))).await);
+    assert!(
+        eventually_async(async || read().await.is_ok_and(|r| r.text.contains("done-marker"))).await
+    );
     let missing = env
         .daemon
         .read(SessionReadParams {
             session_id: session.id + 100,
             lines: 10,
         })
+        .await
         .unwrap_err();
     assert_eq!(missing.kind, ErrorKind::NotFound);
 }
@@ -717,22 +749,23 @@ async fn agent_env_policy_from_node_config_applies_to_sessions() {
         sh("echo \"foo=$FOO home=[$HOME] base=$ANTHROPIC_BASE_URL task=$ASTERISM_TASK\"; sleep 30"),
     )
     .await;
-    let read = || {
+    let read = async || {
         env.daemon
             .read(SessionReadParams {
                 session_id: session.id,
                 lines: 5,
             })
+            .await
             .unwrap()
             .text
     };
     let expected = format!("foo=bar home=[] base=http://proxy task={}", task.id);
     assert!(
-        eventually(|| read().contains(&expected)).await,
+        eventually_async(async || read().await.contains(&expected)).await,
         "{}",
-        read()
+        read().await
     );
-    env.daemon.kill_session(session.id).unwrap();
+    env.daemon.kill_session(session.id).await.unwrap();
 }
 
 #[tokio::test]
@@ -787,19 +820,20 @@ async fn shell_env_settings_reach_new_sessions() {
     env.daemon.set_agent_config("command", &config).unwrap();
     let task = new_task(&env, "settings env").await;
     let session = start(&env, &task, sh("echo \"value=$FROM_SETTINGS\"; sleep 30")).await;
-    let read = || {
+    let read = async || {
         env.daemon
             .read(SessionReadParams {
                 session_id: session.id,
                 lines: 5,
             })
+            .await
             .unwrap()
             .text
     };
     assert!(
-        eventually(|| read().contains("value=yes")).await,
+        eventually_async(async || read().await.contains("value=yes")).await,
         "{}",
-        read()
+        read().await
     );
     env.daemon.remove_session(session.id).await.unwrap();
 }
@@ -854,17 +888,18 @@ async fn remove_force_kills_stubborn_sessions() {
         sh("trap '' HUP TERM INT; echo pid=$$; while true; do sleep 1; done"),
     )
     .await;
-    let read = || {
+    let read = async || {
         env.daemon
             .read(SessionReadParams {
                 session_id: session.id,
                 lines: 5,
             })
+            .await
             .unwrap()
             .text
     };
-    assert!(eventually(|| read().contains("pid=")).await);
-    let text = read();
+    assert!(eventually_async(async || read().await.contains("pid=")).await);
+    let text = read().await;
     let pid = text
         .split("pid=")
         .nth(1)
@@ -911,7 +946,7 @@ async fn stats_cover_running_sessions_and_requested_pids() {
     assert!(entry.stats.memory_bytes > 0);
     assert_eq!(stats.processes.len(), 1);
     assert_eq!(stats.processes[0].pid, me);
-    env.daemon.kill_session(session.id).ok();
+    env.daemon.kill_session(session.id).await.ok();
 }
 
 #[tokio::test]
@@ -1014,14 +1049,14 @@ async fn worktree_remove_only_takes_unlinked_listed_worktrees() {
 async fn restore_refuses_an_occupied_worktree_path() {
     let env = setup();
     let task = new_task(&env, "occupied").await;
-    env.daemon.archive_task(task.id).unwrap();
+    env.daemon.archive_task(task.id).await.unwrap();
     run_git(
         env.repo.path(),
         &["worktree", "remove", "--force", &task.worktree_path],
     );
     std::fs::create_dir_all(&task.worktree_path).unwrap();
 
-    let err = env.daemon.restore_task(task.id).unwrap_err();
+    let err = env.daemon.restore_task(task.id).await.unwrap_err();
     assert_eq!(err.kind, ErrorKind::InvalidParams);
     assert!(err.message.contains(&task.worktree_path), "{}", err.message);
     assert!(env.daemon.task(task.id).unwrap().archived);
@@ -1247,7 +1282,7 @@ async fn deleting_a_task_deletes_its_notifications() {
     hook(&env, &session, HookEvent::Notification);
     let id = wait_for_entries(&env, 1).await[0].id;
     let mut events = env.daemon.subscribe();
-    env.daemon.delete_task(task.id, false).unwrap();
+    env.daemon.delete_task(task.id, false).await.unwrap();
     assert!(env.daemon.notifications().unwrap().is_empty());
     let mut removed = false;
     while let Ok(event) = events.try_recv() {
@@ -1304,7 +1339,7 @@ fn auto_delete(env: &Env, hours: u32, delete_branch: bool, force: bool) {
 
 async fn archived_task(env: &Env, title: &str) -> Task {
     let task = new_task(env, title).await;
-    env.daemon.archive_task(task.id).unwrap();
+    env.daemon.archive_task(task.id).await.unwrap();
     task
 }
 
@@ -1320,7 +1355,7 @@ fn branch_exists(env: &Env, task: &Task) -> bool {
 async fn sweep_does_nothing_when_disabled() {
     let env = setup();
     let task = archived_task(&env, "off").await;
-    env.daemon.sweep_archived(later(1000 * 24)).unwrap();
+    env.daemon.sweep_archived(later(1000 * 24)).await.unwrap();
     assert!(env.daemon.task(task.id).unwrap().archived);
 }
 
@@ -1329,7 +1364,7 @@ async fn sweep_ignores_tasks_not_yet_due() {
     let env = setup();
     auto_delete(&env, 14 * 24, true, false);
     let task = archived_task(&env, "young").await;
-    env.daemon.sweep_archived(later(13 * 24)).unwrap();
+    env.daemon.sweep_archived(later(13 * 24)).await.unwrap();
     assert!(env.daemon.task(task.id).unwrap().archived);
     assert!(Path::new(&task.worktree_path).exists());
 }
@@ -1339,7 +1374,7 @@ async fn sweep_deletes_task_worktree_and_branch() {
     let env = setup();
     auto_delete(&env, 24, true, false);
     let task = archived_task(&env, "old").await;
-    env.daemon.sweep_archived(later(24)).unwrap();
+    env.daemon.sweep_archived(later(24)).await.unwrap();
     assert!(gone(&env, &task));
     assert!(!branch_exists(&env, &task));
 }
@@ -1349,7 +1384,7 @@ async fn sweep_keeps_branch_when_not_configured() {
     let env = setup();
     auto_delete(&env, 24, false, false);
     let task = archived_task(&env, "keep branch").await;
-    env.daemon.sweep_archived(later(24)).unwrap();
+    env.daemon.sweep_archived(later(24)).await.unwrap();
     assert!(gone(&env, &task));
     assert!(branch_exists(&env, &task));
 }
@@ -1361,9 +1396,9 @@ async fn sweep_skips_dirty_and_deletes_the_rest() {
     let dirty = new_task(&env, "dirty").await;
     let scratch = Path::new(&dirty.worktree_path).join("scratch.txt");
     std::fs::write(&scratch, "wip").unwrap();
-    env.daemon.archive_task(dirty.id).unwrap();
+    env.daemon.archive_task(dirty.id).await.unwrap();
     let clean = archived_task(&env, "clean").await;
-    env.daemon.sweep_archived(later(24)).unwrap();
+    env.daemon.sweep_archived(later(24)).await.unwrap();
     assert!(env.daemon.task(dirty.id).unwrap().archived);
     assert_eq!(std::fs::read_to_string(&scratch).unwrap(), "wip");
     assert!(gone(&env, &clean));
@@ -1377,8 +1412,8 @@ async fn sweep_keeps_unmerged_branch_unless_forced() {
     let wt = Path::new(&task.worktree_path);
     std::fs::write(wt.join("new.txt"), "x").unwrap();
     common::commit_all(wt, "work");
-    env.daemon.archive_task(task.id).unwrap();
-    env.daemon.sweep_archived(later(24)).unwrap();
+    env.daemon.archive_task(task.id).await.unwrap();
+    env.daemon.sweep_archived(later(24)).await.unwrap();
     assert!(gone(&env, &task));
     assert!(branch_exists(&env, &task));
 
@@ -1387,8 +1422,8 @@ async fn sweep_keeps_unmerged_branch_unless_forced() {
     let wt = Path::new(&forced.worktree_path);
     std::fs::write(wt.join("new.txt"), "x").unwrap();
     common::commit_all(wt, "work");
-    env.daemon.archive_task(forced.id).unwrap();
-    env.daemon.sweep_archived(later(24)).unwrap();
+    env.daemon.archive_task(forced.id).await.unwrap();
+    env.daemon.sweep_archived(later(24)).await.unwrap();
     assert!(gone(&env, &forced));
     assert!(!branch_exists(&env, &forced));
 }
@@ -1399,8 +1434,8 @@ async fn sweep_force_deletes_dirty_worktree() {
     auto_delete(&env, 24, false, true);
     let task = new_task(&env, "dirty forced").await;
     std::fs::write(Path::new(&task.worktree_path).join("scratch.txt"), "wip").unwrap();
-    env.daemon.archive_task(task.id).unwrap();
-    env.daemon.sweep_archived(later(24)).unwrap();
+    env.daemon.archive_task(task.id).await.unwrap();
+    env.daemon.sweep_archived(later(24)).await.unwrap();
     assert!(gone(&env, &task));
 }
 
@@ -1412,8 +1447,8 @@ async fn sweep_skips_worktree_whose_status_cannot_be_read() {
     let wt = Path::new(&task.worktree_path);
     let git_dir = run_git(wt, &["rev-parse", "--absolute-git-dir"]);
     std::fs::write(Path::new(git_dir.trim()).join("index"), "garbage").unwrap();
-    env.daemon.archive_task(task.id).unwrap();
-    env.daemon.sweep_archived(later(24)).unwrap();
+    env.daemon.archive_task(task.id).await.unwrap();
+    env.daemon.sweep_archived(later(24)).await.unwrap();
     assert!(env.daemon.task(task.id).unwrap().archived);
 }
 
@@ -1422,8 +1457,8 @@ async fn sweep_counts_hours() {
     let env = setup();
     auto_delete(&env, 2, false, false);
     let task = archived_task(&env, "hours").await;
-    env.daemon.sweep_archived(later(1)).unwrap();
+    env.daemon.sweep_archived(later(1)).await.unwrap();
     assert!(env.daemon.task(task.id).unwrap().archived);
-    env.daemon.sweep_archived(later(2)).unwrap();
+    env.daemon.sweep_archived(later(2)).await.unwrap();
     assert!(gone(&env, &task));
 }

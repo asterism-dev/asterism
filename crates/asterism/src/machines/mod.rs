@@ -1,5 +1,6 @@
 pub mod conn;
 pub mod install;
+mod link;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
@@ -110,6 +111,20 @@ impl Machines {
     }
 
     pub fn remove(&self, id: i64) -> Result<()> {
+        let (active, name) = {
+            let daemon = self.daemon()?;
+            let store = daemon.store();
+            let name = store
+                .machine(id)?
+                .map_or_else(|| id.to_string(), |m| m.name);
+            (store.machine_active_tasks(id)?, name)
+        };
+        if !active.is_empty() {
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                format!("machine {name} still has {} active tasks", active.len()),
+            ));
+        }
         if !self.daemon()?.store().remove_machine(id)? {
             return Err(Error::new(
                 ErrorKind::NotFound,

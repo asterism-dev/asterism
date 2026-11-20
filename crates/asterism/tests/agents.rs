@@ -116,6 +116,7 @@ async fn static_agents_start_from_their_template_with_configured_args() {
                 session_id: session.id,
                 lines: 5,
             })
+            .await
             .unwrap()
             .text;
         if text.contains("started hello") {
@@ -128,7 +129,7 @@ async fn static_agents_start_from_their_template_with_configured_args() {
     let labels: Vec<_> = activity.steps.iter().map(|s| s.label.as_str()).collect();
     assert_eq!(labels, ["Create worktree", "Start agent"]);
     assert_eq!(activity.status, ActivityStatus::Done);
-    daemon.kill_session(session.id).unwrap();
+    daemon.kill_session(session.id).await.unwrap();
 
     let err = daemon
         .set_agent_config(
@@ -199,8 +200,9 @@ async fn sessions_of_a_removed_agent_plugin_are_marked_exited_on_recover() {
             session_id: session.id,
             lines: 5
         })
+        .await
         .is_ok());
-    first.kill_session(session.id).unwrap();
+    first.kill_session(session.id).await.unwrap();
 }
 
 #[tokio::test]

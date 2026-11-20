@@ -102,6 +102,8 @@ pub enum ErrorKind {
     NeedsSetup,
     /// The method is not available to this kind of client, e.g. a remote device.
     Forbidden,
+    /// The machine hosting the task is not connected.
+    MachineOffline,
     /// A kind from a newer peer; keeps older clients decoding its errors.
     #[serde(other)]
     Unknown,
@@ -126,6 +128,7 @@ impl ErrorKind {
             Self::PermissionsChanged => -32010,
             Self::NeedsSetup => -32011,
             Self::Forbidden => -32012,
+            Self::MachineOffline => -32013,
             Self::Unknown => -32099,
         }
     }

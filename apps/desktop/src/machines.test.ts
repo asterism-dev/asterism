@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
-import { machineStatusLine } from './machines';
-import type { Machine } from './types';
+import { localTaskActions, machineBlocksInput, machineStatusLine, taskMachine } from './machines';
+import type { Machine, Task } from './types';
 
 it.each([
   [
@@ -34,4 +34,47 @@ it.each([
   expect(
     machineStatusLine({ id: 1, name: 'vm', destination: 'vm', created_at: 0, status } as Machine),
   ).toBe(line);
+});
+
+const machine = (state: Machine['status']['state']) =>
+  ({
+    id: 7,
+    name: 'vm02',
+    destination: 'vm02',
+    created_at: 0,
+    status: { state, platform: null, error: null, update_available: false },
+  }) as Machine;
+const task = (machine_id: number | null | undefined) => ({ id: 1, machine_id }) as Task;
+
+it('taskMachine is null for local tasks, including old daemons without the field', () => {
+  expect(taskMachine(task(null), [machine('ready')])).toBeNull();
+  expect(taskMachine(task(undefined), [machine('ready')])).toBeNull();
+});
+
+it('taskMachine reports a ready machine', () => {
+  expect(taskMachine(task(7), [machine('ready')])).toEqual({ name: 'vm02', ready: true });
+});
+
+it.each(['offline', 'blocked', 'connecting'] as const)('taskMachine is not ready when %s', (st) => {
+  expect(taskMachine(task(7), [machine(st)])).toEqual({ name: 'vm02', ready: false });
+});
+
+it('taskMachine names an unknown machine by id and treats it as not ready', () => {
+  expect(taskMachine(task(9), [machine('ready')])).toEqual({ name: 'machine 9', ready: false });
+});
+
+it('machineBlocksInput only blocks once the machine list is known', () => {
+  expect(machineBlocksInput(task(7), [machine('offline')], true)).toBe(true);
+  expect(machineBlocksInput(task(7), [machine('ready')], true)).toBe(false);
+  expect(machineBlocksInput(task(null), [], true)).toBe(false);
+  expect(machineBlocksInput(task(7), [], false)).toBe(false);
+});
+
+it('localTaskActions offers agents and reveal only for local tasks', () => {
+  expect(localTaskActions(task(null), ['claude'])).toEqual({ agents: ['claude'], reveal: true });
+  expect(localTaskActions(task(undefined), ['claude'])).toEqual({
+    agents: ['claude'],
+    reveal: true,
+  });
+  expect(localTaskActions(task(7), ['claude'])).toEqual({ agents: [], reveal: false });
 });

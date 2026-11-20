@@ -73,6 +73,8 @@ export interface Task {
   archived: boolean;
   created_at: number;
   last_activity_at: number;
+  /** Absent on daemons without machines. */
+  machine_id?: number | null;
 }
 export interface IssueRef {
   source: string;
@@ -294,6 +296,7 @@ export type TaskCreateRequest = {
   checkout: string | null;
   push: boolean;
   on_conflict: ConflictChoice | null;
+  machine_id?: number | null;
   activity_token?: string;
 };
 export interface TaskFileResult {

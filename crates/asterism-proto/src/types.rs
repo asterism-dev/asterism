@@ -63,6 +63,7 @@ pub mod method {
     pub const NODE_CONFIG_GET: &str = "node_config.get";
     pub const NODE_CONFIG_SET: &str = "node_config.set";
     pub const PROJECT_CLONE: &str = "project.clone";
+    pub const PROJECT_ENSURE: &str = "project.ensure";
     pub const PROJECT_CREATE: &str = "project.create";
     pub const PROJECT_INITIALIZE: &str = "project.initialize";
     pub const NODE_STATS: &str = "node.stats";
@@ -829,6 +830,11 @@ pub struct ProjectCloneParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectEnsureParams {
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectCreateParams {
     pub name: String,
     #[serde(default)]
@@ -869,6 +875,8 @@ pub struct Task {
     pub last_activity_at: i64,
     #[serde(default)]
     pub issue: Option<IssueRef>,
+    #[serde(default)]
+    pub machine_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -914,6 +922,8 @@ pub struct TaskCreateParams {
     pub on_conflict: Option<OnConflict>,
     #[serde(default)]
     pub activity_token: Option<String>,
+    #[serde(default)]
+    pub machine_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

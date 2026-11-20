@@ -16,6 +16,7 @@ fn sample_task() -> Task {
         created_at: 1_700_000_000,
         last_activity_at: 1_700_000_060,
         issue: None,
+        machine_id: None,
     }
 }
 
@@ -310,6 +311,16 @@ fn tasks_carry_an_optional_issue() {
     let mut old = serde_json::to_value(sample_task()).unwrap();
     old.as_object_mut().unwrap().remove("issue");
     assert_eq!(serde_json::from_value::<Task>(old).unwrap().issue, None);
+}
+
+#[test]
+fn task_machine_id_defaults_to_none() {
+    let mut old = serde_json::to_value(sample_task()).unwrap();
+    old.as_object_mut().unwrap().remove("machine_id");
+    assert_eq!(
+        serde_json::from_value::<Task>(old).unwrap().machine_id,
+        None
+    );
 }
 
 #[test]
