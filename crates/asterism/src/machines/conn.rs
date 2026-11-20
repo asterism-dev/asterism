@@ -12,15 +12,16 @@ use asterism_proto::types::{
     method, ClientKind, Event, HelloParams, HelloResult, Machine, MachineState, Role, Session,
     SessionListParams, SessionStatus,
 };
-use asterism_proto::PROTO_VERSION;
+use asterism_proto::{PROTO_VERSION, PROTO_VERSION_PREVIOUS};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::Child;
-use tokio::sync::{broadcast, mpsc, Notify};
+use tokio::sync::{broadcast, mpsc, oneshot, Notify};
 use tokio::task::{JoinHandle, JoinSet};
 
 use super::install::{self, InstallError, Ssh};
 use crate::daemon::Daemon;
+use crate::error::Error;
 use crate::lock;
 
 const ATTACH: &str = r#"ASTERISM_HOME="$HOME/.asterism-machine" ASTERISM_ROLE=machine exec "$HOME/.asterism-machine/bin/$1/asterism" attach"#;
@@ -33,6 +34,16 @@ const AUTH_ERRORS: &[&str] = &[
 ];
 const SSH_FAILED: i32 = 255;
 const NOT_A_MACHINE: &str = "not an asterism machine daemon";
+const INCOMPATIBLE: &str = "incompatible version";
+
+/// Methods with the protocol version that added them; extend on each protocol bump.
+const ADDED_IN: &[(&str, u32)] = &[];
+
+fn link_supports(protocol: u32, method_name: &str) -> bool {
+    ADDED_IN
+        .iter()
+        .all(|&(added, since)| added != method_name || protocol >= since)
+}
 
 pub(crate) struct Settings {
     pub ssh_bin: PathBuf,
@@ -82,6 +93,19 @@ struct State {
     machine: Machine,
     client: Option<Arc<Client>>,
     closed: bool,
+    installed_key: Option<String>,
+    /// A restart was requested; the next connect onto the current key removes older installs.
+    cleanup_pending: bool,
+    /// The caller of a running Update now, answered once the machine is ready again or the update failed.
+    update: Option<oneshot::Sender<Result<(), String>>>,
+}
+
+impl State {
+    fn finish_update(&mut self, result: Result<(), String>) {
+        if let Some(reply) = self.update.take() {
+            let _ = reply.send(result);
+        }
+    }
 }
 
 /// What the registry and the connection task share for one machine.
@@ -89,6 +113,7 @@ pub(crate) struct Shared {
     pub(super) settings: Arc<Settings>,
     state: Mutex<State>,
     retry: Notify,
+    update_requested: Notify,
     /// `attach_output` subscribers per remote session id; kept across reconnects.
     pub(super) outputs: Mutex<HashMap<i64, Vec<mpsc::Sender<Vec<u8>>>>>,
 }
@@ -101,8 +126,12 @@ impl Shared {
                 machine,
                 client: None,
                 closed: false,
+                installed_key: None,
+                cleanup_pending: false,
+                update: None,
             }),
             retry: Notify::new(),
+            update_requested: Notify::new(),
             outputs: Mutex::default(),
         }
     }
@@ -120,6 +149,7 @@ impl Shared {
         let mut state = lock(&self.state);
         state.closed = true;
         state.client = None;
+        state.update = None;
     }
 
     pub fn retry(&self) {
@@ -127,6 +157,50 @@ impl Shared {
         if matches!(state, MachineState::Offline | MachineState::Blocked) {
             self.retry.notify_one();
         }
+    }
+
+    /// Has the supervisor restart the machine daemon on the current build; returns once it is ready on it.
+    pub async fn request_update(&self) -> Result<(), Error> {
+        let done = {
+            let mut state = lock(&self.state);
+            let status = &state.machine.status;
+            match status.state {
+                MachineState::Ready if !status.update_available => return Ok(()),
+                MachineState::Ready => {}
+                MachineState::Blocked if status.error.as_deref() == Some(INCOMPATIBLE) => {}
+                _ => {
+                    return Err(Error::new(
+                        ErrorKind::InvalidParams,
+                        format!("machine {} is not ready", state.machine.name),
+                    ))
+                }
+            }
+            if state.update.is_some() {
+                return Err(Error::new(
+                    ErrorKind::InvalidParams,
+                    format!("machine {} is already updating", state.machine.name),
+                ));
+            }
+            let (reply, done) = oneshot::channel();
+            state.update = Some(reply);
+            done
+        };
+        self.update_requested.notify_one();
+        match done.await {
+            Ok(result) => result.map_err(|e| Error::new(ErrorKind::Internal, e)),
+            Err(_) => Err(Error::new(
+                ErrorKind::Internal,
+                "the machine was removed during the update",
+            )),
+        }
+    }
+
+    fn updating(&self) -> bool {
+        lock(&self.state).update.is_some()
+    }
+
+    fn finish_update(&self, result: Result<(), String>) {
+        lock(&self.state).finish_update(result);
     }
 
     pub fn publish(&self) {
@@ -158,6 +232,7 @@ impl Shared {
         self.update(|state| {
             state.machine.status.state = new;
             state.machine.status.error = error;
+            state.machine.status.protocol = None;
             state.client = None;
         });
     }
@@ -167,10 +242,13 @@ pub(crate) async fn run(shared: Arc<Shared>) {
     let initial = INITIAL_BACKOFF.min(shared.settings.backoff_max);
     let mut backoff = initial;
     loop {
-        match connect(&shared, &mut backoff).await {
+        let failure = connect(&shared, &mut backoff).await;
+        let (Failure::Blocked(reason) | Failure::Offline(reason)) = &failure;
+        shared.finish_update(Err(reason.clone()));
+        match failure {
             Failure::Blocked(reason) => {
                 shared.set(MachineState::Blocked, Some(reason));
-                shared.retry.notified().await;
+                wait_blocked(&shared).await;
                 backoff = initial;
             }
             Failure::Offline(reason) => {
@@ -185,6 +263,57 @@ pub(crate) async fn run(shared: Arc<Shared>) {
     }
 }
 
+/// Until a retry, or an Update now that stopped the blocked machine daemon.
+async fn wait_blocked(shared: &Shared) {
+    loop {
+        // Biased, so a retry that arrives together with an update cannot skip stopping the daemon.
+        tokio::select! {
+            biased;
+            _ = shared.update_requested.notified() => {}
+            _ = shared.retry.notified() => return,
+        }
+        if shared.updating() {
+            match stop_blocked(shared).await {
+                Ok(()) => return,
+                Err(failure) => shared.finish_update(Err(failure.message())),
+            }
+        }
+    }
+}
+
+/// `session.list` from the machine daemon while there is no ready link; it answers without `hello`.
+pub(crate) async fn sessions_without_hello(shared: &Shared) -> Option<Vec<Session>> {
+    let settings = &shared.settings;
+    let key = lock(&shared.state).installed_key.clone()?;
+    let link = Link::spawn(settings, &shared.machine().destination, &key).ok()?;
+    let sessions = tokio::time::timeout(
+        settings.health_timeout,
+        link.client
+            .call(method::SESSION_LIST, SessionListParams { task_id: None }),
+    )
+    .await;
+    sessions.ok()?.ok()
+}
+
+async fn stop_blocked(shared: &Shared) -> Result<(), Failure> {
+    let key = install_current(shared).await?;
+    // The daemon serves `shutdown` without a successful `hello`, so even an incompatible one stops.
+    let link = Link::spawn(&shared.settings, &shared.machine().destination, &key)?;
+    link.shutdown(&shared.settings).await;
+    lock(&shared.state).cleanup_pending = true;
+    Ok(())
+}
+
+async fn install_current(shared: &Shared) -> Result<String, Failure> {
+    let settings = &shared.settings;
+    let destination = shared.machine().destination;
+    let ssh = Ssh::new(settings.ssh_bin.clone(), destination.clone());
+    let platform = install::probe(&ssh, settings.open_deadline)
+        .await
+        .map_err(install_failure)?;
+    ensure_installed(settings, &ssh, &destination, &platform).await
+}
+
 /// Runs until the connection is lost; resets `backoff` once the machine daemon answers.
 async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
     shared.set(MachineState::Connecting, None);
@@ -196,20 +325,21 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
         Err(e) => return install_failure(e),
     };
     shared.update(|state| state.machine.status.platform = Some(platform.to_string()));
-    let key = match ensure_installed(settings, &ssh, &destination, &platform).await {
+    let mut key = match ensure_installed(settings, &ssh, &destination, &platform).await {
         Ok(key) => key,
         Err(failure) => return failure,
     };
     let mut upgraded = false;
     loop {
-        let (mut link, hello) = match Link::open(settings, &destination, &key).await {
+        lock(&shared.state).installed_key = Some(key.clone());
+        let (link, hello) = match Link::open(settings, &destination, &key).await {
             Ok(opened) => opened,
             Err(failure) => return failure,
         };
         if hello.role != Role::Machine {
             return Failure::Blocked(NOT_A_MACHINE.into());
         }
-        let mut update_available = false;
+        let mut update_available = link.protocol != PROTO_VERSION;
         if !runs_from(&hello.exe, &key) {
             let sessions = tokio::time::timeout(
                 settings.health_timeout,
@@ -223,12 +353,7 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
                 Ok(Ok(sessions))
                     if sessions.iter().all(|s| s.status == SessionStatus::Exited) && !upgraded =>
                 {
-                    let _ = link
-                        .client
-                        .call::<_, Value>(method::SHUTDOWN, Value::Null)
-                        .await;
-                    // `attach` exits once the old daemon has closed its socket.
-                    let _ = tokio::time::timeout(settings.open_deadline, link.child.wait()).await;
+                    link.shutdown(settings).await;
                     upgraded = true;
                     continue;
                 }
@@ -236,6 +361,12 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
                 Ok(Err(e)) => return link.failure(e).await,
                 Err(_) => return Failure::Offline("the machine daemon did not answer".into()),
             }
+        }
+        let cleanup_pending = lock(&shared.state).cleanup_pending;
+        if (upgraded || cleanup_pending) && runs_from(&hello.exe, &key) {
+            lock(&shared.state).cleanup_pending = false;
+            // Best effort: a leftover install only costs disk space until the next restart.
+            let _ = install::remove_other_installs(&ssh, &key, settings.open_deadline).await;
         }
         *backoff = INITIAL_BACKOFF.min(settings.backoff_max);
         let client = link.client.clone();
@@ -246,17 +377,19 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
             return Failure::Offline("the machine's request stream is gone".into());
         };
         // Calls the machine forwards before `peer::serve` starts wait in the client's request queue.
-        match tokio::time::timeout(
-            settings.health_timeout,
-            client.call::<_, Value>(method::UPLINK_REGISTER, Value::Null),
-        )
-        .await
-        {
-            Ok(Ok(_)) => {}
-            // An older daemon kept for its sessions does not forward, so it needs no uplink.
-            Ok(Err(ClientError::Rpc(e))) if e.kind() == ErrorKind::MethodNotFound => {}
-            Ok(Err(e)) => return link.failure(e).await,
-            Err(_) => return Failure::Offline("the machine daemon did not answer".into()),
+        if link_supports(link.protocol, method::UPLINK_REGISTER) {
+            match tokio::time::timeout(
+                settings.health_timeout,
+                client.call::<_, Value>(method::UPLINK_REGISTER, Value::Null),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {}
+                // An older daemon kept for its sessions does not forward, so it needs no uplink.
+                Ok(Err(ClientError::Rpc(e))) if e.kind() == ErrorKind::MethodNotFound => {}
+                Ok(Err(e)) => return link.failure(e).await,
+                Err(_) => return Failure::Offline("the machine daemon did not answer".into()),
+            }
         }
         match tokio::time::timeout(
             settings.health_timeout,
@@ -276,12 +409,32 @@ async fn connect(shared: &Arc<Shared>, backoff: &mut Duration) -> Failure {
             state.machine.status.error = None;
             state.machine.status.update_available = update_available;
             state.machine.status.agents = hello.agents;
+            state.machine.status.protocol = Some(link.protocol);
             state.client = Some(client.clone());
+            state.finish_update(if update_available {
+                Err("the machine daemon still runs an older build".into())
+            } else {
+                Ok(())
+            });
         });
         // After Ready, so a queued forwarded call that calls back down the pipe finds the client.
         pump.spawn(super::peer::serve(shared.clone(), client, requests));
-        return link.supervise(settings).await;
+        match link.supervise(shared).await {
+            Supervised::Lost(failure) => return failure,
+            Supervised::Restarting(installed) => {
+                shared.set(MachineState::Connecting, None);
+                key = installed;
+                upgraded = true;
+                lock(&shared.state).cleanup_pending = true;
+            }
+        }
     }
+}
+
+enum Supervised {
+    Lost(Failure),
+    /// Update now stopped the machine daemon; reconnect onto install `key`.
+    Restarting(String),
 }
 
 /// Probes, installs and says `hello` once over a throwaway connection; returns the platform.
@@ -331,14 +484,11 @@ struct Link {
     child: Child,
     client: Arc<Client>,
     stderr: JoinHandle<Option<String>>,
+    protocol: u32,
 }
 
 impl Link {
-    async fn open(
-        settings: &Settings,
-        destination: &str,
-        key: &str,
-    ) -> Result<(Self, HelloResult), Failure> {
+    fn spawn(settings: &Settings, destination: &str, key: &str) -> Result<Self, Failure> {
         let mut child = Ssh::new(settings.ssh_bin.clone(), destination.to_string())
             .command(ATTACH, &[key])
             .stdin(Stdio::piped())
@@ -351,33 +501,77 @@ impl Link {
         else {
             return Err(Failure::Offline("ssh has no stdio".into()));
         };
-        let link = Link {
+        Ok(Link {
             child,
             client: Arc::new(Client::new(stdout, stdin)),
             stderr: tokio::spawn(last_line(stderr)),
-        };
-        match tokio::time::timeout(settings.open_deadline, hello(&link.client)).await {
+            protocol: PROTO_VERSION,
+        })
+    }
+
+    async fn open(
+        settings: &Settings,
+        destination: &str,
+        key: &str,
+    ) -> Result<(Self, HelloResult), Failure> {
+        let mut link = Self::spawn(settings, destination, key)?;
+        let opened = tokio::time::timeout(settings.open_deadline, async {
+            match hello(&link.client, PROTO_VERSION).await {
+                Err(ClientError::Rpc(e)) if e.kind() == ErrorKind::IncompatibleVersion => {
+                    link.protocol = PROTO_VERSION_PREVIOUS;
+                    hello(&link.client, PROTO_VERSION_PREVIOUS).await
+                }
+                result => result,
+            }
+        })
+        .await;
+        match opened {
             Ok(Ok(hello)) => Ok((link, hello)),
+            Ok(Err(ClientError::Rpc(e))) if e.kind() == ErrorKind::IncompatibleVersion => {
+                Err(Failure::Blocked(INCOMPATIBLE.into()))
+            }
             Ok(Err(e)) => Err(link.failure(e).await),
             Err(_) => Err(Failure::Offline("the machine daemon did not answer".into())),
         }
     }
 
-    async fn supervise(mut self, settings: &Settings) -> Failure {
+    async fn supervise(mut self, shared: &Shared) -> Supervised {
+        let settings = &shared.settings;
         loop {
             let healthy = tokio::select! {
                 _ = self.child.wait() => None,
+                _ = shared.update_requested.notified() => Some(None),
                 _ = tokio::time::sleep(settings.health_interval) => {
-                    Some(tokio::time::timeout(settings.health_timeout, hello(&self.client)).await)
+                    Some(Some(tokio::time::timeout(settings.health_timeout, hello(&self.client, self.protocol)).await))
                 }
             };
             match healthy {
-                Some(Ok(Ok(_))) => {}
-                Some(Ok(Err(e))) => return self.failure(e).await,
-                Some(Err(_)) => return Failure::Offline("health check timed out".into()),
-                None => return self.failure(ClientError::Closed).await,
+                Some(None) if shared.updating() => match install_current(shared).await {
+                    Ok(key) => {
+                        self.shutdown(settings).await;
+                        return Supervised::Restarting(key);
+                    }
+                    // The old daemon keeps running.
+                    Err(failure) => shared.finish_update(Err(failure.message())),
+                },
+                Some(None) | Some(Some(Ok(Ok(_)))) => {}
+                Some(Some(Ok(Err(e)))) => return Supervised::Lost(self.failure(e).await),
+                Some(Some(Err(_))) => {
+                    return Supervised::Lost(Failure::Offline("health check timed out".into()))
+                }
+                None => return Supervised::Lost(self.failure(ClientError::Closed).await),
             }
         }
+    }
+
+    /// Returns once `attach` has exited, which it does when the daemon closes its socket.
+    async fn shutdown(mut self, settings: &Settings) {
+        let _ = tokio::time::timeout(
+            settings.health_timeout,
+            self.client.call::<_, Value>(method::SHUTDOWN, Value::Null),
+        )
+        .await;
+        let _ = tokio::time::timeout(settings.open_deadline, self.child.wait()).await;
     }
 
     /// Prefers ssh's own last stderr line, which says why the connection went away.
@@ -399,12 +593,12 @@ impl Link {
     }
 }
 
-async fn hello(client: &Client) -> Result<HelloResult, ClientError> {
+async fn hello(client: &Client, protocol: u32) -> Result<HelloResult, ClientError> {
     client
         .call(
             method::HELLO,
             HelloParams {
-                proto_version: PROTO_VERSION,
+                proto_version: protocol,
                 client_kind: ClientKind::Cli,
             },
         )

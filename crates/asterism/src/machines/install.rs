@@ -32,7 +32,10 @@ pub fn default_bins_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("ASTERISM_MACHINE_BINS") {
         return Some(dir.into());
     }
-    let exe = std::env::current_exe().ok()?;
+    bins_dir_for(&std::env::current_exe().ok()?)
+}
+
+fn bins_dir_for(exe: &Path) -> Option<PathBuf> {
     let dir = exe.parent()?.parent()?.join("Resources").join("machine");
     dir.is_dir().then_some(dir)
 }
@@ -210,6 +213,18 @@ pub async fn ensure_installed(
     Ok(RemoteInstall { key })
 }
 
+/// Removes every install under `bin/` except `key`; only safe once no daemon or session runs from them.
+pub async fn remove_other_installs(
+    ssh: &Ssh,
+    key: &str,
+    deadline: Duration,
+) -> Result<(), InstallError> {
+    let script = r#"cd "$HOME/.asterism-machine/bin" && for d in *; do [ "$d" = "$1" ] || rm -rf "./$d"; done"#;
+    run(ssh, script, &[key], None, Some(deadline))
+        .await
+        .map(drop)
+}
+
 /// Hashes are cached per directory and recomputed only when a binary's size or mtime changes, e.g. after a dev rebuild.
 fn local_hashes(dir: &Path) -> Result<Vec<String>, InstallError> {
     type Stamps = Vec<(SystemTime, u64)>;
@@ -286,7 +301,18 @@ async fn run(
 
 #[cfg(test)]
 mod tests {
-    use super::quote;
+    use super::{bins_dir_for, quote};
+
+    #[test]
+    fn default_bins_dir_finds_bundle_layout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let contents = tmp.path().join("asterism.app/Contents");
+        std::fs::create_dir_all(contents.join("MacOS")).unwrap();
+        std::fs::create_dir_all(contents.join("Resources/machine/linux-x86_64")).unwrap();
+        let exe = contents.join("MacOS/asterismd");
+        assert_eq!(bins_dir_for(&exe), Some(contents.join("Resources/machine")));
+        assert_eq!(bins_dir_for(&tmp.path().join("bin/asterismd")), None);
+    }
 
     #[test]
     fn quote_survives_quotes_backslashes_and_spaces() {

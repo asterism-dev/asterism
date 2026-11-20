@@ -35,6 +35,8 @@ const { target_directory: target } = JSON.parse(
   }).toString(),
 );
 mkdirSync(binaries, { recursive: true });
+// Tauri checks bundle resources at compile time; release CI fills this with the machine binaries.
+mkdirSync(join(root, 'apps', 'desktop', 'src-tauri', 'machine'), { recursive: true });
 for (const bin of [
   'asterismd',
   'asterism',

@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::{
-    method, ActivityKind, AgentConfigSetParams, Event, IssueRef, PluginSetSettingsParams, Project,
-    ProjectEnsureParams, Session, SessionKind, SessionListParams, SessionStartParams,
-    SessionStatus, SessionWaitParams, SessionWaitResult, Task, TaskCreateParams, TaskCreateResult,
-    TaskDeleteParams,
+    method, ActivityKind, AgentConfigSetParams, Event, IssueRef, PluginNameParams,
+    PluginSetSettingsParams, PluginSettings, Project, ProjectEnsureParams, Session, SessionKind,
+    SessionListParams, SessionStartParams, SessionStatus, SessionWaitParams, SessionWaitResult,
+    Task, TaskCreateParams, TaskCreateResult, TaskDeleteParams,
 };
 
 use super::{activity, issue_name, not_found, slugify, Daemon};
@@ -38,8 +38,20 @@ impl Daemon {
                 )
             })?
             .plugin;
+        let hub_schema = self.plugin_schema(&plugin)?;
+        let hub_values = settings::non_secret_values(self.paths(), &plugin, &hub_schema)?;
+        let machine: PluginSettings = self
+            .machines()
+            .call(
+                machine_id,
+                method::PLUGIN_SETTINGS,
+                PluginNameParams {
+                    name: plugin.clone(),
+                },
+            )
+            .await?;
         let values: BTreeMap<String, Value> =
-            settings::non_secret_values(self.paths(), &plugin, &self.plugin_schema(&plugin)?)?
+            settings::settings_update(&hub_values, &hub_schema, &machine.schema)
                 .into_iter()
                 .collect();
         let params = AgentConfigSetParams {

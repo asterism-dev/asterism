@@ -198,8 +198,17 @@ async fn events_after_removed(
 
 /// Starts a daemon in the machine's home from outside `bin/<key>/`, as an older install would.
 fn start_foreign_daemon(fake: &FakeSsh, role: &str) -> std::process::Child {
+    start_foreign_daemon_with(fake, role, &[])
+}
+
+fn start_foreign_daemon_with(
+    fake: &FakeSsh,
+    role: &str,
+    env: &[(&str, String)],
+) -> std::process::Child {
     let child = std::process::Command::new(env!("CARGO_BIN_EXE_asterismd"))
         .env_clear()
+        .envs(env.iter().map(|(k, v)| (k, v)))
         .env("HOME", fake.home())
         .env("ASTERISM_HOME", fake.machine_home())
         .env("ASTERISM_ROLE", role)
@@ -723,6 +732,128 @@ async fn machine_with_active_tasks_cannot_be_removed() {
         .await;
 }
 
+async fn project_in(d: &D, repo: &Path) -> Project {
+    common::init_repo(repo);
+    d.call(
+        method::PROJECT_ADD,
+        ProjectAddParams {
+            path: repo.display().to_string(),
+            workspace_id: None,
+        },
+    )
+    .await
+}
+
+fn linked_task(d: &D, project_id: i64, machine_id: i64, remote_id: i64) -> i64 {
+    let store = hub_store(d);
+    let id = store.insert_task(project_id, "t", None, "").unwrap();
+    store.set_task_remote(id, machine_id, remote_id).unwrap();
+    id
+}
+
+async fn machine_gone_with_tasks() -> (D, FakeSsh, Vec<i64>) {
+    let (d, fake) = start_with_fake_ssh().await;
+    fake.fail_with("ssh: Could not resolve hostname vm", 255);
+    let m = add_machine(&d, "vm").await;
+    let repo = tempfile::tempdir().unwrap();
+    let project = project_in(&d, repo.path()).await;
+    let ids = vec![
+        linked_task(&d, project.id, m.id, 1),
+        linked_task(&d, project.id, m.id, 2),
+    ];
+    let listed: Vec<Task> = d
+        .call(method::MACHINE_TASKS, MachineIdParams { machine_id: m.id })
+        .await;
+    assert_eq!(listed.iter().map(|t| t.id).collect::<Vec<_>>(), ids);
+    let events = d.events();
+    let calls = fake.invocations();
+    let forgotten = tokio::time::timeout(
+        Duration::from_secs(1),
+        d.client.call::<_, MachineForgetResult>(
+            method::MACHINE_FORGET,
+            MachineIdParams { machine_id: m.id },
+        ),
+    )
+    .await
+    .expect("forget must not wait on the machine")
+    .unwrap();
+    assert_eq!(forgotten.archived_task_ids, ids);
+    let after = events_after_removed(events, m.id, Duration::from_millis(300)).await;
+    assert!(
+        !after
+            .iter()
+            .any(|e| matches!(e, Event::MachineRemoved { machine_id } if *machine_id == m.id)),
+        "machine.removed sent once"
+    );
+    assert!(
+        fake.invocations() <= calls + 1,
+        "ssh retry in flight at most"
+    );
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let after = fake.invocations();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(fake.invocations(), after);
+    (d, fake, ids)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn forget_offline_machine_archives_its_tasks() {
+    let (d, _fake, ids) = machine_gone_with_tasks().await;
+    let machines: Vec<Machine> = d.call(method::MACHINE_LIST, Value::Null).await;
+    assert!(machines.is_empty());
+    let store = hub_store(&d);
+    for id in ids {
+        assert!(store.task(id).unwrap().unwrap().archived);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn forgotten_machine_tasks_can_be_deleted_not_restored() {
+    let (d, _fake, ids) = machine_gone_with_tasks().await;
+    let err = d
+        .client
+        .call::<_, Task>(method::TASK_RESTORE, TaskIdParams { task_id: ids[0] })
+        .await
+        .unwrap_err();
+    match err {
+        ClientError::Rpc(e) => {
+            assert_eq!(e.kind(), ErrorKind::NotFound);
+            assert!(e.message.contains("machine is gone"), "{}", e.message);
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(hub_store(&d).task(ids[0]).unwrap().unwrap().archived);
+    let _: TaskDeleteResult = d
+        .call(
+            method::TASK_DELETE,
+            TaskDeleteParams {
+                task_id: ids[0],
+                delete_branch: false,
+            },
+        )
+        .await;
+    assert!(hub_store(&d).task(ids[0]).unwrap().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn archive_with_machine_gone_archives_locally() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let repo = tempfile::tempdir().unwrap();
+    let project = project_in(&d, repo.path()).await;
+    let task = linked_task(&d, project.id, 99, 1);
+    let archived: Task = d
+        .call(
+            method::TASK_ARCHIVE,
+            TaskArchiveParams {
+                task_id: task,
+                force: false,
+            },
+        )
+        .await;
+    assert!(archived.archived);
+    assert_eq!(fake.invocations(), 0);
+}
+
 /// A `file://` origin under an owner, as `project.ensure` needs.
 fn bare_origin(dir: &Path) -> String {
     let work = dir.join("work");
@@ -1120,6 +1251,87 @@ async fn idle_daemon_without_uplink_is_replaced() {
     assert!(exited, "the old daemon was not replaced");
     assert!(eventually_state(&d, m.id, MachineState::Ready).await);
     assert!(!machine(&d, m.id).await.status.update_available);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn previous_protocol_machine_is_ready_with_update() {
+    let (d, fake) = start_with_fake_ssh().await;
+    fake.set_env(
+        "ASTERISM_TEST_PROTO_VERSION",
+        &(PROTO_VERSION - 1).to_string(),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let (m, project_id, _) = machine_and_project(&d, dir.path()).await;
+    let created: TaskCreateResult = d
+        .call(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id,
+                title: "Remote".into(),
+                machine_id: Some(m.id),
+                ..Default::default()
+            },
+        )
+        .await;
+    let task = created.task;
+    start_remote_shell(&d, task.id).await;
+    let status = machine(&d, m.id).await.status;
+    assert_eq!(status.state, MachineState::Ready);
+    assert!(status.update_available);
+    assert_eq!(status.protocol, Some(PROTO_VERSION - 1));
+    std::fs::write(
+        Path::new(&task.worktree_path).join("README.md"),
+        "hello\nfrom-machine\n",
+    )
+    .unwrap();
+    let diff: TaskDiffResult = d
+        .call(method::TASK_DIFF, TaskIdParams { task_id: task.id })
+        .await;
+    assert!(diff.patch.contains("+from-machine"), "{}", diff.patch);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn older_machine_is_blocked_incompatible() {
+    let (d, fake) = start_with_fake_ssh().await;
+    fake.set_env(
+        "ASTERISM_TEST_PROTO_VERSION",
+        &(PROTO_VERSION - 2).to_string(),
+    );
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Blocked).await);
+    let status = machine(&d, m.id).await.status;
+    assert!(
+        status
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("incompatible version"),
+        "{:?}",
+        status.error
+    );
+    let calls = fake.invocations();
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    assert_eq!(fake.invocations(), calls);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn idle_previous_protocol_machine_is_upgraded_silently() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let mut old = start_foreign_daemon_with(
+        &fake,
+        "machine",
+        &[(
+            "ASTERISM_TEST_PROTO_VERSION",
+            (PROTO_VERSION - 1).to_string(),
+        )],
+    );
+    let m = add_machine(&d, "vm").await;
+    let exited = common::eventually_within(DEADLINE, || old.try_wait().unwrap().is_some()).await;
+    assert!(exited, "the old daemon was not replaced");
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    let status = machine(&d, m.id).await.status;
+    assert!(!status.update_available);
+    assert_eq!(status.protocol, Some(PROTO_VERSION));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2172,6 +2384,39 @@ async fn machine_status_lists_machine_agents() {
     );
 }
 
+#[tokio::test]
+async fn cleared_plugin_setting_is_reset_on_machine() {
+    let (daemon, d, fake) = hub(DEADLINE).await;
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+
+    let set = |value: Value| PluginSetSettingsParams {
+        name: "claude".into(),
+        values: [("trust_workspaces".to_string(), value)].into(),
+    };
+    let () = d
+        .call(method::PLUGIN_SET_SETTINGS, set(Value::Bool(true)))
+        .await;
+    daemon.push_agent_settings(m.id, "claude").await.unwrap();
+    let () = d.call(method::PLUGIN_SET_SETTINGS, set(Value::Null)).await;
+    daemon.push_agent_settings(m.id, "claude").await.unwrap();
+
+    let client = machine_client(&fake).await;
+    let settings: PluginSettings = client
+        .call(
+            method::PLUGIN_SETTINGS,
+            PluginNameParams {
+                name: "claude".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        settings.values.get("trust_workspaces"),
+        Some(&Value::Bool(true))
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn agent_settings_are_pushed_to_machine() {
     let (daemon, d, fake) = hub(DEADLINE).await;
@@ -2506,6 +2751,7 @@ async fn machine_peer_denies_forbidden_methods() {
         method::SHUTDOWN,
         method::PLUGIN_SET_SETTINGS,
         method::PROJECT_ADD,
+        method::PROJECT_SET_DEFAULT_MACHINE,
         method::SESSION_HOOK,
         method::AGENT_CONFIG_SET,
     ] {
@@ -3013,6 +3259,7 @@ async fn project_commands_are_refused_inside_a_remote_session() {
         method::PROJECT_ADD,
         method::PROJECT_REMOVE,
         method::PROJECT_UPDATE,
+        method::PROJECT_SET_DEFAULT_MACHINE,
         method::PROJECT_WORKTREES,
     ] {
         let err = rpc_error(cli.call::<_, Value>(name, params.clone()).await);
@@ -3043,4 +3290,388 @@ async fn uplink_register_forbidden_on_node() {
             .await,
     );
     assert_eq!(err.kind(), ErrorKind::Forbidden);
+}
+
+/// Makes the hub's bundled build differ from the one the machine runs, as an app update does.
+fn new_build(fake: &FakeSsh) {
+    let plugin = fake
+        .bins_dir()
+        .join(host_platform())
+        .join("asterism-plugin-claude");
+    std::fs::remove_file(&plugin).unwrap();
+    write_script(
+        &plugin,
+        &format!(
+            "exec '{}' \"$@\"\n",
+            env!("CARGO_BIN_EXE_asterism-plugin-claude")
+        ),
+    );
+}
+
+fn installed_keys(fake: &FakeSsh) -> Vec<String> {
+    let mut keys: Vec<String> = std::fs::read_dir(fake.machine_home().join("bin"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    keys.sort();
+    keys
+}
+
+async fn eventually_update_available(d: &D, id: i64) -> bool {
+    let deadline = Instant::now() + DEADLINE;
+    while Instant::now() < deadline {
+        let status = machine(d, id).await.status;
+        if status.state == MachineState::Ready && status.update_available {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    false
+}
+
+/// A remote task with a shell and an agent whose stop hook recorded `ref-1`; returns the fake claude's argv log.
+async fn task_with_shell_and_agent(
+    d: &D,
+    fake: &FakeSsh,
+    dir: &Path,
+) -> (Machine, Task, Session, Session, PathBuf) {
+    let log = machine_login_path(fake, &dir.join("login"), true);
+    let (m, task, _worktree) = remote_task(d, fake, dir).await;
+    let shell = start_remote_shell(d, task.id).await;
+    let agent = start_remote_agent(d, task.id).await;
+    assert!(common::eventually_within(DEADLINE, || machine_agent_ref(fake).is_some()).await);
+    (m, task, shell, agent, log)
+}
+
+fn session_ref(session: &Session, task: &Task) -> MachineSessionRef {
+    MachineSessionRef {
+        session_id: session.id,
+        task_id: task.id,
+        task_title: task.title.clone(),
+        kind: session.kind.clone(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn update_preview_lists_resume_and_end() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, task, shell, agent, _log) = task_with_shell_and_agent(&d, &fake, dir.path()).await;
+
+    let preview: MachineUpdatePreview = d
+        .call(
+            method::MACHINE_UPDATE_PREVIEW,
+            MachineIdParams { machine_id: m.id },
+        )
+        .await;
+
+    assert_eq!(preview.resume, vec![session_ref(&agent, &task)]);
+    assert!(
+        preview.end.contains(&session_ref(&shell, &task)),
+        "{preview:?}"
+    );
+    // `remote_task` also started a shell directly on the machine, which the hub does not mirror.
+    assert!(preview.end.iter().any(|s| s.session_id == 0), "{preview:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn update_now_restarts_and_resumes() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, _task, shell, agent, log) = task_with_shell_and_agent(&d, &fake, dir.path()).await;
+    let old_keys = installed_keys(&fake);
+    new_build(&fake);
+    fake.drop_link();
+    assert!(eventually_update_available(&d, m.id).await);
+
+    let () = d
+        .call(method::MACHINE_UPDATE, MachineIdParams { machine_id: m.id })
+        .await;
+
+    let status = machine(&d, m.id).await.status;
+    assert_eq!(status.state, MachineState::Ready);
+    assert!(!status.update_available);
+    assert!(
+        common::eventually_within(DEADLINE, || launches(&log)
+            .iter()
+            .any(|l| l.ends_with("--resume ref-1")))
+        .await,
+        "{:?}",
+        launches(&log)
+    );
+    assert!(
+        common::eventually_within(DEADLINE, || session_status(&d, shell.id)
+            == SessionStatus::Exited)
+        .await
+    );
+    assert_ne!(session_status(&d, agent.id), SessionStatus::Exited);
+    let keys = installed_keys(&fake);
+    assert_eq!(keys.len(), 1, "{keys:?}");
+    assert!(!old_keys.contains(&keys[0]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn update_now_on_incompatible_machine() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let mut old = start_foreign_daemon_with(
+        &fake,
+        "machine",
+        &[(
+            "ASTERISM_TEST_PROTO_VERSION",
+            (PROTO_VERSION - 2).to_string(),
+        )],
+    );
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Blocked).await);
+
+    let () = d
+        .call(method::MACHINE_UPDATE, MachineIdParams { machine_id: m.id })
+        .await;
+
+    assert!(old.wait().unwrap().success());
+    let status = machine(&d, m.id).await.status;
+    assert_eq!(status.state, MachineState::Ready);
+    assert!(!status.update_available);
+    assert_eq!(status.protocol, Some(PROTO_VERSION));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn update_now_on_blocked_machine_removes_old_keys() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    fake.set_env(
+        "ASTERISM_TEST_PROTO_VERSION",
+        &(PROTO_VERSION - 2).to_string(),
+    );
+    new_build(&fake);
+    fake.stop_daemon();
+    assert!(eventually_state(&d, m.id, MachineState::Blocked).await);
+    assert_eq!(installed_keys(&fake).len(), 2);
+    fake.set_env("ASTERISM_TEST_PROTO_VERSION", &PROTO_VERSION.to_string());
+
+    let () = d
+        .call(method::MACHINE_UPDATE, MachineIdParams { machine_id: m.id })
+        .await;
+
+    assert_eq!(machine(&d, m.id).await.status.state, MachineState::Ready);
+    let removed = common::eventually_within(DEADLINE, || installed_keys(&fake).len() == 1).await;
+    assert!(removed, "{:?}", installed_keys(&fake));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn old_keys_removed_after_restart() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    let old_keys = installed_keys(&fake);
+    new_build(&fake);
+    fake.drop_link();
+
+    // Idle, so the hub restarts the machine daemon onto the new key by itself.
+    let replaced = common::eventually_within(DEADLINE, || {
+        let keys = installed_keys(&fake);
+        keys.len() == 1 && !old_keys.contains(&keys[0])
+    })
+    .await;
+    assert!(replaced, "{:?}", installed_keys(&fake));
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+    assert!(!machine(&d, m.id).await.status.update_available);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn update_preview_on_blocked_machine() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, task, _shell, agent, _log) = task_with_shell_and_agent(&d, &fake, dir.path()).await;
+    // The restarted daemon resumes the agent but is too old for the hub.
+    fake.set_env(
+        "ASTERISM_TEST_PROTO_VERSION",
+        &(PROTO_VERSION - 2).to_string(),
+    );
+    fake.stop_daemon();
+    assert!(eventually_state(&d, m.id, MachineState::Blocked).await);
+
+    let preview: MachineUpdatePreview = d
+        .call(
+            method::MACHINE_UPDATE_PREVIEW,
+            MachineIdParams { machine_id: m.id },
+        )
+        .await;
+
+    assert!(preview.exact, "{preview:?}");
+    assert_eq!(preview.resume, vec![session_ref(&agent, &task)]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn update_preview_of_unreachable_machine_uses_mirrors() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, task, shell, agent, _log) = task_with_shell_and_agent(&d, &fake, dir.path()).await;
+    fake.fail_with("ssh: connect to host vm port 22: Connection refused", 255);
+    fake.drop_link();
+    assert!(eventually_state(&d, m.id, MachineState::Offline).await);
+
+    let preview: MachineUpdatePreview = d
+        .call(
+            method::MACHINE_UPDATE_PREVIEW,
+            MachineIdParams { machine_id: m.id },
+        )
+        .await;
+
+    assert!(!preview.exact);
+    assert!(preview.resume.is_empty(), "{preview:?}");
+    assert!(
+        preview.end.contains(&session_ref(&shell, &task)),
+        "{preview:?}"
+    );
+    assert!(
+        preview.end.contains(&session_ref(&agent, &task)),
+        "{preview:?}"
+    );
+    fake.recover();
+}
+
+async fn set_default_machine(d: &D, project_id: i64, machine_id: Option<i64>) -> Project {
+    d.call(
+        method::PROJECT_SET_DEFAULT_MACHINE,
+        ProjectSetDefaultMachineParams {
+            project_id,
+            machine_id,
+        },
+    )
+    .await
+}
+
+async fn expect_default_cleared(events: &mut UnboundedReceiver<Event>, project_id: i64) {
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let Event::ProjectChanged(p) = event {
+            if p.id == project_id && p.default_machine_id.is_none() {
+                return;
+            }
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn default_machine_is_set_and_cleared() {
+    let (d, fake) = start_with_fake_ssh().await;
+    fake.hang();
+    let m = add_machine(&d, "vm").await;
+    let repo = tempfile::tempdir().unwrap();
+    let project = project_in(&d, repo.path()).await;
+    assert_eq!(project.default_machine_id, None);
+
+    let set = set_default_machine(&d, project.id, Some(m.id)).await;
+    assert_eq!(set.default_machine_id, Some(m.id));
+    let listed: Vec<Project> = d.call(method::PROJECT_LIST, Value::Null).await;
+    assert_eq!(listed[0].default_machine_id, Some(m.id));
+
+    let cleared = set_default_machine(&d, project.id, None).await;
+    assert_eq!(cleared.default_machine_id, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn default_machine_must_exist() {
+    let (d, fake) = start_with_fake_ssh().await;
+    fake.hang();
+    let m = add_machine(&d, "vm").await;
+    let repo = tempfile::tempdir().unwrap();
+    let project = project_in(&d, repo.path()).await;
+
+    let e = rpc_error(
+        d.client
+            .call::<_, Project>(
+                method::PROJECT_SET_DEFAULT_MACHINE,
+                ProjectSetDefaultMachineParams {
+                    project_id: project.id,
+                    machine_id: Some(m.id + 99),
+                },
+            )
+            .await,
+    );
+    assert_eq!(e.kind(), ErrorKind::NotFound);
+    let e = rpc_error(
+        d.client
+            .call::<_, Project>(
+                method::PROJECT_SET_DEFAULT_MACHINE,
+                ProjectSetDefaultMachineParams {
+                    project_id: project.id + 99,
+                    machine_id: Some(m.id),
+                },
+            )
+            .await,
+    );
+    assert_eq!(e.kind(), ErrorKind::NotFound);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn removing_a_machine_clears_the_default() {
+    let (d, fake) = start_with_fake_ssh().await;
+    fake.hang();
+    let m = add_machine(&d, "vm").await;
+    let repo = tempfile::tempdir().unwrap();
+    let project = project_in(&d, repo.path()).await;
+    set_default_machine(&d, project.id, Some(m.id)).await;
+    let mut events = d.events();
+
+    d.call::<_, Value>(method::MACHINE_REMOVE, MachineIdParams { machine_id: m.id })
+        .await;
+    expect_default_cleared(&mut events, project.id).await;
+    let listed: Vec<Project> = d.call(method::PROJECT_LIST, Value::Null).await;
+    assert_eq!(listed[0].default_machine_id, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn forgetting_a_machine_clears_the_default() {
+    let (d, fake) = start_with_fake_ssh().await;
+    fake.fail_with("ssh: Could not resolve hostname vm", 255);
+    let m = add_machine(&d, "vm").await;
+    let repo = tempfile::tempdir().unwrap();
+    let project = project_in(&d, repo.path()).await;
+    set_default_machine(&d, project.id, Some(m.id)).await;
+    let mut events = d.events();
+
+    let _: MachineForgetResult = d
+        .call(method::MACHINE_FORGET, MachineIdParams { machine_id: m.id })
+        .await;
+    expect_default_cleared(&mut events, project.id).await;
+    let listed: Vec<Project> = d.call(method::PROJECT_LIST, Value::Null).await;
+    assert_eq!(listed[0].default_machine_id, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn task_on_machine_without_agents_gets_a_shell() {
+    let (d, fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    machine_login_path(&fake, &dir.path().join("login"), false);
+    let (m, project_id, _origin) = machine_and_project(&d, dir.path()).await;
+    assert!(machine(&d, m.id)
+        .await
+        .status
+        .agents
+        .iter()
+        .all(|a| !a.available));
+
+    let created: TaskCreateResult = d
+        .call(
+            method::TASK_CREATE,
+            TaskCreateParams {
+                project_id,
+                title: "shell only".into(),
+                machine_id: Some(m.id),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(created.session.is_none());
+    let session = start_remote_shell(&d, created.task.id).await;
+    let (_, remote_task_id) = hub_store(&d).task_remote(created.task.id).unwrap().unwrap();
+    let on_machine = machine_sessions(&fake, remote_task_id).await;
+    assert_eq!(on_machine.len(), 1);
+    assert!(hub_store(&d).session_remote(session.id).unwrap().is_some());
 }

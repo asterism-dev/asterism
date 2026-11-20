@@ -8,7 +8,10 @@ use std::sync::{Arc, Mutex, Weak};
 
 use asterism_proto::client::Client;
 use asterism_proto::rpc::ErrorKind;
-use asterism_proto::types::{Event, Machine, MachineStatus, MachineTestResult, Role};
+use asterism_proto::types::{
+    method, Event, Machine, MachineForgetResult, MachineSessionRef, MachineStatus,
+    MachineTestResult, MachineUpdatePreview, Role, Session, SessionListParams, SessionStatus, Task,
+};
 use tokio::task::JoinHandle;
 
 use crate::daemon::Daemon;
@@ -111,6 +114,38 @@ impl Machines {
         m
     }
 
+    fn remove_row_and_connection(&self, id: i64) -> Result<()> {
+        let daemon = self.daemon()?;
+        let cleared = {
+            let store = daemon.store();
+            let pointing: Vec<i64> = store
+                .projects()?
+                .into_iter()
+                .filter(|p| p.default_machine_id == Some(id))
+                .map(|p| p.id)
+                .collect();
+            if !store.remove_machine(id)? {
+                return Err(Error::new(
+                    ErrorKind::NotFound,
+                    format!("no machine with id {id}"),
+                ));
+            }
+            pointing
+                .into_iter()
+                .filter_map(|p| store.project(p).transpose())
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for project in cleared {
+            daemon.emit(Event::ProjectChanged(project));
+        }
+        // Aborting drops the task's ssh children, which are killed on drop.
+        if let Some(live) = lock(&self.live).remove(&id) {
+            live.shared.close();
+            live.task.abort();
+        }
+        Ok(())
+    }
+
     pub fn remove(&self, id: i64) -> Result<()> {
         let (active, name) = {
             let daemon = self.daemon()?;
@@ -126,22 +161,50 @@ impl Machines {
                 format!("machine {name} still has {} active tasks", active.len()),
             ));
         }
-        if !self.daemon()?.store().remove_machine(id)? {
-            return Err(Error::new(
-                ErrorKind::NotFound,
-                format!("no machine with id {id}"),
-            ));
-        }
-        // Aborting drops the task's ssh children, which are killed on drop.
-        if let Some(live) = lock(&self.live).remove(&id) {
-            live.shared.close();
-            live.task.abort();
-        }
+        self.remove_row_and_connection(id)?;
         let _ = self
             .settings
             .events
             .send(Event::MachineRemoved { machine_id: id });
         Ok(())
+    }
+
+    /// Removes a machine that is gone for good: its active tasks are archived on the hub without asking it.
+    pub async fn forget(&self, id: i64) -> Result<MachineForgetResult> {
+        let daemon = self.daemon()?;
+        let active = {
+            let store = daemon.store();
+            if store.machine(id)?.is_none() {
+                return Err(Error::new(
+                    ErrorKind::NotFound,
+                    format!("no machine with id {id}"),
+                ));
+            }
+            store.machine_active_tasks(id)?
+        };
+        self.remove_row_and_connection(id)?;
+        let _ = self
+            .settings
+            .events
+            .send(Event::MachineRemoved { machine_id: id });
+        // With the row gone, archiving finds no machine to ask and archives locally.
+        for task_id in &active {
+            daemon.archive_task(*task_id).await?;
+        }
+        Ok(MachineForgetResult {
+            archived_task_ids: active,
+        })
+    }
+
+    pub fn tasks(&self, id: i64) -> Result<Vec<Task>> {
+        let daemon = self.daemon()?;
+        let store = daemon.store();
+        store
+            .machine_active_tasks(id)?
+            .into_iter()
+            .filter_map(|task_id| store.task(task_id).transpose())
+            .collect::<std::result::Result<_, _>>()
+            .map_err(Into::into)
     }
 
     pub fn retry(&self, id: i64) -> Result<()> {
@@ -167,10 +230,100 @@ impl Machines {
         Ok(MachineTestResult { platform })
     }
 
+    /// Which of the machine's running sessions an update resumes and which it ends.
+    pub async fn update_preview(&self, id: i64) -> Result<MachineUpdatePreview> {
+        self.require_node()?;
+        let shared = self.shared(id)?;
+        let listed = match self
+            .call::<_, Vec<Session>>(
+                id,
+                method::SESSION_LIST,
+                SessionListParams { task_id: None },
+            )
+            .await
+        {
+            Ok(sessions) => Some(sessions),
+            Err(_) => conn::sessions_without_hello(&shared).await,
+        };
+        let daemon = self.daemon()?;
+        let store = daemon.store();
+        let mut entries = Vec::new();
+        let Some(sessions) = listed else {
+            // Unreachable: the hub's own mirrors, with unknown resumability.
+            for task_id in store.machine_active_tasks(id)? {
+                let Some(task) = store.task(task_id)? else {
+                    continue;
+                };
+                for stored in store.sessions(Some(task_id))? {
+                    if running(stored.session.status) {
+                        let entry = MachineSessionRef {
+                            session_id: stored.session.id,
+                            task_id,
+                            task_title: task.title.clone(),
+                            kind: stored.session.kind,
+                        };
+                        entries.push((entry, None));
+                    }
+                }
+            }
+            return Ok(split_preview(entries, false));
+        };
+        for session in sessions {
+            if !running(session.status) {
+                continue;
+            }
+            let task = match store.task_by_remote(id, session.task_id)? {
+                Some(task_id) => store.task(task_id)?,
+                None => None,
+            };
+            let entry = MachineSessionRef {
+                session_id: store.session_by_remote(id, session.id)?.unwrap_or(0),
+                task_id: task.as_ref().map_or(0, |t| t.id),
+                task_title: task.map(|t| t.title).unwrap_or_default(),
+                kind: session.kind,
+            };
+            entries.push((entry, session.resumable));
+        }
+        Ok(split_preview(entries, true))
+    }
+
+    /// Restarts the machine daemon on the current build; returns once the machine is ready on it.
+    pub async fn update(&self, id: i64) -> Result<()> {
+        self.require_node()?;
+        self.shared(id)?.request_update().await
+    }
+
     /// The machine's connection while it is ready.
     pub fn client(&self, id: i64) -> Option<Arc<Client>> {
         lock(&self.live).get(&id)?.shared.client()
     }
+}
+
+/// A hibernated session is not running, so a restart neither resumes nor ends it.
+fn running(status: SessionStatus) -> bool {
+    !matches!(status, SessionStatus::Exited | SessionStatus::Hibernated)
+}
+
+/// Sessions of unknown resumability are listed under `end`, which makes the preview inexact.
+fn split_preview(
+    entries: Vec<(MachineSessionRef, Option<bool>)>,
+    from_machine: bool,
+) -> MachineUpdatePreview {
+    let mut preview = MachineUpdatePreview {
+        exact: from_machine,
+        ..Default::default()
+    };
+    for (entry, resumable) in entries {
+        match resumable {
+            Some(true) => preview.resume.push(entry),
+            Some(false) => preview.end.push(entry),
+            None => {
+                preview.exact = false;
+                preview.end.push(entry);
+            }
+        }
+    }
+    preview
 }
 
 fn machine(stored: StoredMachine) -> Machine {
@@ -197,4 +350,40 @@ fn check_destination(destination: &str) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use asterism_proto::types::{MachineSessionRef, SessionKind};
+
+    use super::split_preview;
+
+    fn entry(session_id: i64) -> MachineSessionRef {
+        MachineSessionRef {
+            session_id,
+            task_id: 1,
+            task_title: "t".into(),
+            kind: SessionKind::Agent {
+                name: "claude".into(),
+            },
+        }
+    }
+
+    #[test]
+    fn unknown_resumability_ends_and_is_not_exact() {
+        let preview = split_preview(
+            vec![
+                (entry(1), Some(true)),
+                (entry(2), None),
+                (entry(3), Some(false)),
+            ],
+            true,
+        );
+        assert_eq!(preview.resume, vec![entry(1)]);
+        assert_eq!(preview.end, vec![entry(2), entry(3)]);
+        assert!(!preview.exact);
+        let known = split_preview(vec![(entry(1), Some(true)), (entry(3), Some(false))], true);
+        assert!(known.exact);
+        assert!(!split_preview(vec![(entry(1), Some(true))], false).exact);
+    }
 }

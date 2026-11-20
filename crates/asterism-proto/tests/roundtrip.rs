@@ -611,3 +611,12 @@ fn notification_events_roundtrip() {
         Some(Event::NotificationRemoved { id: 5 })
     );
 }
+
+#[test]
+fn session_from_an_older_daemon_has_unknown_resumability() {
+    let session: Session = serde_json::from_value(
+        json!({"id": 1, "task_id": 2, "kind": {"type": "shell"}, "status": "working"}),
+    )
+    .unwrap();
+    assert_eq!(session.resumable, None);
+}

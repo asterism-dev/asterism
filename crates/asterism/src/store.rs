@@ -120,9 +120,11 @@ const MIGRATIONS: &[&str] = &[
      INSERT INTO machines_new SELECT id, name, destination, created_at FROM machines;
      DROP TABLE machines;
      ALTER TABLE machines_new RENAME TO machines;",
+    "ALTER TABLE projects ADD COLUMN default_machine_id INTEGER;",
 ];
 
-const PROJECT_COLUMNS: &str = "id, name, path, created_at, default_base, workspace_id";
+const PROJECT_COLUMNS: &str =
+    "id, name, path, created_at, default_base, workspace_id, default_machine_id";
 const WORKSPACE_COLUMNS: &str = "id, name, label, position, repos, worktrees, color";
 const TASK_COLUMNS: &str =
     "id, project_id, title, slug, branch, base_branch, worktree_path, prompt, archived, created_at, last_activity_at, issue_source, issue_key, issue_url, machine_id";
@@ -343,6 +345,18 @@ impl Store {
         self.conn.execute(
             "UPDATE projects SET default_base = ?2 WHERE id = ?1",
             params![id, base],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_project_default_machine(
+        &self,
+        id: i64,
+        machine_id: Option<i64>,
+    ) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE projects SET default_machine_id = ?2 WHERE id = ?1",
+            params![id, machine_id],
         )?;
         Ok(())
     }
@@ -884,6 +898,10 @@ impl Store {
     }
 
     pub fn remove_machine(&self, id: i64) -> rusqlite::Result<bool> {
+        self.conn.execute(
+            "UPDATE projects SET default_machine_id = NULL WHERE default_machine_id = ?1",
+            [id],
+        )?;
         Ok(self
             .conn
             .execute("DELETE FROM machines WHERE id = ?1", [id])?
@@ -975,6 +993,7 @@ fn project_row(row: &Row) -> rusqlite::Result<Project> {
         created_at: row.get(3)?,
         default_base: row.get(4)?,
         workspace_id: row.get(5)?,
+        default_machine_id: row.get(6)?,
     })
 }
 
@@ -1022,6 +1041,7 @@ fn session_row(row: &Row) -> rusqlite::Result<StoredSession> {
             task_id: row.get(1)?,
             kind: from_text(2, row.get(2)?)?,
             status: from_text(3, row.get(3)?)?,
+            resumable: None,
         },
         agent_ref: row.get(4)?,
     })
@@ -1125,6 +1145,8 @@ mod tests {
         let store = Store::init(conn).unwrap();
         store.add_machine("vm", "dev@vm").unwrap();
         assert_eq!(store.machines().unwrap().len(), 1);
+        let p = store.add_project("p", "/p").unwrap();
+        assert_eq!(p.default_machine_id, None);
     }
 
     #[test]
@@ -1529,6 +1551,23 @@ mod tests {
         assert_eq!(store.machine(m.id).unwrap(), Some(m.clone()));
         assert!(store.remove_machine(m.id).unwrap());
         assert!(store.machines().unwrap().is_empty());
+    }
+
+    #[test]
+    fn removing_a_machine_clears_project_defaults() {
+        let store = Store::open_in_memory().unwrap();
+        let m = store.add_machine("vm01", "a").unwrap();
+        let p = store.add_project("p", "/p").unwrap();
+        store.set_project_default_machine(p.id, Some(m.id)).unwrap();
+        assert_eq!(
+            store.project(p.id).unwrap().unwrap().default_machine_id,
+            Some(m.id)
+        );
+        store.remove_machine(m.id).unwrap();
+        assert_eq!(
+            store.project(p.id).unwrap().unwrap().default_machine_id,
+            None
+        );
     }
 
     #[test]

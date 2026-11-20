@@ -40,11 +40,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 shift
+extra=$(cat "$root/env" 2>/dev/null)
 # Like real ssh, the remote side gets none of our environment (e.g. ASTERISM_SOCKET).
 if [ -f "$root/shell" ]; then
-  exec env -i HOME={home} PATH=/usr/bin:/bin SHELL="$(cat "$root/shell")" sh -c "$*"
+  exec env -i $extra HOME={home} PATH=/usr/bin:/bin SHELL="$(cat "$root/shell")" sh -c "$*"
 fi
-exec env -i HOME={home} PATH="$PATH" sh -c "$*"
+exec env -i $extra HOME={home} PATH="$PATH" sh -c "$*"
 "#,
             root = sh_quote(root.path()),
             home = sh_quote(&home),
@@ -107,6 +108,11 @@ exec env -i HOME={home} PATH="$PATH" sh -c "$*"
             shell.as_os_str().as_encoded_bytes(),
         )
         .unwrap();
+    }
+
+    /// The remote side gets `name=value` (no spaces) in its environment, like a machine's login profile.
+    pub fn set_env(&self, name: &str, value: &str) {
+        std::fs::write(self.root.path().join("env"), format!("{name}={value}")).unwrap();
     }
 
     pub fn invocations(&self) -> usize {

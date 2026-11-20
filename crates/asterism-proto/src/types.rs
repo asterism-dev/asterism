@@ -107,14 +107,19 @@ pub mod method {
     pub const PR_REFRESH: &str = "pr.refresh";
     pub const PROJECT_BRANCHES: &str = "project.branches";
     pub const PROJECT_UPDATE: &str = "project.update";
+    pub const PROJECT_SET_DEFAULT_MACHINE: &str = "project.set_default_machine";
     pub const PR_SEARCH: &str = "pr.search";
     pub const SESSION_SUBAGENTS: &str = "session.subagents";
     pub const PLUGIN_UI_FILE: &str = "plugin.ui_file";
     pub const MACHINE_LIST: &str = "machine.list";
     pub const MACHINE_ADD: &str = "machine.add";
     pub const MACHINE_REMOVE: &str = "machine.remove";
+    pub const MACHINE_FORGET: &str = "machine.forget";
+    pub const MACHINE_TASKS: &str = "machine.tasks";
     pub const MACHINE_RETRY: &str = "machine.retry";
     pub const MACHINE_TEST: &str = "machine.test";
+    pub const MACHINE_UPDATE: &str = "machine.update";
+    pub const MACHINE_UPDATE_PREVIEW: &str = "machine.update_preview";
     pub const UPLINK_REGISTER: &str = "uplink.register";
 }
 
@@ -200,6 +205,9 @@ pub struct Project {
     pub default_base: Option<String>,
     #[serde(default)]
     pub workspace_id: i64,
+    /// Machine preselected for new tasks; `None` means local.
+    #[serde(default)]
+    pub default_machine_id: Option<i64>,
 }
 
 /// Empty `repos`/`worktrees` mean the global `[paths]` from config.toml.
@@ -286,6 +294,13 @@ pub struct ProjectUpdateParams {
     pub project_id: i64,
     #[serde(default)]
     pub default_base: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectSetDefaultMachineParams {
+    pub project_id: i64,
+    #[serde(default)]
+    pub machine_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1564,6 +1579,9 @@ pub struct Session {
     pub task_id: i64,
     pub kind: SessionKind,
     pub status: SessionStatus,
+    /// Whether a daemon restart resumes it; `None` from daemons that do not say.
+    #[serde(default)]
+    pub resumable: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1805,6 +1823,9 @@ pub struct MachineStatus {
     pub update_available: bool,
     #[serde(default)]
     pub agents: Vec<AgentInfo>,
+    /// The protocol version the link speaks, once connected.
+    #[serde(default)]
+    pub protocol: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1828,6 +1849,11 @@ pub struct MachineIdParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MachineForgetResult {
+    pub archived_task_ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MachineTestParams {
     pub destination: String,
 }
@@ -1835,6 +1861,22 @@ pub struct MachineTestParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MachineTestResult {
     pub platform: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MachineUpdatePreview {
+    pub resume: Vec<MachineSessionRef>,
+    pub end: Vec<MachineSessionRef>,
+    pub exact: bool,
+}
+
+/// A machine's session by its hub ids; `session_id` is 0 for a session the hub does not mirror.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MachineSessionRef {
+    pub session_id: i64,
+    pub task_id: i64,
+    pub task_title: String,
+    pub kind: SessionKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

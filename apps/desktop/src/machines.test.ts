@@ -1,12 +1,17 @@
 import { expect, it } from 'vitest';
 import {
+  defaultMachineFor,
+  forgetConfirmText,
   localTaskActions,
   machineAgents,
   machineBlocksInput,
+  machineSummary,
+  machineTaskList,
   machineStatusLine,
   taskMachine,
+  updateConfirmText,
 } from './machines';
-import type { AgentInfo, Machine, Task } from './types';
+import type { AgentInfo, Machine, MachineSessionRef, Project, Task } from './types';
 
 it.each([
   [
@@ -109,4 +114,113 @@ it('localTaskActions offers the machine agents but never reveal for remote tasks
     reveal: false,
   });
   expect(localTaskActions(task(9), [m], [agent('claude')])).toEqual({ agents: [], reveal: false });
+});
+
+const ref = (title: string, kind: MachineSessionRef['kind']): MachineSessionRef => ({
+  session_id: 1,
+  task_id: 1,
+  task_title: title,
+  kind,
+});
+
+it('lists sessions that resume and end', () => {
+  const text = updateConfirmText({
+    resume: [ref('Fix bug', { type: 'agent', name: 'claude' })],
+    end: [ref('Build', { type: 'command', argv: ['make', 'dev'] }), ref('Logs', { type: 'shell' })],
+    exact: true,
+  });
+  expect(text).toBe(
+    [
+      'Update now? The machine restarts its daemon.',
+      'Will resume:',
+      '- Fix bug (claude)',
+      'Will end:',
+      '- Build (make dev)',
+      '- Logs (shell)',
+    ].join('\n'),
+  );
+});
+
+it('lists only sessions that end', () => {
+  const text = updateConfirmText({
+    resume: [],
+    end: [ref('Logs', { type: 'shell' })],
+    exact: true,
+  });
+  expect(text).not.toContain('Will resume:');
+  expect(text).toContain('Will end:\n- Logs (shell)');
+});
+
+it('says there are no running sessions', () => {
+  expect(updateConfirmText({ resume: [], end: [], exact: true })).toContain('No running sessions.');
+});
+
+it('says sessions may end when the preview is not exact', () => {
+  const text = updateConfirmText({
+    resume: [],
+    end: [ref('Logs', { type: 'shell' })],
+    exact: false,
+  });
+  expect(text).toContain('These sessions may end:\n- Logs (shell)');
+  expect(text).not.toContain('Will end:');
+});
+
+it('forget lists the tasks to archive', () => {
+  const tasks = [{ title: 'A' }, { title: 'B' }] as Task[];
+  expect(forgetConfirmText('box', tasks)).toBe(
+    'Forget box? Its tasks will be archived here and anything left on the machine is abandoned:\n- A\n- B',
+  );
+});
+
+it('forget without tasks', () => {
+  expect(forgetConfirmText('box', [])).toBe(
+    'Forget box? Its tasks will be archived here and anything left on the machine is abandoned:\nIt has no active tasks.',
+  );
+});
+
+const projectWith = (default_machine_id?: number | null) =>
+  ({ id: 1, default_machine_id }) as Project;
+
+it('defaults to Local without a project default', () => {
+  expect(defaultMachineFor(undefined, [machine('ready')])).toBe(0);
+  expect(defaultMachineFor(projectWith(), [machine('ready')])).toBe(0);
+  expect(defaultMachineFor(projectWith(null), [machine('ready')])).toBe(0);
+});
+
+it('uses the project default machine when it is ready', () => {
+  expect(defaultMachineFor(projectWith(7), [machine('ready')])).toBe(7);
+});
+
+it.each(['connecting', 'offline', 'blocked'] as const)(
+  'falls back to Local when the default machine is %s',
+  (st) => {
+    expect(defaultMachineFor(projectWith(7), [machine(st)])).toBe(0);
+  },
+);
+
+it('falls back to Local when the default machine no longer exists', () => {
+  expect(defaultMachineFor(projectWith(9), [machine('ready')])).toBe(0);
+});
+
+const agents = (...a: [string, boolean][]): Machine => {
+  const m = machine('ready');
+  m.status.agents = a.map(
+    ([name, available]) => ({ name, available, display_name: name }) as AgentInfo,
+  );
+  return m;
+};
+const t = (id: number, machine_id: number | null, archived = false) =>
+  ({ id, machine_id, archived }) as Task;
+
+it('machineTaskList keeps active tasks of that machine only', () => {
+  const tasks = [t(1, 7), t(2, 7, true), t(3, 8), t(4, null)];
+  expect(machineTaskList(machine('ready'), tasks).map((x) => x.id)).toEqual([1]);
+});
+
+it('machineSummary lists installed agents and active task count', () => {
+  const m = agents(['claude', true], ['codex', false]);
+  expect(machineSummary(m, [t(1, 7), t(2, 7)])).toBe('claude · 2 active tasks');
+  expect(machineSummary(m, [t(1, 7)])).toBe('claude · 1 active task');
+  expect(machineSummary(m, [])).toBe('claude');
+  expect(machineSummary(machine('offline'), [])).toBe('');
 });

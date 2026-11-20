@@ -1,4 +1,12 @@
-import type { AgentInfo, Machine, Task } from './types';
+import type {
+  AgentInfo,
+  Machine,
+  MachineSessionRef,
+  MachineUpdatePreview,
+  Project,
+  SessionKind,
+  Task,
+} from './types';
 
 export function machineStatusLine(m: Machine): string {
   const { state, platform, error, update_available } = m.status;
@@ -14,6 +22,25 @@ export function machineStatusLine(m: Machine): string {
     case 'blocked':
       return `Needs attention: ${error ?? 'unknown error'}`;
   }
+}
+
+export const LOCAL_MACHINE = 0;
+
+export function machineOptions(machines: Machine[], disableUnready = false) {
+  return [
+    { value: LOCAL_MACHINE, label: 'Local' },
+    ...machines.map((m) => ({
+      value: m.id,
+      label: m.status.state === 'ready' ? m.name : `${m.name} — ${machineStatusLine(m)}`,
+      disabled: disableUnready && m.status.state !== 'ready',
+    })),
+  ];
+}
+
+export function defaultMachineFor(project: Project | undefined, machines: Machine[]): number {
+  const id = project?.default_machine_id;
+  const ready = machines.some((m) => m.id === id && m.status.state === 'ready');
+  return ready && id != null ? id : LOCAL_MACHINE;
 }
 
 export function taskMachine(
@@ -46,4 +73,55 @@ export function localTaskActions(
     agents: remote ? machineAgents(machine, []) : machineAgents(null, localAgents),
     reveal: !remote,
   };
+}
+
+export function canUpdateMachine(m: Machine): boolean {
+  const { state, update_available, error } = m.status;
+  return update_available || (state === 'blocked' && !!error?.includes('incompatible version'));
+}
+
+function sessionKindLabel(kind: SessionKind): string {
+  switch (kind.type) {
+    case 'agent':
+      return kind.name;
+    case 'shell':
+      return 'shell';
+    case 'command':
+      return kind.argv.join(' ');
+  }
+}
+
+const sessionLines = (refs: MachineSessionRef[]) =>
+  refs.map((r) => `- ${r.task_title} (${sessionKindLabel(r.kind)})`);
+
+export function updateConfirmText(p: MachineUpdatePreview): string {
+  const lines = ['Update now? The machine restarts its daemon.'];
+  if (!p.resume.length && !p.end.length) lines.push('No running sessions.');
+  if (p.resume.length) lines.push('Will resume:', ...sessionLines(p.resume));
+  if (p.end.length) {
+    lines.push(p.exact ? 'Will end:' : 'These sessions may end:', ...sessionLines(p.end));
+  }
+  return lines.join('\n');
+}
+
+export function forgetConfirmText(name: string, tasks: Task[]): string {
+  const head = `Forget ${name}? Its tasks will be archived here and anything left on the machine is abandoned:`;
+  return [
+    head,
+    ...(tasks.length ? tasks.map((t) => `- ${t.title}`) : ['It has no active tasks.']),
+  ].join('\n');
+}
+
+export function machineTaskList(m: Machine, tasks: Task[]): Task[] {
+  return tasks.filter((t) => t.machine_id === m.id && !t.archived);
+}
+
+export function machineSummary(m: Machine, tasks: Task[]): string {
+  const count = machineTaskList(m, tasks).length;
+  return [
+    ...machineAgents(m, []).map((a) => a.display_name || a.name),
+    count > 0 && `${count} active ${count === 1 ? 'task' : 'tasks'}`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }

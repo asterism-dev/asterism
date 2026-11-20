@@ -99,6 +99,29 @@ pub fn non_secret_values(
     resolved(paths, plugin, &open)
 }
 
+/// What to push to a machine: the hub's value or `null` (reset) for each non-secret key the machine knows.
+pub fn settings_update(
+    hub: &Map<String, Value>,
+    hub_schema: &[SettingSpec],
+    machine_schema: &[SettingSpec],
+) -> Map<String, Value> {
+    let hub_secret = |key: &str| {
+        hub_schema
+            .iter()
+            .any(|s| s.key == key && s.kind == SettingType::Secret)
+    };
+    machine_schema
+        .iter()
+        .filter(|s| s.kind != SettingType::Secret && !hub_secret(&s.key))
+        .map(|s| {
+            (
+                s.key.clone(),
+                hub.get(&s.key).cloned().unwrap_or(Value::Null),
+            )
+        })
+        .collect()
+}
+
 pub fn view(paths: &Paths, plugin: &str, schema: &[SettingSpec]) -> Result<PluginSettings> {
     let is_secret = |key: &str| {
         schema
@@ -247,6 +270,23 @@ mod tests {
         let values = non_secret_values(&paths, "echo", &schema()).unwrap();
         assert!(!values.contains_key("token"));
         assert_eq!(values.get("verbose"), Some(&json!(true)));
+    }
+
+    #[test]
+    fn settings_update_resets_cleared_and_skips_unknown() {
+        let spec = |key: &str, kind: &str| -> SettingSpec {
+            serde_json::from_value(json!({"key": key, "title": key, "type": kind})).unwrap()
+        };
+        let hub_schema = [
+            spec("a", "bool"),
+            spec("b", "bool"),
+            spec("s", "secret"),
+            spec("n", "bool"),
+        ];
+        let machine_schema = [spec("a", "bool"), spec("b", "bool"), spec("s", "secret")];
+        let hub = json!({"a": true, "s": "x", "n": true});
+        let update = settings_update(hub.as_object().unwrap(), &hub_schema, &machine_schema);
+        assert_eq!(Value::Object(update), json!({"a": true, "b": null}));
     }
 
     #[test]

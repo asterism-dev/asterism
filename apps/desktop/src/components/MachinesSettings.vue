@@ -1,15 +1,21 @@
 <script setup lang="ts">
-import { Button, TextInput } from '@asterism-dev/lumen';
+import { Button, Dialog, TextInput } from '@asterism-dev/lumen';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { api, errorMessage } from '../api';
-import { machineStatusLine } from '../machines';
+import { forgetConfirmText, updateConfirmText } from '../machines';
 import { state, toast } from '../store';
 import type { Machine } from '../types';
+import MachineCard from './MachineCard.vue';
+import MachineDetail from './MachineDetail.vue';
 
 const name = ref('');
 const destination = ref('');
 const busy = ref(false);
+const adding = ref(false);
+const selectedId = ref<number | null>(null);
+const selected = computed(() => state.machines.find((m) => m.id === selectedId.value));
+const updating = ref(new Set<number>());
 const testResult = ref<{ ok: boolean; text: string } | null>(null);
 const report = (e: unknown) => toast(errorMessage(e));
 
@@ -43,6 +49,7 @@ async function add() {
     name.value = '';
     destination.value = '';
     testResult.value = null;
+    adding.value = false;
   } catch (e) {
     report(e);
   } finally {
@@ -55,31 +62,63 @@ async function remove(m: Machine) {
   if (!(await ask(message, { title: 'Remove machine', kind: 'warning' }))) return;
   api.removeMachine(m.id).catch(report);
 }
+
+async function update(m: Machine) {
+  try {
+    const preview = await api.machineUpdatePreview(m.id);
+    if (!(await ask(updateConfirmText(preview), { title: 'Update machine', kind: 'warning' }))) {
+      return;
+    }
+    updating.value.add(m.id);
+    await api.updateMachine(m.id);
+  } catch (e) {
+    report(e);
+  } finally {
+    updating.value.delete(m.id);
+  }
+}
+
+async function forget(m: Machine) {
+  try {
+    const tasks = await api.machineTasks(m.id);
+    const message = forgetConfirmText(m.name, tasks);
+    if (!(await ask(message, { title: 'Forget machine', kind: 'warning' }))) return;
+    await api.forgetMachine(m.id);
+  } catch (e) {
+    report(e);
+  }
+}
 </script>
 
 <template>
   <div class="agent-settings machines-settings">
-    <section>
-      <h3>Machines</h3>
+    <MachineDetail
+      v-if="selected"
+      :machine="selected"
+      :updating="updating.has(selected.id)"
+      @back="selectedId = null"
+      @update="update(selected)"
+      @remove="remove(selected)"
+      @forget="forget(selected)"
+    />
+    <section v-else>
+      <header>
+        <h3>Machines</h3>
+        <Button variant="accent" @click="adding = true">Add machine</Button>
+      </header>
       <p class="hint">
         Remote machines Asterism reaches over SSH. Key-based login must work without a prompt.
       </p>
-      <div v-for="m in state.machines" :key="m.id" class="settings-row machine-row">
-        <span>{{ m.name }}</span>
-        <span class="hint destination">{{ m.destination }}</span>
-        <span class="hint status">{{ machineStatusLine(m) }}</span>
-        <Button
-          v-if="m.status.state === 'blocked' || m.status.state === 'offline'"
-          @click="api.retryMachine(m.id).catch(report)"
-          >Retry</Button
-        >
-        <Button variant="danger" @click="remove(m)">Remove</Button>
-      </div>
+      <MachineCard
+        v-for="m in state.machines"
+        :key="m.id"
+        :machine="m"
+        @click="selectedId = m.id"
+      />
       <p v-if="!state.machines.length" class="hint">No machines yet.</p>
     </section>
-    <section>
-      <h3>Add machine</h3>
-      <form class="settings-row" @submit.prevent="add">
+    <Dialog :open="adding" title="Add machine" @update:open="(o) => (adding = o)">
+      <form class="add-form" @submit.prevent="add">
         <TextInput v-model="name" placeholder="Name" aria-label="Name" />
         <TextInput
           v-model="destination"
@@ -87,13 +126,15 @@ async function remove(m: Machine) {
           spellcheck="false"
           aria-label="SSH destination"
         />
-        <Button type="button" :disabled="!destination.trim() || busy" @click="test"
-          >Test connection</Button
-        >
-        <Button type="submit" variant="accent" :disabled="!canSubmit()">Add</Button>
+        <p v-if="testResult" :class="testResult.ok ? 'muted' : 'error'">{{ testResult.text }}</p>
+        <div class="settings-row">
+          <Button type="button" :disabled="!destination.trim() || busy" @click="test"
+            >Test connection</Button
+          >
+          <Button type="submit" variant="accent" :disabled="!canSubmit()">Add</Button>
+        </div>
       </form>
-      <p v-if="testResult" :class="testResult.ok ? 'muted' : 'error'">{{ testResult.text }}</p>
-    </section>
+    </Dialog>
   </div>
 </template>
 
@@ -106,10 +147,9 @@ async function remove(m: Machine) {
 .machines-settings section > * {
   margin: 0;
 }
-.machine-row {
+header {
+  display: flex;
   align-items: center;
-}
-.machine-row .status {
-  flex: 1;
+  justify-content: space-between;
 }
 </style>

@@ -1050,17 +1050,18 @@ impl Daemon {
     }
 
     pub fn hello(&self, params: HelloParams) -> Result<HelloResult> {
-        if params.proto_version != PROTO_VERSION {
+        let proto_version = proto_version();
+        if params.proto_version != proto_version {
             return Err(Error::new(
                 ErrorKind::IncompatibleVersion,
                 format!(
-                    "daemon speaks protocol {PROTO_VERSION}, client speaks {}",
+                    "daemon speaks protocol {proto_version}, client speaks {}",
                     params.proto_version
                 ),
             ));
         }
         Ok(HelloResult {
-            proto_version: PROTO_VERSION,
+            proto_version,
             daemon_version: env!("CARGO_PKG_VERSION").into(),
             daemon_build: asterism_proto::BUILD_ID.into(),
             pid: std::process::id(),
@@ -1202,6 +1203,27 @@ impl Daemon {
         let project = {
             let store = self.store();
             store.set_project_default_base(params.project_id, base)?;
+            store
+                .project(params.project_id)?
+                .ok_or_else(|| not_found("project", params.project_id))?
+        };
+        self.emit(Event::ProjectChanged(project.clone()));
+        Ok(project)
+    }
+
+    pub fn set_project_default_machine(
+        &self,
+        params: ProjectSetDefaultMachineParams,
+    ) -> Result<Project> {
+        let project = {
+            let store = self.store();
+            if let Some(id) = params.machine_id {
+                store.machine(id)?.ok_or_else(|| not_found("machine", id))?;
+            }
+            store
+                .project(params.project_id)?
+                .ok_or_else(|| not_found("project", params.project_id))?;
+            store.set_project_default_machine(params.project_id, params.machine_id)?;
             store
                 .project(params.project_id)?
                 .ok_or_else(|| not_found("project", params.project_id))?
@@ -2425,10 +2447,15 @@ impl Daemon {
                 task_id: remote,
                 force: false,
             };
-            let _: Task = self
+            match self
                 .machines()
-                .call(machine, method::TASK_ARCHIVE, params)
-                .await?;
+                .call::<_, Task>(machine, method::TASK_ARCHIVE, params)
+                .await
+            {
+                // The machine was forgotten or no longer has the task, so only the hub's side is left.
+                Err(e) if e.kind != ErrorKind::NotFound => return Err(e),
+                _ => {}
+            }
             // The machine's exit events may never arrive if the link drops now, and reconcile skips archived tasks.
             let mirrors = self.store().sessions(Some(task_id))?;
             for stored in mirrors {
@@ -2513,6 +2540,9 @@ impl Daemon {
             return Ok(task);
         }
         if let Some((machine, remote)) = self.remote_task(task_id)? {
+            if self.store().machine(machine)?.is_none() {
+                return Err(Error::new(ErrorKind::NotFound, "machine is gone"));
+            }
             let params = TaskIdParams { task_id: remote };
             let _: Task = self
                 .machines()
@@ -3296,12 +3326,27 @@ impl Daemon {
     }
 
     pub fn sessions(&self, task_id: Option<i64>) -> Result<Vec<Session>> {
-        Ok(self
-            .store()
-            .sessions(task_id)?
-            .into_iter()
-            .map(|s| s.session)
-            .collect())
+        let store = self.store();
+        let mut sessions = Vec::new();
+        for crate::store::StoredSession {
+            mut session,
+            agent_ref,
+        } in store.sessions(task_id)?
+        {
+            // What `recover()` resumes; a mirror resumes on its machine, which knows better.
+            session.resumable = if store.session_remote(session.id)?.is_some() {
+                None
+            } else {
+                let archived = store.task(session.task_id)?.is_none_or(|t| t.archived);
+                Some(
+                    matches!(session.kind, SessionKind::Agent { .. })
+                        && agent_ref.is_some()
+                        && !archived,
+                )
+            };
+            sessions.push(session);
+        }
+        Ok(sessions)
     }
 
     pub fn agent_config(&self, agent: &str) -> Result<AgentConfig> {
@@ -4077,6 +4122,18 @@ pub fn last_lines(text: &str, n: usize) -> String {
 fn same_path(a: &str, b: &str) -> bool {
     let canonical = |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p));
     a == b || canonical(a) == canonical(b)
+}
+
+/// Debug builds can pretend to be another version, so tests can run an older machine daemon.
+fn proto_version() -> u32 {
+    #[cfg(debug_assertions)]
+    if let Some(version) = std::env::var("ASTERISM_TEST_PROTO_VERSION")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
+        return version;
+    }
+    PROTO_VERSION
 }
 
 #[cfg(test)]

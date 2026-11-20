@@ -148,6 +148,7 @@ const HUB_PROJECT_METHODS: &[&str] = &[
     method::PROJECT_ADD,
     method::PROJECT_REMOVE,
     method::PROJECT_UPDATE,
+    method::PROJECT_SET_DEFAULT_MACHINE,
     method::PROJECT_WORKTREES,
 ];
 
@@ -402,6 +403,17 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
                 .remove(params::<MachineIdParams>(raw)?.machine_id)?;
             Ok(Value::Null)
         }
+        method::MACHINE_FORGET => to_value(
+            daemon
+                .machines()
+                .forget(params::<MachineIdParams>(raw)?.machine_id)
+                .await?,
+        ),
+        method::MACHINE_TASKS => to_value(
+            daemon
+                .machines()
+                .tasks(params::<MachineIdParams>(raw)?.machine_id)?,
+        ),
         method::MACHINE_RETRY => {
             daemon
                 .machines()
@@ -425,6 +437,19 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
                 })
             });
             daemon.set_uplink(uplink);
+            Ok(Value::Null)
+        }
+        method::MACHINE_UPDATE_PREVIEW => to_value(
+            daemon
+                .machines()
+                .update_preview(params::<MachineIdParams>(raw)?.machine_id)
+                .await?,
+        ),
+        method::MACHINE_UPDATE => {
+            daemon
+                .machines()
+                .update(params::<MachineIdParams>(raw)?.machine_id)
+                .await?;
             Ok(Value::Null)
         }
         method::MACHINE_TEST => to_value(
@@ -586,6 +611,9 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             blocking(move || to_value(daemon.project_branches(id)?)).await
         }
         method::PROJECT_UPDATE => to_value(daemon.update_project(params(raw)?)?),
+        method::PROJECT_SET_DEFAULT_MACHINE => {
+            to_value(daemon.set_project_default_machine(params(raw)?)?)
+        }
         method::PROJECT_MOVE => to_value(daemon.move_project(params(raw)?)?),
         method::WORKSPACE_LIST => to_value(daemon.workspaces()?),
         method::WORKSPACE_CREATE => to_value(daemon.create_workspace(params(raw)?)?),
@@ -918,6 +946,8 @@ mod tests {
             method::REMOTE_CONFIG_SET,
             method::MACHINE_ADD,
             method::MACHINE_TEST,
+            method::MACHINE_UPDATE,
+            method::MACHINE_UPDATE_PREVIEW,
         ] {
             assert!(remote_denied(name), "{name}");
         }
