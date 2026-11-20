@@ -1,3 +1,9 @@
+## v0.30.0 (2026-11-20)
+
+### Feat
+
+- **machines**: connect ssh machines to the daemon (#34)
+
 ## v0.29.0 (2026-11-19)
 
 ### Feat
