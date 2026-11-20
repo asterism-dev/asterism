@@ -1,3 +1,10 @@
+## v0.32.0 (2026-11-20)
+
+### Feat
+
+- **machines**: update and forget machines, ship machine binaries (#39)
+- **machines**: agents on machines and the cli in remote sessions (#38)
+
 ## v0.31.0 (2026-11-20)
 
 ### Feat
