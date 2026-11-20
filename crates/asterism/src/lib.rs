@@ -11,6 +11,7 @@ pub mod error;
 pub mod files;
 pub mod git;
 pub mod hibernate;
+pub mod machines;
 pub mod node_settings;
 pub mod paths;
 pub mod plugins;
@@ -24,6 +25,7 @@ pub mod session;
 pub mod status;
 pub mod store;
 
+use asterism_proto::types::Role;
 use daemon::{Daemon, DaemonOptions};
 use paths::Paths;
 
@@ -59,6 +61,7 @@ pub async fn run_with_options(paths: Paths, options: DaemonOptions) -> io::Resul
         }
         std::fs::remove_file(&socket)?;
     }
+    let role = options.role;
     let daemon = Daemon::with_options(paths, options).map_err(io::Error::other)?;
     let listener = UnixListener::bind(&socket)?;
     let recovering = daemon.clone();
@@ -67,11 +70,16 @@ pub async fn run_with_options(paths: Paths, options: DaemonOptions) -> io::Resul
             eprintln!("asterismd: session recovery failed: {e}");
         }
     });
-    tokio::spawn(daemon.clone().store_refresh_loop());
-    tokio::spawn(daemon.clone().pr_poll_loop());
-    tokio::spawn(daemon.clone().hibernate_loop());
-    tokio::spawn(daemon.clone().archive_cleanup_loop());
-    tokio::spawn(remote::server::run(daemon.clone()));
+    if role == Role::Node {
+        tokio::spawn(daemon.clone().store_refresh_loop());
+        tokio::spawn(daemon.clone().pr_poll_loop());
+        tokio::spawn(daemon.clone().hibernate_loop());
+        tokio::spawn(daemon.clone().archive_cleanup_loop());
+        tokio::spawn(remote::server::run(daemon.clone()));
+        if let Err(e) = daemon.machines().start_stored() {
+            eprintln!("asterismd: starting machine connections failed: {e}");
+        }
+    }
     tokio::select! {
         _ = rpc::serve(daemon.clone(), listener) => {}
         _ = daemon.shutdown_requested() => {}

@@ -102,6 +102,12 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE workspaces ADD COLUMN color TEXT NOT NULL DEFAULT '';",
     "ALTER TABLE tasks ADD COLUMN archived_at INTEGER;
      UPDATE tasks SET archived_at = unixepoch() WHERE archived = 1;",
+    "CREATE TABLE machines (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        destination TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT 0
+     );",
 ];
 
 const PROJECT_COLUMNS: &str = "id, name, path, created_at, default_base, workspace_id";
@@ -138,6 +144,15 @@ pub struct StoredRemoteDevice {
     pub last_seen_at: Option<i64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredMachine {
+    pub id: i64,
+    pub name: String,
+    pub destination: String,
+    pub created_at: i64,
+}
+
+const MACHINE_COLUMNS: &str = "id, name, destination, created_at";
 const REMOTE_DEVICE_COLUMNS: &str = "id, name, created_at, last_seen_at";
 const NOTIFICATION_COLUMNS: &str =
     "id, kind, created_at, task_id, session_id, task_title, project_name, resolved_at, read_at";
@@ -723,6 +738,43 @@ impl Store {
         Ok(())
     }
 
+    pub fn add_machine(&self, name: &str, destination: &str) -> rusqlite::Result<StoredMachine> {
+        self.conn.execute(
+            "INSERT INTO machines (name, destination, created_at) VALUES (?1, ?2, unixepoch())",
+            params![name, destination],
+        )?;
+        self.conn.query_row(
+            &format!("SELECT {MACHINE_COLUMNS} FROM machines WHERE id = ?1"),
+            [self.conn.last_insert_rowid()],
+            machine_row,
+        )
+    }
+
+    pub fn machines(&self) -> rusqlite::Result<Vec<StoredMachine>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {MACHINE_COLUMNS} FROM machines ORDER BY id"
+        ))?;
+        let rows = stmt.query_map([], machine_row)?;
+        rows.collect()
+    }
+
+    pub fn machine(&self, id: i64) -> rusqlite::Result<Option<StoredMachine>> {
+        self.conn
+            .query_row(
+                &format!("SELECT {MACHINE_COLUMNS} FROM machines WHERE id = ?1"),
+                [id],
+                machine_row,
+            )
+            .optional()
+    }
+
+    pub fn remove_machine(&self, id: i64) -> rusqlite::Result<bool> {
+        Ok(self
+            .conn
+            .execute("DELETE FROM machines WHERE id = ?1", [id])?
+            > 0)
+    }
+
     pub fn add_remote_device(
         &self,
         name: &str,
@@ -873,6 +925,15 @@ fn notification_row(row: &Row) -> rusqlite::Result<NotificationEntry> {
     })
 }
 
+fn machine_row(row: &Row) -> rusqlite::Result<StoredMachine> {
+    Ok(StoredMachine {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        destination: row.get(2)?,
+        created_at: row.get(3)?,
+    })
+}
+
 fn remote_device_row(row: &Row) -> rusqlite::Result<StoredRemoteDevice> {
     Ok(StoredRemoteDevice {
         id: row.get(0)?,
@@ -903,6 +964,23 @@ mod tests {
         store
             .insert_notification("test", Some(task_id), None, None, None)
             .unwrap()
+    }
+
+    #[test]
+    fn database_from_main_gains_machines() {
+        // Schema as released on main (0.29.0): nine shared migrations, then archived_at as the tenth.
+        let mut conn = Connection::open_in_memory().unwrap();
+        let tx = conn.transaction().unwrap();
+        for migration in &MIGRATIONS[..9] {
+            tx.execute_batch(migration).unwrap();
+        }
+        tx.execute_batch("ALTER TABLE tasks ADD COLUMN archived_at INTEGER;")
+            .unwrap();
+        tx.pragma_update(None, "user_version", 10).unwrap();
+        tx.commit().unwrap();
+        let store = Store::init(conn).unwrap();
+        store.add_machine("vm", "dev@vm").unwrap();
+        assert_eq!(store.machines().unwrap().len(), 1);
     }
 
     #[test]
@@ -1297,6 +1375,23 @@ mod tests {
         );
         store.set_project_default_base(p.id, None).unwrap();
         assert_eq!(store.project(p.id).unwrap().unwrap().default_base, None);
+    }
+
+    #[test]
+    fn machines_round_trip() {
+        let store = Store::open_in_memory().unwrap();
+        let m = store.add_machine("vm01", "ubuntu@vm01.internal").unwrap();
+        assert_eq!(store.machines().unwrap(), vec![m.clone()]);
+        assert_eq!(store.machine(m.id).unwrap(), Some(m.clone()));
+        assert!(store.remove_machine(m.id).unwrap());
+        assert!(store.machines().unwrap().is_empty());
+    }
+
+    #[test]
+    fn machine_names_are_unique() {
+        let store = Store::open_in_memory().unwrap();
+        store.add_machine("vm01", "a").unwrap();
+        assert!(store.add_machine("vm01", "b").is_err());
     }
 
     #[test]

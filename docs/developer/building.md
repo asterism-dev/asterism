@@ -23,6 +23,7 @@ All targets run from the repository root.
 |---|---|
 | `make dev` | Builds the sidecars and the mobile app, then runs `tauri dev` with hot reload. |
 | `make dev-stop` | Stops the development daemon. |
+| `make machine-bins` | Builds the daemon and CLI for the platforms the daemon installs on machines into `target/machine/` (see [Machine binaries](#machine-binaries)). |
 | `make build` | Builds the release app bundle (`npx tauri build`). |
 | `make open` | Opens the built bundle, `target/release/bundle/macos/asterism.app`. |
 | `make test` | `cargo test`, then the frontend tests (`npm test`, Vitest). |
@@ -54,6 +55,16 @@ make dev DEV_PORT=1430 DEV_HOME=~/.asterism-dev2
 Set `DEV_NAME` to show a name other than the hostname at the top of the sidebar, e.g. `make dev DEV_NAME=demo`. It is passed to the daemon as `ASTERISM_NODE_NAME`.
 
 Quitting the app can leave the daemon running, as in a release build. `make dev-stop` sends `shutdown` to the daemon at `$(DEV_HOME)/asterismd.sock`; pass the same `DEV_HOME` to stop a second instance. The app only replaces a running daemon by itself when its version or build id (`git describe --always --dirty`) differs and no session is running, so stop the daemon after changing daemon or plugin code to be sure the next `make dev` runs the new build.
+
+### Machine binaries
+
+To connect to a machine, the daemon installs its own `asterismd` and `asterism` there, taken from `<platform>/` under `ASTERISM_MACHINE_BINS` (`linux-x86_64`, `linux-aarch64`, `darwin-aarch64`, `darwin-x86_64`). `make dev` sets it to `target/machine` but does not build it, because the Linux builds take a while. Run this once, and again after changing daemon or CLI code you want on machines:
+
+```sh
+make machine-bins
+```
+
+`scripts/build-machine-bins.sh` needs Docker. It builds static `linux-x86_64` and `linux-aarch64` binaries in `rust:<version>-alpine` containers (the amd64 one runs emulated on Apple silicon and is slow) and copies the host's debug build as `darwin-*`.
 
 ## Continuous integration
 

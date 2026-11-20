@@ -109,6 +109,11 @@ pub mod method {
     pub const PR_SEARCH: &str = "pr.search";
     pub const SESSION_SUBAGENTS: &str = "session.subagents";
     pub const PLUGIN_UI_FILE: &str = "plugin.ui_file";
+    pub const MACHINE_LIST: &str = "machine.list";
+    pub const MACHINE_ADD: &str = "machine.add";
+    pub const MACHINE_REMOVE: &str = "machine.remove";
+    pub const MACHINE_RETRY: &str = "machine.retry";
+    pub const MACHINE_TEST: &str = "machine.test";
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -146,6 +151,23 @@ pub struct AgentInfo {
     pub plugin: String,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    #[default]
+    Node,
+    Machine,
+}
+
+impl Role {
+    pub fn from_env() -> Self {
+        match std::env::var("ASTERISM_ROLE").as_deref() {
+            Ok("machine") => Self::Machine,
+            _ => Self::Node,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HelloResult {
     pub proto_version: u32,
@@ -157,6 +179,11 @@ pub struct HelloResult {
     pub hostname: String,
     pub os: String,
     pub agents: Vec<AgentInfo>,
+    #[serde(default)]
+    pub role: Role,
+    /// Path of the running daemon binary; empty from daemons that predate it.
+    #[serde(default)]
+    pub exe: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1749,6 +1776,54 @@ pub struct Activity {
     pub steps: Vec<ActivityStep>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MachineState {
+    #[default]
+    Connecting,
+    Ready,
+    Offline,
+    Blocked,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MachineStatus {
+    pub state: MachineState,
+    pub platform: Option<String>,
+    pub error: Option<String>,
+    pub update_available: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Machine {
+    pub id: i64,
+    pub name: String,
+    pub destination: String,
+    pub created_at: i64,
+    pub status: MachineStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MachineAddParams {
+    pub name: String,
+    pub destination: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MachineIdParams {
+    pub machine_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MachineTestParams {
+    pub destination: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MachineTestResult {
+    pub platform: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "method", content = "params")]
 pub enum Event {
@@ -1796,6 +1871,10 @@ pub enum Event {
     NotificationRemoved { id: i64 },
     #[serde(rename = "activity.changed")]
     ActivityChanged(Activity),
+    #[serde(rename = "machine.changed")]
+    MachineChanged(Machine),
+    #[serde(rename = "machine.removed")]
+    MachineRemoved { machine_id: i64 },
 }
 
 impl Event {

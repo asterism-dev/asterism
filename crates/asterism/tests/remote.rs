@@ -374,6 +374,9 @@ async fn remote_peers_get_forbidden_for_local_only_methods() {
         "session.hook",
         "remote.device_list",
         "remote.config_set",
+        "machine.list",
+        "machine.add",
+        "machine.remove",
     ]
     .iter()
     .enumerate()

@@ -240,3 +240,7 @@ pub fn call(node: &Node, method: &str, params: serde_json::Value) -> serde_json:
             client.call(method, params).await.unwrap()
         })
 }
+
+mod fake_ssh;
+#[allow(unused_imports)]
+pub use fake_ssh::{host_platform, FakeSsh};

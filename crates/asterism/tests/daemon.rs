@@ -1049,6 +1049,41 @@ fn hello_reports_the_configured_node_name() {
     assert_eq!(hello.hostname, "test-node");
 }
 
+fn hello_with(options: asterism_core::daemon::DaemonOptions) -> HelloResult {
+    let home = tempfile::tempdir().unwrap();
+    let daemon = Daemon::with_options(
+        Paths {
+            home: home.path().to_path_buf(),
+        },
+        options,
+    )
+    .unwrap();
+    daemon
+        .hello(HelloParams {
+            proto_version: asterism_proto::PROTO_VERSION,
+            client_kind: ClientKind::Cli,
+        })
+        .unwrap()
+}
+
+#[test]
+fn hello_reports_role_and_executable() {
+    let hello = hello_with(asterism_core::daemon::DaemonOptions {
+        role: Role::Machine,
+        ..common::daemon_options()
+    });
+    assert_eq!(hello.role, Role::Machine);
+    assert_eq!(
+        hello.exe,
+        std::env::current_exe().unwrap().to_string_lossy()
+    );
+}
+
+#[test]
+fn hello_defaults_to_node_role() {
+    assert_eq!(hello_with(common::daemon_options()).role, Role::Node);
+}
+
 fn ui_plugin(dir: &Path, with_entry: bool) {
     std::fs::create_dir_all(dir.join("ui")).unwrap();
     std::fs::write(

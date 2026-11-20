@@ -14,6 +14,7 @@ nav = [
     "guide/sessions.md",
     "guide/settings.md",
     "guide/remote-access.md",
+    "guide/machines.md",
     "guide/plugins.md",
   ] },
   { "Developer" = [
