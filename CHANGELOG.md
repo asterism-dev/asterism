@@ -1,3 +1,9 @@
+## v0.33.0 (2026-11-20)
+
+### Feat
+
+- **machines**: add machines and create tasks on them from the cli (#41)
+
 ## v0.32.0 (2026-11-20)
 
 ### Feat
