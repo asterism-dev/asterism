@@ -13,7 +13,7 @@ const WINDOW: Duration = Duration::from_secs(30);
 
 fn idle_node() -> (Node, u32, Vec<String>) {
     let node = Node::new();
-    let task = node.json(&["task", "new", "budget"])["task"]["id"].to_string();
+    let task = node.json(&["task", "new", "--no-agent", "budget"])["task"]["id"].to_string();
     let sessions = (0..SESSIONS)
         .map(|_| node.json(&["session", "start", &task, "--shell"])["id"].to_string())
         .collect();

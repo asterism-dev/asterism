@@ -3082,7 +3082,12 @@ async fn cli_task_new_on_machine_creates_task_on_same_machine() {
     let (_, remote_id) = task_on_machine(&d, &m, project_id).await;
 
     // The hub creates the child down the same pipe while this call is still open.
-    let out = cli_on_machine(&fake, remote_id, &["--json", "task", "new", "child"]).await;
+    let out = cli_on_machine(
+        &fake,
+        remote_id,
+        &["--json", "task", "new", "--no-agent", "child"],
+    )
+    .await;
     let created: TaskCreateResult = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(created.task.title, "child");
     assert_eq!(created.task.project_id, project_id);

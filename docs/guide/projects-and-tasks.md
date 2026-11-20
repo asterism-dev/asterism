@@ -137,12 +137,13 @@ You can switch the project in the dialog's title.
 
 The new task is selected and its session opens right away.
 
-CLI:
+CLI (starts Claude Code unless you pass `--agent` or `--no-agent`):
 
 ```sh
-asterism task new "fix login redirect" --agent claude --prompt "The login page loops…"
+asterism task new "fix login redirect" --prompt "The login page loops…"
 asterism task new --issue linear:TRA-1343
 asterism task new "try new parser" --base origin/develop
+asterism task new "scratch" --no-agent      # the task and worktree only
 ```
 
 ### Branches and worktrees

@@ -47,7 +47,13 @@ fn issue_search_lists_hits() {
 #[test]
 fn tasks_are_created_from_issues() {
     let node = linked_with_token();
-    let created = node.json(&["task", "create", "--issue", "echo-issues:ECH-1"]);
+    let created = node.json(&[
+        "task",
+        "create",
+        "--no-agent",
+        "--issue",
+        "echo-issues:ECH-1",
+    ]);
     assert_eq!(created["task"]["title"], "ech-1-fix-login-timeout");
     assert_eq!(created["task"]["branch"], "feature/ech-1-fix-login-timeout");
     assert_eq!(created["task"]["issue"]["key"], "ECH-1");
@@ -59,6 +65,7 @@ fn tasks_are_created_from_issues() {
     let titled = node.json(&[
         "task",
         "new",
+        "--no-agent",
         "Mine",
         "--issue",
         "echo-issues:ECH-2",
@@ -76,6 +83,7 @@ fn tasks_are_created_from_issues() {
     let flagged = node.json(&[
         "task",
         "create",
+        "--no-agent",
         "--issue",
         "echo-issues:ECH-2",
         "--title",
@@ -88,14 +96,14 @@ fn tasks_are_created_from_issues() {
         .starts_with("asterism/ech-2"));
 
     assert!(!node.cmd(&["task", "new"]).status.success());
-    let bad = node.cmd(&["task", "new", "--issue", "ECH-1"]);
+    let bad = node.cmd(&["task", "new", "--no-agent", "--issue", "ECH-1"]);
     assert!(String::from_utf8_lossy(&bad.stderr).contains("<source>:<key>"));
 }
 
 #[test]
 fn issues_without_a_usable_branch_fall_back_to_the_task_id() {
     let node = linked_with_token();
-    let created = node.json(&["task", "new", "--issue", "echo-issues:%%"]);
+    let created = node.json(&["task", "new", "--no-agent", "--issue", "echo-issues:%%"]);
     let id = created["task"]["id"].as_i64().unwrap();
     assert_eq!(created["task"]["branch"], format!("asterism/{id}"));
 }
