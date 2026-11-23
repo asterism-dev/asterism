@@ -1928,6 +1928,51 @@ async fn remote_shell_round_trip() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn browser_in_a_machine_session_opens_urls_on_the_hub() {
+    let (d, _fake) = start_with_fake_ssh().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (m, project_id, _) = machine_and_project(&d, dir.path()).await;
+    let (task_id, _) = task_on_machine(&d, &m, project_id).await;
+    let mut events = d.events();
+    let session = start_remote_shell(&d, task_id).await;
+    let _: SessionWaitResult = d
+        .call(
+            method::SESSION_WAIT,
+            SessionWaitParams {
+                session_id: session.id,
+                until: SessionStatus::Idle,
+                timeout_ms: Some(10_000),
+            },
+        )
+        .await;
+
+    let _: Value = d
+        .call(
+            method::SESSION_SEND,
+            SessionSendParams {
+                session_id: session.id,
+                text: "\"$BROWSER\" https://example.com/pull/1".into(),
+                submit: true,
+            },
+        )
+        .await;
+
+    let opened = loop {
+        let event = tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let Event::SessionOpenUrl { session_id, url } = event {
+            break (session_id, url);
+        }
+    };
+    assert_eq!(
+        opened,
+        (session.id, "https://example.com/pull/1".to_string())
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn command_on_machine_reaches_exited_without_reconnect() {
     let (d, fake) = start_with_fake_ssh().await;
     let dir = tempfile::tempdir().unwrap();

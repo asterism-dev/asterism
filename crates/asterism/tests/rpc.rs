@@ -203,6 +203,46 @@ async fn subscribe_delivers_change_events() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn open_url_broadcasts_only_http_urls() {
+    let (_home, socket) = start_daemon().await;
+    let repo = tempfile::tempdir().unwrap();
+    init_repo(repo.path());
+    let client = client(&socket).await;
+    let mut events = client.take_events().unwrap();
+    let _: () = client.call(method::SUBSCRIBE, ()).await.unwrap();
+    let session = shell_session(&client, repo.path()).await;
+    let open = |url: &str| {
+        client.call::<_, ()>(
+            method::SESSION_OPEN_URL,
+            SessionOpenUrlParams {
+                session_id: session.id,
+                url: url.into(),
+            },
+        )
+    };
+
+    for url in ["file:///etc/passwd", "javascript:alert(1)", "example.com"] {
+        assert_eq!(
+            rpc_kind(open(url).await.unwrap_err()),
+            ErrorKind::InvalidParams,
+            "{url}"
+        );
+    }
+    open("https://example.com/a").await.unwrap();
+
+    let opened = loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let Event::SessionOpenUrl { session_id, url } = event {
+            break (session_id, url);
+        }
+    };
+    assert_eq!(opened, (session.id, "https://example.com/a".to_string()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn bad_requests_get_structured_errors() {
     let (_home, socket) = start_daemon().await;
     let client = client(&socket).await;

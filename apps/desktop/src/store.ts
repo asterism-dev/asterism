@@ -326,6 +326,7 @@ export function applyEvent(s: State, event: NodeEvent): Session | null {
       for (const t of s.tasks.filter((t) => t.project_id === event.params.project_id))
         dropTask(s, t.id);
       return null;
+    case 'session.open_url':
     case 'subagent.started':
     case 'subagent.updated':
       return null;

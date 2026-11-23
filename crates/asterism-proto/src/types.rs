@@ -56,6 +56,7 @@ pub mod method {
     pub const SESSION_DETACH: &str = "session.detach";
     pub const SESSION_WAIT: &str = "session.wait";
     pub const SESSION_HOOK: &str = "session.hook";
+    pub const SESSION_OPEN_URL: &str = "session.open_url";
     pub const AGENT_CONFIG_GET: &str = "agent_config.get";
     pub const AGENT_CONFIG_GET_RAW: &str = "agent_config.get_raw";
     pub const AGENT_CONFIG_SET: &str = "agent_config.set";
@@ -1640,6 +1641,12 @@ pub struct SessionSendParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionOpenUrlParams {
+    pub session_id: i64,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionResizeParams {
     pub session_id: i64,
     pub rows: u16,
@@ -1945,6 +1952,9 @@ pub enum Event {
     SessionChanged(Session),
     #[serde(rename = "session.removed")]
     SessionRemoved { session_id: i64 },
+    /// A program in the session asked for a browser; the app opens the URL.
+    #[serde(rename = "session.open_url")]
+    SessionOpenUrl { session_id: i64, url: String },
     #[serde(rename = "task.changed")]
     TaskChanged(Task),
     #[serde(rename = "task.removed")]

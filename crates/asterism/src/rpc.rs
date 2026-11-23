@@ -41,6 +41,7 @@ pub enum Peer {
 const REMOTE_DENIED: &[&str] = &[
     method::SHUTDOWN,
     method::SESSION_HOOK,
+    method::SESSION_OPEN_URL,
     method::PROJECT_ENSURE,
 ];
 
@@ -827,6 +828,10 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
             daemon.hook(params(raw)?)?;
             Ok(Value::Null)
         }
+        method::SESSION_OPEN_URL => {
+            daemon.open_url(params(raw)?)?;
+            Ok(Value::Null)
+        }
         other => Err(Error::new(
             ErrorKind::MethodNotFound,
             format!("unknown method {other}"),
@@ -958,6 +963,7 @@ mod tests {
         for name in [
             method::SHUTDOWN,
             method::SESSION_HOOK,
+            method::SESSION_OPEN_URL,
             method::REMOTE_STATUS,
             method::REMOTE_DEVICE_ADD,
             method::REMOTE_CONFIG_SET,

@@ -26,6 +26,7 @@ const MACHINE_ALLOWED: &[&str] = &[
     method::TASK_DELETE,
     method::TASK_DIFF,
     method::SESSION_START,
+    method::SESSION_OPEN_URL,
     method::PROJECT_LIST,
     method::PROJECT_BRANCHES,
     method::TASK_SOURCE_GET,

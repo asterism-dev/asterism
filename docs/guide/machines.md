@@ -33,6 +33,7 @@ Tasks on a machine show a machine badge in the sidebar and the task header.
 - The review pane, diffs and file views read the machine's worktree.
 - Archive, restore and delete run on the machine: archive ends the task's sessions there, restore recreates its worktree, delete removes the worktree and, if you choose, the branch.
 - Agents run on the machine; see [Agents on a machine](#agents-on-a-machine).
+- Links open on your Mac. A machine has no browser, so sessions there get a `BROWSER` that hands the URL to the Asterism app: clicking a link in Claude Code or running `gh pr view --web` opens your local browser while the app is running. Only `http` and `https` URLs are opened, and a `BROWSER` set in the agent's **Environment on machines** takes precedence.
 - The `asterism` CLI and the mobile app work with these tasks through your Mac. The CLI also works inside a session on the machine; see [The CLI on a machine](#the-cli-on-a-machine).
 
 ### What does not work yet

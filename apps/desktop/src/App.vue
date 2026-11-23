@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Button } from '@asterism-dev/lumen';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   isPermissionGranted,
   requestPermission,
@@ -150,6 +151,9 @@ onMounted(async () => {
         const failures = deleteFailures(prev, event.params);
         if (failures) toast(failures);
       }
+      // Only the desktop app opens these; a phone's browser would block the unrequested popup.
+      if (event.method === 'session.open_url')
+        openUrl(event.params.url).catch((err) => toast(errorMessage(err)));
       if (event.method === 'task.removed') {
         remove(workspaceKey(event.params.task_id));
         remove(floatKey(event.params.task_id));

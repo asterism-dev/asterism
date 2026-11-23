@@ -175,6 +175,7 @@ export type NodeEvent =
   | { method: 'session.status_changed'; params: { session_id: number; status: SessionStatus } }
   | { method: 'session.changed'; params: Session }
   | { method: 'session.removed'; params: { session_id: number } }
+  | { method: 'session.open_url'; params: { session_id: number; url: string } }
   | { method: 'task.changed'; params: Task }
   | { method: 'task.removed'; params: { task_id: number } }
   | { method: 'project.changed'; params: Project }
