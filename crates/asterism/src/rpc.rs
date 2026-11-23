@@ -47,8 +47,11 @@ const REMOTE_DENIED: &[&str] = &[
 /// A leaked device token must not be able to stop the daemon, rotate itself or reach other hosts.
 fn remote_denied(method_name: &str, params: &Value) -> bool {
     REMOTE_DENIED.contains(&method_name)
+        // Positional params could carry `provider_machine` too, so only null or an object without it pass.
         || (method_name == method::TASK_CREATE
-            && params.get("provider_machine").is_some_and(|p| !p.is_null()))
+            && params.as_object().map_or(!params.is_null(), |o| {
+                o.get("provider_machine").is_some_and(|p| !p.is_null())
+            }))
         || method_name.starts_with("remote.")
         || method_name.starts_with("machine.")
         || method_name.starts_with("machine_provider.")
@@ -976,5 +979,13 @@ mod tests {
         }
         let provider_task = serde_json::json!({"provider_machine": {"provider": "p"}});
         assert!(remote_denied(method::TASK_CREATE, &provider_task));
+        assert!(remote_denied(
+            method::TASK_CREATE,
+            &serde_json::json!([1, "t"])
+        ));
+        assert!(!remote_denied(
+            method::TASK_CREATE,
+            &serde_json::json!({"title": "t"})
+        ));
     }
 }
