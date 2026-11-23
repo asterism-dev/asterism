@@ -52,6 +52,10 @@ pub struct AgentConfig {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: EnvPolicy,
+    #[serde(default, skip_serializing_if = "EnvPolicy::is_empty")]
+    pub machine_env: EnvPolicy,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub machine_env_from_local: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hibernate_after_min: Option<u32>,
 }
@@ -64,6 +68,12 @@ pub struct EnvPolicy {
     pub remove: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub set: BTreeMap<String, String>,
+}
+
+impl EnvPolicy {
+    pub fn is_empty(&self) -> bool {
+        self.remove.is_empty() && self.set.is_empty()
+    }
 }
 
 impl Config {

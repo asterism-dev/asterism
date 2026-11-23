@@ -1,4 +1,4 @@
-import type { AgentConfig, AgentInfo } from './types';
+import type { AgentConfig, AgentInfo, EnvSettings } from './types';
 
 export interface EnvRow {
   key: string;
@@ -8,12 +8,16 @@ export interface AgentForm {
   args: string[];
   set: EnvRow[];
   remove: string[];
+  machineSet: EnvRow[];
+  machineRemove: string[];
+  machineFromLocal: boolean;
   mcpText: string;
   hooksText: string;
   hibernateAfter: string;
 }
 export interface FormErrors {
   env?: string;
+  machineEnv?: string;
   mcp?: string;
   hooks?: string;
   hibernate?: string;
@@ -46,7 +50,17 @@ export function agentSections(info: AgentInfo | undefined): AgentSections {
 }
 
 export function emptyForm(): AgentForm {
-  return { args: [], set: [], remove: [], mcpText: '', hooksText: '', hibernateAfter: '' };
+  return {
+    args: [],
+    set: [],
+    remove: [],
+    machineSet: [],
+    machineRemove: [],
+    machineFromLocal: false,
+    mcpText: '',
+    hooksText: '',
+    hibernateAfter: '',
+  };
 }
 
 function pretty(value: Record<string, unknown> | null): string {
@@ -58,10 +72,34 @@ export function toForm(config: AgentConfig): AgentForm {
     args: [...config.args],
     set: Object.entries(config.env.set).map(([key, value]) => ({ key, value })),
     remove: [...config.env.remove],
+    machineSet: Object.entries(config.machine_env?.set ?? {}).map(([key, value]) => ({
+      key,
+      value,
+    })),
+    machineRemove: [...(config.machine_env?.remove ?? [])],
+    machineFromLocal: config.machine_env_from_local ?? false,
     mcpText: pretty(config.mcp),
     hooksText: pretty(config.hooks),
     hibernateAfter: config.hibernate_after_min == null ? '' : String(config.hibernate_after_min),
   };
+}
+
+export function copyLocalEnv(form: AgentForm): void {
+  form.machineSet = form.set.map((row) => ({ ...row }));
+  form.machineRemove = [...form.remove];
+}
+
+function envSettings(rows: EnvRow[], remove: string[]): { env: EnvSettings; duplicate?: string } {
+  // No prototype, so names like "constructor" or "__proto__" are plain keys.
+  const set: Record<string, string> = Object.create(null);
+  let duplicate: string | undefined;
+  for (const row of rows) {
+    const key = row.key.trim();
+    if (!key) continue;
+    if (key in set) duplicate = key;
+    set[key] = row.value;
+  }
+  return { env: { remove: remove.map((r) => r.trim()).filter(Boolean), set }, duplicate };
 }
 
 function parseObject(text: string, label: string): Parsed {
@@ -83,14 +121,10 @@ export function fromForm(
   sections: AgentSections,
 ): { config: AgentConfig } | { errors: FormErrors } {
   const errors: FormErrors = {};
-  // No prototype, so names like "constructor" or "__proto__" are plain keys.
-  const set: Record<string, string> = Object.create(null);
-  for (const row of form.set) {
-    const key = row.key.trim();
-    if (!key) continue;
-    if (key in set) errors.env = `${key} is set twice`;
-    set[key] = row.value;
-  }
+  const local = envSettings(form.set, form.remove);
+  const machine = envSettings(form.machineSet, form.machineRemove);
+  if (local.duplicate) errors.env = `${local.duplicate} is set twice`;
+  if (machine.duplicate) errors.machineEnv = `${machine.duplicate} is set twice`;
   const mcp: Parsed = sections.mcp ? parseObject(form.mcpText, 'MCP servers') : { value: null };
   const hooks: Parsed = sections.hooks ? parseObject(form.hooksText, 'Hooks') : { value: null };
   const minutes = form.hibernateAfter.trim();
@@ -105,7 +139,9 @@ export function fromForm(
   return {
     config: {
       args: sections.args ? form.args.filter((arg) => arg.trim() !== '') : [],
-      env: { remove: form.remove.map((r) => r.trim()).filter(Boolean), set },
+      env: local.env,
+      machine_env: machine.env,
+      machine_env_from_local: form.machineFromLocal,
       mcp: mcp.value,
       hooks: hooks.value,
       hibernate_after_min: hibernate,

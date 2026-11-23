@@ -2418,13 +2418,71 @@ async fn cleared_plugin_setting_is_reset_on_machine() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn local_environment_is_pushed_when_machines_use_it() {
+    let (daemon, d, fake) = hub(DEADLINE).await;
+    let m = add_machine(&d, "vm").await;
+    assert!(eventually_state(&d, m.id, MachineState::Ready).await);
+
+    let local = EnvSettings {
+        set: [("LOCAL".to_string(), "1".to_string())].into(),
+        ..Default::default()
+    };
+    let config = AgentConfig {
+        env: local.clone(),
+        machine_env: EnvSettings {
+            set: [("IGNORED".to_string(), "1".to_string())].into(),
+            ..Default::default()
+        },
+        machine_env_from_local: true,
+        ..Default::default()
+    };
+    let () = d
+        .call(
+            method::AGENT_CONFIG_SET,
+            AgentConfigSetParams {
+                agent: "claude".into(),
+                config,
+            },
+        )
+        .await;
+    daemon.push_agent_settings(m.id, "claude").await.unwrap();
+
+    let pushed: AgentConfig = machine_client(&fake)
+        .await
+        .call(
+            method::AGENT_CONFIG_GET,
+            AgentParams {
+                agent: "claude".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        pushed,
+        AgentConfig {
+            env: local,
+            ..Default::default()
+        }
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn agent_settings_are_pushed_to_machine() {
     let (daemon, d, fake) = hub(DEADLINE).await;
     let m = add_machine(&d, "vm").await;
     assert!(eventually_state(&d, m.id, MachineState::Ready).await);
 
+    let machine_env = EnvSettings {
+        remove: vec!["AWS_*".into()],
+        set: [("ON_MACHINE".to_string(), "1".to_string())].into(),
+    };
     let config = AgentConfig {
         args: vec!["--foo".into()],
+        env: EnvSettings {
+            set: [("LOCAL_ONLY".to_string(), "1".to_string())].into(),
+            ..Default::default()
+        },
+        machine_env: machine_env.clone(),
         mcp: Some(serde_json::json!({"mcpServers": {"x": {"command": "x"}}})),
         hooks: Some(serde_json::json!({"hooks": {"Stop": []}})),
         ..Default::default()
@@ -2459,7 +2517,14 @@ async fn agent_settings_are_pushed_to_machine() {
         )
         .await
         .unwrap();
-    assert_eq!(pushed, config);
+    assert_eq!(
+        pushed,
+        AgentConfig {
+            env: machine_env,
+            machine_env: EnvSettings::default(),
+            ..config
+        }
+    );
     let settings: PluginSettings = client
         .call(
             method::PLUGIN_SETTINGS,

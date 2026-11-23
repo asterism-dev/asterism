@@ -62,6 +62,11 @@ pub fn load(paths: &Paths, registry: &Registry, agent: &str) -> Result<AgentConf
             remove: entry.env.remove,
             set: entry.env.set,
         },
+        machine_env: EnvSettings {
+            remove: entry.machine_env.remove,
+            set: entry.machine_env.set,
+        },
+        machine_env_from_local: entry.machine_env_from_local,
         mcp: read_json(&paths.agent_mcp(agent))?,
         hooks: read_json(&paths.agent_hooks(agent))?,
         hibernate_after_min: entry.hibernate_after_min,
@@ -80,6 +85,11 @@ pub fn load_raw(paths: &Paths, registry: &Registry, agent: &str) -> Result<Agent
             remove: entry.env.remove,
             set: entry.env.set,
         },
+        machine_env: EnvSettings {
+            remove: entry.machine_env.remove,
+            set: entry.machine_env.set,
+        },
+        machine_env_from_local: entry.machine_env_from_local,
         mcp_text: read_text(&paths.agent_mcp(agent))?,
         hooks_text: read_text(&paths.agent_hooks(agent))?,
         hibernate_after_min: entry.hibernate_after_min,
@@ -139,27 +149,8 @@ pub fn validate(registry: &Registry, agent: &str, config: &AgentConfig) -> Resul
             )));
         }
     }
-    if let Some(name) = config
-        .env
-        .set
-        .keys()
-        .find(|name| name.is_empty() || name.contains(['=', '\0']))
-    {
-        return Err(invalid(format!(
-            "invalid environment variable name {name:?}"
-        )));
-    }
-    if config.env.remove.iter().any(String::is_empty) {
-        return Err(invalid("remove patterns must not be empty"));
-    }
-    if config
-        .env
-        .remove
-        .iter()
-        .any(|pattern| pattern.contains('\0'))
-    {
-        return Err(invalid("remove patterns must not contain NUL characters"));
-    }
+    validate_env(&config.env)?;
+    validate_env(&config.machine_env)?;
     if let Some(mcp) = &config.mcp {
         if !mcp.get("mcpServers").is_some_and(Value::is_object) {
             return Err(invalid(
@@ -169,6 +160,25 @@ pub fn validate(registry: &Registry, agent: &str, config: &AgentConfig) -> Resul
     }
     if let Some(hooks) = &config.hooks {
         validate_hooks(hooks)?;
+    }
+    Ok(())
+}
+
+fn validate_env(env: &EnvSettings) -> Result<()> {
+    if let Some(name) = env
+        .set
+        .keys()
+        .find(|name| name.is_empty() || name.contains(['=', '\0']))
+    {
+        return Err(invalid(format!(
+            "invalid environment variable name {name:?}"
+        )));
+    }
+    if env.remove.iter().any(String::is_empty) {
+        return Err(invalid("remove patterns must not be empty"));
+    }
+    if env.remove.iter().any(|pattern| pattern.contains('\0')) {
+        return Err(invalid("remove patterns must not contain NUL characters"));
     }
     Ok(())
 }
@@ -204,6 +214,11 @@ pub fn save(paths: &Paths, registry: &Registry, agent: &str, config: &AgentConfi
         remove: config.env.remove.clone(),
         set: config.env.set.clone(),
     };
+    entry.machine_env = EnvPolicy {
+        remove: config.machine_env.remove.clone(),
+        set: config.machine_env.set.clone(),
+    };
+    entry.machine_env_from_local = config.machine_env_from_local;
     entry.hibernate_after_min = config.hibernate_after_min;
     // ponytail: rewriting config.toml drops hand-written comments; switch to toml_edit if people hand-edit it.
     let text =
@@ -303,6 +318,11 @@ mod tests {
                 remove: vec!["AWS_*".into()],
                 set: [("FOO".to_string(), "bar".to_string())].into(),
             },
+            machine_env: EnvSettings {
+                remove: vec!["GH_*".into()],
+                set: [("ON_MACHINE".to_string(), "1".to_string())].into(),
+            },
+            machine_env_from_local: true,
             mcp: Some(json!({"mcpServers": {"fs": {"command": "npx", "args": ["fs-mcp"]}}})),
             hooks: Some(
                 json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "say done"}]}]}}),
@@ -404,6 +424,13 @@ mod tests {
             AgentConfig {
                 env: EnvSettings {
                     remove: vec!["A\0".into()],
+                    ..Default::default()
+                },
+                ..claude_config()
+            },
+            AgentConfig {
+                machine_env: EnvSettings {
+                    set: [("A=B".to_string(), "x".to_string())].into(),
                     ..Default::default()
                 },
                 ..claude_config()
@@ -585,6 +612,8 @@ mod tests {
         let raw = load_raw(&paths, &registry(), "claude").unwrap();
         assert_eq!(raw.args, claude_config().args);
         assert_eq!(raw.env, claude_config().env);
+        assert_eq!(raw.machine_env, claude_config().machine_env);
+        assert!(raw.machine_env_from_local);
         assert_eq!(raw.hooks_text.as_deref(), Some("{ not json"));
     }
 

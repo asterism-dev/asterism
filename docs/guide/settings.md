@@ -62,7 +62,12 @@ example **Claude Code**) or the plugin (for example **Linear**). It shows the pl
 
 - **Parameters** — extra command-line arguments for every session of this agent (**+ Parameter**). The line
   below shows the resulting command.
-- **Environment** — as for [Sessions](#sessions) above.
+- **Environment** — as for [Sessions](#sessions) above. It applies to sessions on this computer only, unless
+  **Same as local** is on.
+- **Environment on machines** — the same fields for agent sessions on a [machine](machines.md). Machines get
+  these instead of **Environment**; **Copy from local** fills them with the current **Environment** fields,
+  and you can then change both independently. With **Same as local** on, every machine gets the current
+  **Environment** instead and these fields are kept but not used. It is off by default.
 - **MCP servers** — JSON in the agent's own MCP format, added to your existing agent configuration.
 - **Hooks** — JSON in the agent's own hooks format. Asterism's status hooks stay active as well.
 
