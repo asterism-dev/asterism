@@ -10,6 +10,8 @@ export interface EnvSettings {
 export interface AgentConfig {
   args: string[];
   env: EnvSettings;
+  machine_env?: EnvSettings;
+  machine_env_from_local?: boolean;
   mcp: Record<string, unknown> | null;
   hooks: Record<string, unknown> | null;
   hibernate_after_min?: number | null;
@@ -17,6 +19,8 @@ export interface AgentConfig {
 export interface AgentConfigRaw {
   args: string[];
   env: EnvSettings;
+  machine_env?: EnvSettings;
+  machine_env_from_local?: boolean;
   mcp_text: string | null;
   hooks_text: string | null;
   hibernate_after_min?: number | null;

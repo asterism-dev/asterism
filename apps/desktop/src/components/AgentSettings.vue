@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button, TextInput, Textarea } from '@asterism-dev/lumen';
+import { Button, Checkbox, TextInput, Textarea } from '@asterism-dev/lumen';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { X } from '@lucide/vue';
 import { computed, ref, watch } from 'vue';
@@ -8,6 +8,7 @@ import {
   agentSections,
   BASE_AGENTS,
   commandPreview,
+  copyLocalEnv,
   emptyForm,
   fromForm,
   HOOKS_EXAMPLE,
@@ -63,6 +64,8 @@ async function load() {
         ...toForm({
           args: raw.args,
           env: raw.env,
+          machine_env: raw.machine_env,
+          machine_env_from_local: raw.machine_env_from_local,
           mcp: null,
           hooks: null,
           hibernate_after_min: raw.hibernate_after_min,
@@ -158,6 +161,43 @@ watch(() => props.agent, load, { immediate: true });
       </div>
       <Button @click="form.remove.push('')">+ Pattern</Button>
       <p v-if="errors.env" class="error">{{ errors.env }}</p>
+    </section>
+
+    <section v-if="!BASE_AGENTS.includes(agent)">
+      <h3>Environment on machines</h3>
+      <p class="muted">
+        Sent to machines instead of the environment above, which stays on this computer unless "Same
+        as local" is on.
+      </p>
+      <Checkbox v-model="form.machineFromLocal">Same as local</Checkbox>
+      <template v-if="!form.machineFromLocal">
+        <Button @click="copyLocalEnv(form)">Copy from local</Button>
+        <div v-for="(row, i) in form.machineSet" :key="i" class="settings-row">
+          <TextInput v-model="row.key" placeholder="NAME" spellcheck="false" />
+          <TextInput v-model="row.value" placeholder="value" spellcheck="false" />
+          <Button
+            variant="ghost"
+            :icon="X"
+            title="Remove"
+            aria-label="Remove"
+            @click="form.machineSet.splice(i, 1)"
+          />
+        </div>
+        <Button @click="form.machineSet.push({ key: '', value: '' })">+ Variable</Button>
+        <h4>Remove inherited</h4>
+        <div v-for="(_, i) in form.machineRemove" :key="i" class="settings-row">
+          <TextInput v-model="form.machineRemove[i]" placeholder="AWS_*" spellcheck="false" />
+          <Button
+            variant="ghost"
+            :icon="X"
+            title="Remove"
+            aria-label="Remove"
+            @click="form.machineRemove.splice(i, 1)"
+          />
+        </div>
+        <Button @click="form.machineRemove.push('')">+ Pattern</Button>
+      </template>
+      <p v-if="errors.machineEnv" class="error">{{ errors.machineEnv }}</p>
     </section>
 
     <section v-if="sections.mcp">

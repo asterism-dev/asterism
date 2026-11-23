@@ -1763,6 +1763,10 @@ pub struct AgentConfig {
     #[serde(default)]
     pub env: EnvSettings,
     #[serde(default)]
+    pub machine_env: EnvSettings,
+    #[serde(default)]
+    pub machine_env_from_local: bool,
+    #[serde(default)]
     pub mcp: Option<Value>,
     #[serde(default)]
     pub hooks: Option<Value>,
@@ -1777,6 +1781,10 @@ pub struct AgentConfigRaw {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: EnvSettings,
+    #[serde(default)]
+    pub machine_env: EnvSettings,
+    #[serde(default)]
+    pub machine_env_from_local: bool,
     pub mcp_text: Option<String>,
     pub hooks_text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

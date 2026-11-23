@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { agentSections, commandPreview, emptyForm, fromForm, toForm } from './settingsForm';
+import {
+  agentSections,
+  commandPreview,
+  copyLocalEnv,
+  emptyForm,
+  fromForm,
+  toForm,
+} from './settingsForm';
 import type { AgentConfig } from './types';
 
 const ALL = { args: true, mcp: true, hooks: true, hibernate: true };
@@ -8,6 +15,8 @@ const NONE = { args: false, mcp: false, hooks: false, hibernate: false };
 const config: AgentConfig = {
   args: ['--model', 'opus'],
   env: { remove: ['AWS_*'], set: { FOO: 'bar' } },
+  machine_env: { remove: ['GH_*'], set: { ON_MACHINE: '1' } },
+  machine_env_from_local: true,
   mcp: { mcpServers: { fs: { command: 'npx' } } },
   hooks: null,
   hibernate_after_min: null,
@@ -32,6 +41,8 @@ describe('settings form', () => {
       config: {
         args: ['--verbose'],
         env: { remove: ['X_*'], set: {} },
+        machine_env: { remove: [], set: {} },
+        machine_env_from_local: false,
         mcp: null,
         hooks: null,
         hibernate_after_min: null,
@@ -45,6 +56,24 @@ describe('settings form', () => {
       ],
     };
     expect(fromForm(dup, ALL)).toEqual({ errors: { env: 'A is set twice' } });
+    expect(fromForm({ ...emptyForm(), machineSet: dup.set }, ALL)).toEqual({
+      errors: { machineEnv: 'A is set twice' },
+    });
+  });
+
+  it('copies the local environment to the machine environment', () => {
+    const form = toForm({ ...config, machine_env: { remove: [], set: { OLD: 'x' } } });
+    copyLocalEnv(form);
+    expect(form.machineSet).toEqual([{ key: 'FOO', value: 'bar' }]);
+    expect(form.machineRemove).toEqual(['AWS_*']);
+    form.machineSet[0].value = 'changed';
+    expect(form.set[0].value).toBe('bar');
+  });
+
+  it('loads a config without a machine environment', () => {
+    const form = toForm({ ...config, machine_env: undefined, machine_env_from_local: undefined });
+    expect(form.machineSet).toEqual([]);
+    expect(form.machineFromLocal).toBe(false);
   });
 
   it('accepts variable names that clash with Object.prototype', () => {

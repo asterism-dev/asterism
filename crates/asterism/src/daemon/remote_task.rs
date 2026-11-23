@@ -25,7 +25,7 @@ fn trimmed(value: &Option<String>) -> Option<String> {
 }
 
 impl Daemon {
-    /// Copies the hub's settings for `agent` to the machine; secret plugin settings stay behind.
+    /// Copies the hub's settings for `agent` to the machine, with its machine environment (or the local one, if machines use it) as the environment; secret plugin settings stay behind.
     pub async fn push_agent_settings(self: &Arc<Self>, machine_id: i64, agent: &str) -> Result<()> {
         let plugin = self
             .agent_infos()
@@ -54,9 +54,14 @@ impl Daemon {
             settings::settings_update(&hub_values, &hub_schema, &machine.schema)
                 .into_iter()
                 .collect();
+        let mut config = self.agent_config(agent)?;
+        let machine_env = std::mem::take(&mut config.machine_env);
+        if !std::mem::take(&mut config.machine_env_from_local) {
+            config.env = machine_env;
+        }
         let params = AgentConfigSetParams {
             agent: agent.into(),
-            config: self.agent_config(agent)?,
+            config,
         };
         let () = self
             .machines()
