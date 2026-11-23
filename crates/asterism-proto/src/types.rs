@@ -116,6 +116,7 @@ pub mod method {
     pub const MACHINE_ADD: &str = "machine.add";
     pub const MACHINE_REMOVE: &str = "machine.remove";
     pub const MACHINE_FORGET: &str = "machine.forget";
+    pub const MACHINE_SET_DELETE_WITH_TASKS: &str = "machine.set_delete_with_tasks";
     pub const MACHINE_TASKS: &str = "machine.tasks";
     pub const MACHINE_RETRY: &str = "machine.retry";
     pub const MACHINE_TEST: &str = "machine.test";
@@ -1815,6 +1816,7 @@ pub enum MachineState {
     Ready,
     Offline,
     Blocked,
+    Hibernated,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1837,6 +1839,21 @@ pub struct Machine {
     pub destination: String,
     pub created_at: i64,
     pub status: MachineStatus,
+    #[serde(default)]
+    pub provider: Option<MachineProvider>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MachineProvider {
+    pub provider: String,
+    pub owned: bool,
+    pub delete_with_tasks: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MachineSetDeleteWithTasksParams {
+    pub machine_id: i64,
+    pub delete_with_tasks: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

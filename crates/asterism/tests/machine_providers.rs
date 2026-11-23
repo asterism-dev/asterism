@@ -7,7 +7,9 @@ use std::time::Duration;
 
 use asterism_core::daemon::{Daemon, DaemonOptions};
 use asterism_core::paths::Paths;
+use asterism_core::store::StoredProvider;
 use asterism_proto::client::Client;
+use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::{method, *};
 use asterism_proto::PROTO_VERSION;
 use futures_util::{SinkExt, StreamExt};
@@ -174,4 +176,79 @@ async fn machine_provider_list_denied_to_remote_devices() {
         }
     };
     assert_eq!(reply["error"]["data"]["kind"], "forbidden");
+}
+
+fn provided(provider: &str, vm_ref: &str, owned: bool, hibernated: bool) -> StoredProvider {
+    StoredProvider {
+        provider: provider.into(),
+        vm_ref: vm_ref.into(),
+        owned,
+        delete_with_tasks: false,
+        hibernated,
+    }
+}
+
+#[tokio::test]
+async fn set_delete_with_tasks_refused_for_unowned() {
+    let home = tempfile::tempdir().unwrap();
+    let d = daemon(home.path(), "");
+    let m = d
+        .machines()
+        .add_provided("one", "u@one", provided("vmfake", "a", false, true))
+        .unwrap();
+    let err = d.machines().set_delete_with_tasks(m.id, true).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
+}
+
+#[tokio::test]
+async fn set_delete_with_tasks_updates_owned_machine() {
+    let home = tempfile::tempdir().unwrap();
+    let d = daemon(home.path(), "");
+    let m = d
+        .machines()
+        .add_provided("one", "u@one", provided("vmfake", "a", true, true))
+        .unwrap();
+    let m = d.machines().set_delete_with_tasks(m.id, true).unwrap();
+    assert!(m.provider.unwrap().delete_with_tasks);
+}
+
+#[tokio::test]
+async fn listed_vms_exclude_existing_machines() {
+    let home = tempfile::tempdir().unwrap();
+    let d = daemon(home.path(), "");
+    d.machines()
+        .add_provided("one", "u@one", provided("vmfake", "a", false, true))
+        .unwrap();
+    let all = d.machine_providers().await.unwrap();
+    let refs: Vec<_> = all[0].vms.iter().map(|vm| vm.vm_ref.as_str()).collect();
+    assert_eq!(refs, ["b"]);
+}
+
+#[tokio::test]
+async fn hibernated_machine_survives_restart_without_connecting() {
+    let home = tempfile::tempdir().unwrap();
+    let fake = common::FakeSsh::new();
+    let paths = Paths {
+        home: home.path().to_path_buf(),
+    };
+    paths.ensure_dirs().unwrap();
+    {
+        let store = asterism_core::store::Store::open(&paths.db()).unwrap();
+        store
+            .add_provided_machine("one", "u@one", &provided("vmfake", "a", true, true))
+            .unwrap();
+    }
+    let d = Daemon::with_options(
+        paths,
+        DaemonOptions {
+            ssh_bin: fake.bin(),
+            ..common::daemon_options()
+        },
+    )
+    .unwrap();
+    d.machines().start_stored().unwrap();
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let machines = d.machines().list().unwrap();
+    assert_eq!(machines[0].status.state, MachineState::Hibernated);
+    assert_eq!(fake.invocations(), 0);
 }

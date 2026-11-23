@@ -410,6 +410,14 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
                 .forget(params::<MachineIdParams>(raw)?.machine_id)
                 .await?,
         ),
+        method::MACHINE_SET_DELETE_WITH_TASKS => {
+            let p: MachineSetDeleteWithTasksParams = params(raw)?;
+            to_value(
+                daemon
+                    .machines()
+                    .set_delete_with_tasks(p.machine_id, p.delete_with_tasks)?,
+            )
+        }
         method::MACHINE_TASKS => to_value(
             daemon
                 .machines()

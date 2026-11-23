@@ -213,6 +213,20 @@ impl Shared {
         }
     }
 
+    pub fn set_delete_with_tasks(&self, on: bool) -> Machine {
+        let mut state = lock(&self.state);
+        if let Some(p) = state.machine.provider.as_mut() {
+            p.delete_with_tasks = on;
+        }
+        if !state.closed {
+            let _ = self
+                .settings
+                .events
+                .send(Event::MachineChanged(state.machine.clone()));
+        }
+        state.machine.clone()
+    }
+
     fn update(&self, f: impl FnOnce(&mut State)) {
         let mut state = lock(&self.state);
         if state.closed {

@@ -1530,10 +1530,19 @@ impl Daemon {
                     Some(self.call_timeout()),
                 )
                 .await;
-            let (vms, mut create_options, error) = match listed {
+            let (mut vms, mut create_options, error) = match listed {
                 Ok(list) => (list.vms, list.create_options, None),
                 Err(e) => (Vec::new(), Vec::new(), Some(e.message)),
             };
+            let adopted: Vec<String> = self
+                .store()
+                .machines()?
+                .into_iter()
+                .filter_map(|m| m.provider)
+                .filter(|p| p.provider == provider)
+                .map(|p| p.vm_ref)
+                .collect();
+            vms.retain(|vm| !adopted.contains(&vm.vm_ref));
             create_options.retain(|spec| {
                 let keep = spec.kind != SettingType::Secret;
                 if !keep {

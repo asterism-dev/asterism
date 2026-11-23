@@ -121,6 +121,17 @@ const MIGRATIONS: &[&str] = &[
      DROP TABLE machines;
      ALTER TABLE machines_new RENAME TO machines;",
     "ALTER TABLE projects ADD COLUMN default_machine_id INTEGER;",
+    "ALTER TABLE machines ADD COLUMN provider TEXT;
+     ALTER TABLE machines ADD COLUMN provider_ref TEXT;
+     ALTER TABLE machines ADD COLUMN owned INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE machines ADD COLUMN delete_with_tasks INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE machines ADD COLUMN hibernated INTEGER NOT NULL DEFAULT 0;
+     CREATE TABLE pending_vms (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider TEXT NOT NULL,
+        name TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+     );",
 ];
 
 const PROJECT_COLUMNS: &str =
@@ -164,9 +175,20 @@ pub struct StoredMachine {
     pub name: String,
     pub destination: String,
     pub created_at: i64,
+    pub provider: Option<StoredProvider>,
 }
 
-const MACHINE_COLUMNS: &str = "id, name, destination, created_at";
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredProvider {
+    pub provider: String,
+    pub vm_ref: String,
+    pub owned: bool,
+    pub delete_with_tasks: bool,
+    pub hibernated: bool,
+}
+
+const MACHINE_COLUMNS: &str =
+    "id, name, destination, created_at, provider, provider_ref, owned, delete_with_tasks, hibernated";
 const REMOTE_DEVICE_COLUMNS: &str = "id, name, created_at, last_seen_at";
 const NOTIFICATION_COLUMNS: &str =
     "id, kind, created_at, task_id, session_id, task_title, project_name, resolved_at, read_at";
@@ -879,6 +901,86 @@ impl Store {
         )
     }
 
+    pub fn add_provided_machine(
+        &self,
+        name: &str,
+        destination: &str,
+        p: &StoredProvider,
+    ) -> rusqlite::Result<StoredMachine> {
+        self.conn.execute(
+            "INSERT INTO machines (name, destination, created_at, provider, provider_ref, owned, delete_with_tasks, hibernated)
+             VALUES (?1, ?2, unixepoch(), ?3, ?4, ?5, ?6, ?7)",
+            params![
+                name,
+                destination,
+                p.provider,
+                p.vm_ref,
+                p.owned,
+                p.delete_with_tasks,
+                p.hibernated
+            ],
+        )?;
+        self.conn.query_row(
+            &format!("SELECT {MACHINE_COLUMNS} FROM machines WHERE id = ?1"),
+            [self.conn.last_insert_rowid()],
+            machine_row,
+        )
+    }
+
+    pub fn set_machine_destination(&self, id: i64, destination: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE machines SET destination = ?2 WHERE id = ?1",
+            params![id, destination],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_machine_hibernated(&self, id: i64, hibernated: bool) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE machines SET hibernated = ?2 WHERE id = ?1",
+            params![id, hibernated],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_machine_delete_with_tasks(&self, id: i64, on: bool) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE machines SET delete_with_tasks = ?2 WHERE id = ?1",
+            params![id, on],
+        )?;
+        Ok(())
+    }
+
+    pub fn machine_task_count(&self, id: i64) -> rusqlite::Result<i64> {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM tasks WHERE machine_id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn add_pending_vm(&self, provider: &str, name: &str) -> rusqlite::Result<i64> {
+        self.conn.execute(
+            "INSERT INTO pending_vms (provider, name, created_at) VALUES (?1, ?2, unixepoch())",
+            params![provider, name],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn remove_pending_vm(&self, id: i64) -> rusqlite::Result<()> {
+        self.conn
+            .execute("DELETE FROM pending_vms WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn pending_vms(&self) -> rusqlite::Result<Vec<(i64, String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, provider, name FROM pending_vms ORDER BY id")?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect()
+    }
+
     pub fn machines(&self) -> rusqlite::Result<Vec<StoredMachine>> {
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {MACHINE_COLUMNS} FROM machines ORDER BY id"
@@ -1067,6 +1169,16 @@ fn machine_row(row: &Row) -> rusqlite::Result<StoredMachine> {
         name: row.get(1)?,
         destination: row.get(2)?,
         created_at: row.get(3)?,
+        provider: match row.get::<_, Option<String>>(4)? {
+            Some(provider) => Some(StoredProvider {
+                provider,
+                vm_ref: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                owned: row.get(6)?,
+                delete_with_tasks: row.get(7)?,
+                hibernated: row.get(8)?,
+            }),
+            None => None,
+        },
     })
 }
 
@@ -1623,5 +1735,62 @@ mod tests {
         assert!(store.projects().unwrap().is_empty());
         assert!(store.tasks(None, true).unwrap().is_empty());
         assert!(store.sessions(None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn migrated_machine_has_no_provider() {
+        let store = Store::open_in_memory().unwrap();
+        let m = store.add_machine("vm", "u@vm").unwrap();
+        assert_eq!(m.provider, None);
+    }
+
+    #[test]
+    fn provided_machine_round_trips() {
+        let store = Store::open_in_memory().unwrap();
+        let p = StoredProvider {
+            provider: "vmfake".into(),
+            vm_ref: "a".into(),
+            owned: true,
+            delete_with_tasks: true,
+            hibernated: true,
+        };
+        let m = store.add_provided_machine("vm", "u@vm", &p).unwrap();
+        assert_eq!(m.provider, Some(p.clone()));
+        assert_eq!(store.machine(m.id).unwrap().unwrap(), m);
+        store.set_machine_hibernated(m.id, false).unwrap();
+        store.set_machine_delete_with_tasks(m.id, false).unwrap();
+        store.set_machine_destination(m.id, "u@new").unwrap();
+        let m = store.machine(m.id).unwrap().unwrap();
+        assert_eq!(m.destination, "u@new");
+        let p = m.provider.unwrap();
+        assert!(!p.hibernated && !p.delete_with_tasks && p.owned);
+    }
+
+    #[test]
+    fn machine_task_count_includes_archived() {
+        let store = Store::open_in_memory().unwrap();
+        let project = store.add_project("repo", "/src/repo").unwrap();
+        let t = store.insert_task(project.id, "t", None, "main").unwrap();
+        store.set_task_machine(t, 3).unwrap();
+        assert_eq!(store.machine_task_count(3).unwrap(), 1);
+        store.set_task_archived(t).unwrap();
+        assert_eq!(store.machine_task_count(3).unwrap(), 1);
+        assert_eq!(store.machine_task_count(4).unwrap(), 0);
+    }
+
+    #[test]
+    fn pending_vms_add_list_remove() {
+        let store = Store::open_in_memory().unwrap();
+        let a = store.add_pending_vm("vmfake", "one").unwrap();
+        let b = store.add_pending_vm("vmfake", "two").unwrap();
+        assert_eq!(
+            store.pending_vms().unwrap(),
+            vec![
+                (a, "vmfake".to_string(), "one".to_string()),
+                (b, "vmfake".to_string(), "two".to_string())
+            ]
+        );
+        store.remove_pending_vm(a).unwrap();
+        assert_eq!(store.pending_vms().unwrap().len(), 1);
     }
 }

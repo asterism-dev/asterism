@@ -9,15 +9,16 @@ use std::sync::{Arc, Mutex, Weak};
 use asterism_proto::client::Client;
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::{
-    method, Event, Machine, MachineForgetResult, MachineSessionRef, MachineStatus,
-    MachineTestResult, MachineUpdatePreview, Role, Session, SessionListParams, SessionStatus, Task,
+    method, Event, Machine, MachineForgetResult, MachineProvider, MachineSessionRef, MachineState,
+    MachineStatus, MachineTestResult, MachineUpdatePreview, Role, Session, SessionListParams,
+    SessionStatus, Task,
 };
 use tokio::task::JoinHandle;
 
 use crate::daemon::Daemon;
 use crate::error::{Error, Result};
 use crate::lock;
-use crate::store::StoredMachine;
+use crate::store::{StoredMachine, StoredProvider};
 use conn::{Settings, Shared};
 
 struct Live {
@@ -73,6 +74,24 @@ impl Machines {
     }
 
     pub fn add(&self, name: &str, destination: &str) -> Result<Machine> {
+        self.insert(name, destination, None)
+    }
+
+    pub fn add_provided(
+        &self,
+        name: &str,
+        destination: &str,
+        p: StoredProvider,
+    ) -> Result<Machine> {
+        self.insert(name, destination, Some(p))
+    }
+
+    fn insert(
+        &self,
+        name: &str,
+        destination: &str,
+        provider: Option<StoredProvider>,
+    ) -> Result<Machine> {
         self.require_node()?;
         let name = name.trim();
         if name.is_empty() {
@@ -88,7 +107,10 @@ impl Machines {
                     format!("a machine named {name} already exists"),
                 ));
             }
-            store.add_machine(name, destination)?
+            match &provider {
+                Some(p) => store.add_provided_machine(name, destination, p)?,
+                None => store.add_machine(name, destination)?,
+            }
         };
         Ok(self.connect(stored))
     }
@@ -102,10 +124,44 @@ impl Machines {
         Ok(())
     }
 
+    pub fn set_delete_with_tasks(&self, id: i64, on: bool) -> Result<Machine> {
+        self.require_node()?;
+        let daemon = self.daemon()?;
+        let store = daemon.store();
+        let owned = store
+            .machine(id)?
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, format!("no machine with id {id}")))?
+            .provider
+            .is_some_and(|p| p.owned);
+        if !owned {
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                "only machines created by a provider can be deleted with their tasks",
+            ));
+        }
+        store.set_machine_delete_with_tasks(id, on)?;
+        match lock(&self.live).get(&id) {
+            Some(live) => Ok(live.shared.set_delete_with_tasks(on)),
+            None => Err(Error::new(
+                ErrorKind::NotFound,
+                format!("no connection for machine {id}"),
+            )),
+        }
+    }
+
     fn connect(&self, stored: StoredMachine) -> Machine {
-        let shared = Arc::new(Shared::new(self.settings.clone(), machine(stored)));
+        let hibernated = stored.provider.as_ref().is_some_and(|p| p.hibernated);
+        let mut initial = machine(stored);
+        if hibernated {
+            initial.status.state = MachineState::Hibernated;
+        }
+        let shared = Arc::new(Shared::new(self.settings.clone(), initial));
         shared.publish();
-        let task = tokio::spawn(conn::run(shared.clone()));
+        let task = if hibernated {
+            tokio::spawn(std::future::pending())
+        } else {
+            tokio::spawn(conn::run(shared.clone()))
+        };
         let m = shared.machine();
         if let Some(old) = lock(&self.live).insert(m.id, Live { shared, task }) {
             old.shared.close();
@@ -333,6 +389,11 @@ fn machine(stored: StoredMachine) -> Machine {
         destination: stored.destination,
         created_at: stored.created_at,
         status: MachineStatus::default(),
+        provider: stored.provider.map(|p| MachineProvider {
+            provider: p.provider,
+            owned: p.owned,
+            delete_with_tasks: p.delete_with_tasks,
+        }),
     }
 }
 
