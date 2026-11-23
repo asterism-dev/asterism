@@ -75,6 +75,8 @@ enum Cmd {
     },
     /// Bridge stdin/stdout to the local daemon socket.
     Attach,
+    /// Open a URL in the browser of the computer running the Asterism app; `BROWSER` in machine sessions.
+    OpenUrl { url: String },
     /// Report a normalized agent hook event for the current session; never fails.
     Hook {
         event: HookArg,
@@ -899,6 +901,17 @@ async fn run(cli: Cli) -> Result<(), ClientError> {
                         text,
                         submit: !no_submit,
                     },
+                )
+                .await?;
+            print_ok(json);
+        }
+        Cmd::OpenUrl { url } => {
+            let session_id = env_id("ASTERISM_SESSION")
+                .ok_or_else(|| invalid("open-url only works inside an Asterism session".into()))?;
+            client
+                .call::<_, ()>(
+                    method::SESSION_OPEN_URL,
+                    SessionOpenUrlParams { session_id, url },
                 )
                 .await?;
             print_ok(json);

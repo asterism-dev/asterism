@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, Weak};
@@ -150,6 +151,9 @@ fn tool_path() -> Result<(PathBuf, String)> {
         .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
     Ok((bin_dir, path.to_string_lossy().into_owned()))
 }
+
+// `BROWSER` must name one executable: agents exec it with the URL as its only argument.
+const BROWSER_HELPER: &str = "#!/bin/sh\nexec \"$ASTERISM_CLI\" open-url \"$1\"\n";
 
 const PLUGIN_FIXED_ENV: &[&str] = &["PATH", "ASTERISM_HOME", "ASTERISM_SOCKET", "ASTERISM_CLI"];
 
@@ -3263,6 +3267,11 @@ impl Daemon {
     ) -> Result<()> {
         let mut policy = Config::load(&self.paths.config())?.env_policy(config::agent_key(kind));
         policy.set.extend(extra_env);
+        // A machine has no browser of its own, so URLs opened there go to the hub's app.
+        if self.options.role == Role::Machine {
+            let helper = self.browser_helper()?;
+            policy.set.entry("BROWSER".into()).or_insert(helper);
+        }
         let (bin_dir, path) = tool_path()?;
         let fixed = [
             ("PATH".to_string(), path),
@@ -3694,6 +3703,35 @@ impl Daemon {
             None => reached.await,
         };
         Ok(outcome.map(|s| *s).unwrap_or(SessionStatus::Exited))
+    }
+
+    /// Asks the subscribed apps to open `url` in the user's browser.
+    pub fn open_url(&self, params: SessionOpenUrlParams) -> Result<()> {
+        // The URL can come from a machine; other schemes would launch arbitrary local handlers.
+        if !["http://", "https://"]
+            .iter()
+            .any(|scheme| params.url.starts_with(scheme))
+        {
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                "only http and https URLs can be opened",
+            ));
+        }
+        self.emit(Event::SessionOpenUrl {
+            session_id: params.session_id,
+            url: params.url,
+        });
+        Ok(())
+    }
+
+    /// Writes the script a machine session's `BROWSER` points at and returns its path.
+    fn browser_helper(&self) -> Result<String> {
+        let path = self.paths.home.join("open-url");
+        if std::fs::read(&path).ok().as_deref() != Some(BROWSER_HELPER.as_bytes()) {
+            std::fs::write(&path, BROWSER_HELPER)?;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
+        }
+        Ok(path.display().to_string())
     }
 
     pub fn hook(&self, params: SessionHookParams) -> Result<()> {
