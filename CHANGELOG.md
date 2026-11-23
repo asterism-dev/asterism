@@ -1,3 +1,15 @@
+## v0.36.0 (2026-11-23)
+
+### BREAKING CHANGE
+
+- an agent's local environment settings are no longer sent
+to machines. Enter them under "Environment on machines" or turn on "Same
+as local" to keep the previous behaviour.
+
+### Feat
+
+- **machines**: separate agent environment for machines (#44)
+
 ## v0.35.0 (2026-11-23)
 
 ### Feat
