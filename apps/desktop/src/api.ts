@@ -29,6 +29,7 @@ import type {
   ProjectInitializeResult,
   RemoteConfig,
   Machine,
+  MachineProviderInfo,
   MachineUpdatePreview,
   RemoteDevice,
   RemoteInterface,
@@ -332,6 +333,12 @@ export const api = {
   removeRemoteDevice: (deviceId: number) =>
     call<null>('remote.device_remove', { device_id: deviceId }),
   machines: () => call<Machine[]>('machine.list'),
+  machineProviders: () => call<MachineProviderInfo[]>('machine_provider.list'),
+  setMachineDeleteWithTasks: (machineId: number, deleteWithTasks: boolean) =>
+    call<Machine>('machine.set_delete_with_tasks', {
+      machine_id: machineId,
+      delete_with_tasks: deleteWithTasks,
+    }),
   addMachine: (name: string, destination: string) =>
     call<Machine>('machine.add', { name, destination }),
   removeMachine: (machineId: number) => call<null>('machine.remove', { machine_id: machineId }),

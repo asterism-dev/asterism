@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button } from '@asterism-dev/lumen';
+import { Button, Switch } from '@asterism-dev/lumen';
 import { ChevronRight, Ellipsis } from '@lucide/vue';
 import { computed } from 'vue';
 import { api, errorMessage } from '../api';
@@ -15,7 +15,7 @@ const emit = defineEmits<{ back: []; update: []; remove: []; forget: [] }>();
 const tasks = computed(() => machineTaskList(props.machine, state.tasks));
 const status = computed(() => props.machine.status);
 const needsRetry = computed(
-  () => status.value.state === 'blocked' || status.value.state === 'offline',
+  () => status.value.state !== 'ready' && status.value.state !== 'connecting',
 );
 const agents = computed(() => status.value.agents ?? []);
 
@@ -69,6 +69,19 @@ function menu(e: MouseEvent) {
         >
       </div>
       <p v-if="status.error" class="error">{{ status.error }}</p>
+      <div v-if="machine.provider" class="line">
+        <span class="grow muted">Provider: {{ machine.provider.provider }}</span>
+        <template v-if="machine.provider.owned">
+          <label for="delete-with-tasks">Delete VM with its last task</label>
+          <Switch
+            id="delete-with-tasks"
+            :model-value="machine.provider.delete_with_tasks"
+            @update:model-value="
+              api.setMachineDeleteWithTasks(machine.id, $event).catch((e) => toast(errorMessage(e)))
+            "
+          />
+        </template>
+      </div>
     </section>
     <section class="card">
       <h4>Asterism on the machine</h4>

@@ -7,11 +7,24 @@ import {
   machineBlocksInput,
   machineSummary,
   machineTaskList,
+  parseProviderValue,
+  providerGroups,
+  suggestVmName,
+  vmOptionsDraft,
+  vmOptionsPayload,
   machineStatusLine,
   taskMachine,
   updateConfirmText,
 } from './machines';
-import type { AgentInfo, Machine, MachineSessionRef, Project, Task } from './types';
+import type {
+  AgentInfo,
+  Machine,
+  MachineProviderInfo,
+  SettingSpec,
+  MachineSessionRef,
+  Project,
+  Task,
+} from './types';
 
 it.each([
   [
@@ -223,4 +236,65 @@ it('machineSummary lists installed agents and active task count', () => {
   expect(machineSummary(m, [t(1, 7)])).toBe('claude · 1 active task');
   expect(machineSummary(m, [])).toBe('claude');
   expect(machineSummary(machine('offline'), [])).toBe('');
+});
+
+it('shows a hibernated machine as such', () => {
+  const m = {
+    status: { state: 'hibernated', platform: 'linux', error: null, update_available: false },
+  } as Machine;
+  expect(machineStatusLine(m)).toBe('Hibernated');
+});
+
+it('groups provider VMs with a new entry and carries the error', () => {
+  const infos: MachineProviderInfo[] = [
+    {
+      provider: 'obs',
+      display_name: 'Observatory',
+      vms: [
+        { ref: 'a', name: 'api', state: 'running', destination: 'x' },
+        { ref: 'b:c', name: 'db', state: 'hibernated', destination: 'y' },
+      ],
+      create_options: [],
+      error: null,
+    },
+    { provider: 'bad', display_name: 'Bad', vms: [], create_options: [], error: 'no token' },
+  ];
+  const [obs, bad] = providerGroups(infos);
+  expect(obs.label).toBe('Observatory');
+  expect(obs.options).toEqual([
+    { value: 'provider:obs:vm:a', label: 'api' },
+    { value: 'provider:obs:vm:b:c', label: 'db (hibernated)' },
+    { value: 'provider:obs:new', label: '+ New VM…' },
+  ]);
+  expect(bad.error).toBe('no token');
+});
+
+it('parses provider picker values', () => {
+  expect(parseProviderValue('provider:obs:new')).toEqual({ provider: 'obs', ref: null });
+  expect(parseProviderValue('provider:obs:vm:b:c')).toEqual({ provider: 'obs', ref: 'b:c' });
+  expect(parseProviderValue(3)).toBeNull();
+  expect(parseProviderValue('provider:obs:error')).toBeNull();
+});
+
+it.each([
+  ['Fix Login Bug!', [], 'fix-login-bug'],
+  ['Fix Login Bug!', ['fix-login-bug'], 'fix-login-bug-2'],
+  ['Fix Login Bug!', ['fix-login-bug', 'fix-login-bug-2'], 'fix-login-bug-3'],
+  ['!!!', [], 'task'],
+  ['a'.repeat(50), [], 'a'.repeat(40)],
+])('suggests VM name for %s', (title, taken, expected) => {
+  expect(suggestVmName(title, taken)).toBe(expected);
+});
+
+it('prefills VM options from defaults and drops empty ones from the payload', () => {
+  const spec = (key: string, type: SettingSpec['type'], def: unknown) =>
+    ({ key, title: key, type, required: false, description: null, default: def }) as SettingSpec;
+  const draft = vmOptionsDraft([
+    spec('image', 'string', 'ubuntu'),
+    spec('cpus', 'number', 2),
+    spec('ssd', 'bool', null),
+    spec('note', 'string', null),
+  ]);
+  expect(draft.values).toEqual({ image: 'ubuntu', cpus: 2, ssd: false, note: '' });
+  expect(vmOptionsPayload(draft)).toEqual({ image: 'ubuntu', cpus: 2, ssd: false });
 });
