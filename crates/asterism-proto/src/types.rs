@@ -614,6 +614,7 @@ pub enum CapabilityKind {
     Agent,
     Command,
     TaskSource,
+    MachineProvider,
     Panel,
 }
 

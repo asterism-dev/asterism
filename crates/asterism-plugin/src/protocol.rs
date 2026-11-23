@@ -1,4 +1,6 @@
-use asterism_proto::types::{DiffSide, PrListState, PullRequest, ReviewEvent, Visibility};
+use asterism_proto::types::{
+    DiffSide, PrListState, PullRequest, ReviewEvent, SettingSpec, Visibility,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -28,6 +30,11 @@ pub mod method {
     pub const FORGE_CREATE_REMOTE: &str = "forge.create_remote";
     pub const FORGE_PULL_REQUESTS: &str = "forge.pull_requests";
     pub const FORGE_SEARCH_PULL_REQUESTS: &str = "forge.search_pull_requests";
+    pub const MACHINE_PROVIDER_LIST: &str = "machine_provider.list";
+    pub const MACHINE_PROVIDER_CREATE: &str = "machine_provider.create";
+    pub const MACHINE_PROVIDER_RESUME: &str = "machine_provider.resume";
+    pub const MACHINE_PROVIDER_HIBERNATE: &str = "machine_provider.hibernate";
+    pub const MACHINE_PROVIDER_DELETE: &str = "machine_provider.delete";
     pub const AGENT_PREPARE: &str = "agent.prepare";
     pub const AGENT_DETECT: &str = "agent.detect";
 }
@@ -150,6 +157,65 @@ pub struct TaskSourceCheck {
     pub available: bool,
     #[serde(default)]
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderParams {
+    pub provider: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderVmParams {
+    pub provider: String,
+    #[serde(rename = "ref")]
+    pub vm_ref: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProviderCreateParams {
+    pub provider: String,
+    pub name: String,
+    #[serde(default)]
+    pub options: Map<String, Value>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderVmState {
+    Running,
+    Stopped,
+    Hibernated,
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderVm {
+    #[serde(rename = "ref")]
+    pub vm_ref: String,
+    pub name: String,
+    pub state: ProviderVmState,
+    pub destination: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProviderListResult {
+    pub vms: Vec<ProviderVm>,
+    #[serde(default)]
+    pub create_options: Vec<SettingSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderCreateResult {
+    #[serde(rename = "ref")]
+    pub vm_ref: String,
+    pub name: String,
+    pub destination: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderResumeResult {
+    pub destination: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

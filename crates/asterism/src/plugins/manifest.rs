@@ -50,6 +50,8 @@ pub struct Provides {
     #[serde(default)]
     pub task_source: Vec<TaskSourceDecl>,
     #[serde(default)]
+    pub machine_provider: Vec<MachineProviderDecl>,
+    #[serde(default)]
     pub panel: Vec<PanelDecl>,
 }
 
@@ -137,6 +139,13 @@ pub struct TaskSourceDecl {
     pub display_name: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MachineProviderDecl {
+    pub id: String,
+    pub display_name: String,
+}
+
 impl Manifest {
     /// Capabilities the backend must confirm in its `initialize` reply.
     pub fn backend_capabilities(&self) -> BTreeSet<String> {
@@ -157,6 +166,7 @@ impl Manifest {
             ),
             ("command", !provides.command.is_empty()),
             ("task_source", !provides.task_source.is_empty()),
+            ("machine_provider", !provides.machine_provider.is_empty()),
         ]
         .into_iter()
         .filter(|(_, present)| *present)
@@ -188,6 +198,11 @@ impl Manifest {
                 p.task_source
                     .iter()
                     .map(|t| cap(CapabilityKind::TaskSource, &t.id, &t.display_name)),
+            )
+            .chain(
+                p.machine_provider
+                    .iter()
+                    .map(|v| cap(CapabilityKind::MachineProvider, &v.id, &v.display_name)),
             )
             .chain(
                 p.panel
@@ -258,7 +273,7 @@ fn validate(m: &Manifest) -> Result<(), String> {
     }
     if !m.backend_capabilities().is_empty() && m.backend.is_none() {
         return Err(
-            "forges, commands, task sources and backend agents need a [backend] section".into(),
+            "forges, commands, task sources, machine providers and backend agents need a [backend] section".into(),
         );
     }
     let p = &m.provides;
@@ -266,6 +281,7 @@ fn validate(m: &Manifest) -> Result<(), String> {
     unique("agent", p.agent.iter().map(|a| &a.id))?;
     unique("command", p.command.iter().map(|c| &c.name))?;
     unique("task source", p.task_source.iter().map(|t| &t.id))?;
+    unique("machine provider", p.machine_provider.iter().map(|v| &v.id))?;
     unique("setting", m.settings.iter().map(|s| &s.key))?;
     unique("panel", p.panel.iter().map(|n| &n.id))?;
     for panel in &p.panel {
@@ -291,6 +307,7 @@ fn validate(m: &Manifest) -> Result<(), String> {
         .iter()
         .map(|f| &f.id)
         .chain(p.task_source.iter().map(|t| &t.id))
+        .chain(p.machine_provider.iter().map(|v| &v.id))
     {
         if !is_slug(id) {
             return Err(format!("invalid id {id:?}: use a-z, 0-9 and '-'"));
@@ -536,6 +553,20 @@ required = true
         assert!(
             !plain.provides.forge[0].reviews && !plain.backend_capabilities().contains("reviews")
         );
+    }
+
+    #[test]
+    fn machine_provider_needs_backend_and_capability() {
+        let base = "name = \"vm\"\nversion = \"1.0.0\"\nprotocol = 1\n";
+        let provider = "[[provides.machine_provider]]\nid = \"vmfake\"\ndisplay_name = \"VM\"\n";
+        assert!(parse(&format!("{base}{provider}")).is_err());
+        let m = parse(&format!("{base}[backend]\ncommand = [\"x\"]\n{provider}")).unwrap();
+        assert!(m.backend_capabilities().contains("machine_provider"));
+        assert!(m.capabilities().contains(&Capability {
+            kind: CapabilityKind::MachineProvider,
+            id: "vmfake".into(),
+            description: "VM".into(),
+        }));
     }
 
     #[test]
