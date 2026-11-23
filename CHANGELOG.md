@@ -1,3 +1,9 @@
+## v0.37.0 (2026-11-23)
+
+### Feat
+
+- **machines**: open links from machine sessions in the local browser (#45)
+
 ## v0.36.0 (2026-11-23)
 
 ### BREAKING CHANGE
