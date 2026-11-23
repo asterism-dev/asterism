@@ -34,7 +34,7 @@ impl Machines {
             })
     }
 
-    /// Forwards one call to a ready machine, bounded by `machine_call_timeout`.
+    /// Forwards one call to a ready machine, waking it first, bounded by `machine_call_timeout`.
     pub async fn call<P: Serialize, T: DeserializeOwned>(
         &self,
         machine_id: i64,
@@ -54,6 +54,7 @@ impl Machines {
         method: &str,
         params: P,
     ) -> Result<T> {
+        self.wake(machine_id).await?;
         let shared = self.shared(machine_id)?;
         let name = shared.machine().name;
         let client = shared.client().ok_or_else(|| offline(&name))?;

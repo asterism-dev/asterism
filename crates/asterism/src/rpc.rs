@@ -426,7 +426,8 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
         method::MACHINE_RETRY => {
             daemon
                 .machines()
-                .retry(params::<MachineIdParams>(raw)?.machine_id)?;
+                .retry(params::<MachineIdParams>(raw)?.machine_id)
+                .await?;
             Ok(Value::Null)
         }
         method::UPLINK_REGISTER => {

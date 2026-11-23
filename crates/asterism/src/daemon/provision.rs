@@ -242,8 +242,9 @@ impl Daemon {
         Ok(())
     }
 
-    async fn delete_vm(&self, provider: &str, vm_ref: &str) -> Result<()> {
-        let _: Value = self
+    /// Deletes a provider VM; one the provider no longer knows counts as deleted.
+    pub(crate) async fn delete_vm(&self, provider: &str, vm_ref: &str) -> Result<()> {
+        let deleted: Result<Value> = self
             .provider_call(
                 provider,
                 plugin_method::MACHINE_PROVIDER_DELETE,
@@ -253,8 +254,21 @@ impl Daemon {
                 },
                 None,
             )
-            .await?;
-        Ok(())
+            .await;
+        match deleted {
+            // A missing provider is NotFound too, and must not count as a deleted VM.
+            Err(e)
+                if e.kind == ErrorKind::NotFound
+                    && self
+                        .plugin_set()
+                        .registry
+                        .machine_provider(provider)
+                        .is_some() =>
+            {
+                Ok(())
+            }
+            other => other.map(drop),
+        }
     }
 
     /// Resumes a hibernated or stopped VM; returns where it is reachable.

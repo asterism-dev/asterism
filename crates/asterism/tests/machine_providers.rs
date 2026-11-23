@@ -257,7 +257,7 @@ async fn hibernated_machine_survives_restart_without_connecting() {
 struct Provisioning {
     d: Arc<Daemon>,
     home: tempfile::TempDir,
-    _fake: common::FakeSsh,
+    fake: common::FakeSsh,
     project_id: i64,
 }
 
@@ -270,6 +270,28 @@ impl Provisioning {
     /// Arguments of every `ssh-keygen` run, one per line.
     fn keygen_runs(&self) -> String {
         std::fs::read_to_string(self.home.path().join("keygen.log")).unwrap_or_default()
+    }
+
+    fn count(&self, method: &str) -> usize {
+        self.calls().iter().filter(|c| *c == method).count()
+    }
+
+    fn machine(&self) -> Machine {
+        self.d.machines().list().unwrap().remove(0)
+    }
+
+    /// Another task on the same machine.
+    async fn second_task(&self, machine_id: i64) -> Task {
+        self.d
+            .create_task(TaskCreateParams {
+                project_id: self.project_id,
+                title: "Second".into(),
+                machine_id: Some(machine_id),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .task
     }
 
     fn calls(&self) -> Vec<String> {
@@ -394,7 +416,7 @@ async fn provisioning_with(configure: impl FnOnce(&mut DaemonOptions)) -> Provis
     Provisioning {
         d,
         home,
-        _fake: fake,
+        fake,
         project_id,
     }
 }
@@ -656,4 +678,203 @@ async fn failed_create_keeps_pending_vm_for_the_sweep() {
         ("vmfake", "vm-1")
     );
     assert!(p.keygen_runs().is_empty());
+}
+
+fn vm_with_flag(delete_with_tasks: bool) -> ProviderVmChoice {
+    ProviderVmChoice::New {
+        name: "vm-1".into(),
+        options: Default::default(),
+        delete_with_tasks,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn archiving_last_active_task_hibernates_vm() {
+    let p = provisioning().await;
+    let task = p.create(new_vm(json!({}))).await.unwrap().task;
+
+    p.d.archive_task(task.id).await.unwrap();
+
+    assert_eq!(p.count("machine_provider.hibernate"), 1);
+    assert_eq!(p.machine().status.state, MachineState::Hibernated);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn archiving_keeps_vm_awake_while_other_tasks_active() {
+    let p = provisioning().await;
+    let task = p.create(new_vm(json!({}))).await.unwrap().task;
+    p.second_task(task.machine_id.unwrap()).await;
+
+    p.d.archive_task(task.id).await.unwrap();
+
+    assert_eq!(p.count("machine_provider.hibernate"), 0);
+    assert_eq!(p.machine().status.state, MachineState::Ready);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unowned_vm_is_never_hibernated_or_deleted() {
+    let p = provisioning().await;
+    let task = p
+        .create(ProviderVmChoice::Existing { vm_ref: "a".into() })
+        .await
+        .unwrap()
+        .task;
+
+    p.d.archive_task(task.id).await.unwrap();
+    p.d.delete_task(task.id, false).await.unwrap();
+
+    assert_eq!(p.count("machine_provider.hibernate"), 0);
+    assert_eq!(p.count("machine_provider.delete"), 0);
+    assert_eq!(p.d.machines().list().unwrap().len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn restore_wakes_hibernated_vm() {
+    let p = provisioning().await;
+    let task = p.create(new_vm(json!({}))).await.unwrap().task;
+    p.d.archive_task(task.id).await.unwrap();
+
+    let restored = p.d.restore_task(task.id).await.unwrap();
+
+    assert!(!restored.archived);
+    let calls = p.calls();
+    let hibernated = calls.iter().position(|c| c == "machine_provider.hibernate");
+    let resumed = calls.iter().position(|c| c == "machine_provider.resume");
+    assert!(hibernated < resumed, "{calls:?}");
+    let m = p.machine();
+    assert_eq!(m.status.state, MachineState::Ready);
+    assert!(
+        !p.store()
+            .machine(m.id)
+            .unwrap()
+            .unwrap()
+            .provider
+            .unwrap()
+            .hibernated
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resume_with_new_destination_updates_machine() {
+    let p = provisioning().await;
+    let task = p.create(new_vm(json!({}))).await.unwrap().task;
+    p.d.archive_task(task.id).await.unwrap();
+
+    p.d.restore_task(task.id).await.unwrap();
+
+    assert_eq!(p.machine().destination, "u@resumed");
+    let ssh = std::fs::read_to_string(p.fake.bin().with_file_name("calls")).unwrap();
+    let first = ssh.lines().find(|l| l.contains("u@resumed")).unwrap();
+    assert!(
+        first.contains("StrictHostKeyChecking=accept-new"),
+        "{first}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resume_with_same_destination_keeps_host_key_strict() {
+    let p = provisioning_with(|o| {
+        o.plugin_env
+            .push(("FIXTURE_RESUME_DESTINATION".into(), String::new()))
+    })
+    .await;
+    let task = p.create(new_vm(json!({}))).await.unwrap().task;
+    p.d.archive_task(task.id).await.unwrap();
+    let ssh_before = std::fs::read_to_string(p.fake.bin().with_file_name("calls")).unwrap();
+
+    p.d.restore_task(task.id).await.unwrap();
+
+    assert_eq!(p.machine().destination, "u@created");
+    let ssh = std::fs::read_to_string(p.fake.bin().with_file_name("calls")).unwrap();
+    assert!(!ssh[ssh_before.len()..].contains("accept-new"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deleting_last_task_deletes_vm() {
+    let p = provisioning().await;
+    let task = p.create(new_vm(json!({}))).await.unwrap().task;
+    let machine_id = task.machine_id.unwrap();
+    let mut events = p.d.subscribe();
+
+    let result = p.d.delete_task(task.id, false).await.unwrap();
+
+    assert_eq!(result.warning, None);
+    assert_eq!(p.count("machine_provider.delete"), 1);
+    assert!(p.d.machines().list().unwrap().is_empty());
+    assert!(p.store().tasks(None, true).unwrap().is_empty());
+    assert_eq!(p.keygen_runs().trim(), "-R created");
+    let ssh = std::fs::read_to_string(p.fake.bin().with_file_name("calls")).unwrap();
+    assert!(!ssh.contains("task.delete"));
+    let removed = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(Event::MachineRemoved { machine_id: id }) = events.recv().await {
+                break id;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(removed, machine_id);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deleting_last_task_keeps_vm_without_flag() {
+    let p = provisioning().await;
+    let task = p.create(vm_with_flag(false)).await.unwrap().task;
+
+    p.d.delete_task(task.id, false).await.unwrap();
+
+    assert_eq!(p.count("machine_provider.delete"), 0);
+    assert_eq!(p.machine().status.state, MachineState::Hibernated);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deleting_one_of_two_archived_tasks_wakes_and_rehibernates() {
+    let p = provisioning().await;
+    let task = p.create(new_vm(json!({}))).await.unwrap().task;
+    let second = p.second_task(task.machine_id.unwrap()).await;
+    p.d.archive_task(task.id).await.unwrap();
+    p.d.archive_task(second.id).await.unwrap();
+    assert_eq!(p.machine().status.state, MachineState::Hibernated);
+
+    p.d.delete_task(task.id, false).await.unwrap();
+
+    assert_eq!(p.count("machine_provider.resume"), 1);
+    assert_eq!(p.count("machine_provider.hibernate"), 2);
+    assert_eq!(p.count("machine_provider.delete"), 0);
+    assert_eq!(p.machine().status.state, MachineState::Hibernated);
+    let store = p.store();
+    assert!(store.task(task.id).unwrap().is_none());
+    assert!(store.task(second.id).unwrap().is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn vm_delete_failure_is_a_warning() {
+    let p = provisioning_with(|o| {
+        o.plugin_env
+            .push(("FIXTURE_FAIL".into(), "machine_provider.delete".into()))
+    })
+    .await;
+    let task = p.create(new_vm(json!({}))).await.unwrap().task;
+
+    let result = p.d.delete_task(task.id, false).await.unwrap();
+
+    let warning = result.warning.unwrap();
+    assert!(warning.contains("vm-1"), "{warning}");
+    assert!(p.store().task(task.id).unwrap().is_none());
+    assert_eq!(p.d.machines().list().unwrap().len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_archives_hibernate_once() {
+    let p = provisioning().await;
+    let task = p.create(new_vm(json!({}))).await.unwrap().task;
+    let second = p.second_task(task.machine_id.unwrap()).await;
+
+    let (a, b) = tokio::join!(p.d.archive_task(task.id), p.d.archive_task(second.id));
+    a.unwrap();
+    b.unwrap();
+
+    assert_eq!(p.count("machine_provider.hibernate"), 1);
+    assert_eq!(p.machine().status.state, MachineState::Hibernated);
 }

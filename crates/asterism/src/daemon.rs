@@ -197,7 +197,7 @@ fn unix_now() -> i64 {
 }
 
 pub struct Daemon {
-    options: DaemonOptions,
+    pub(crate) options: DaemonOptions,
     paths: Paths,
     store: Mutex<Store>,
     live: Mutex<HashMap<i64, Arc<LiveSession>>>,
@@ -1484,7 +1484,7 @@ impl Daemon {
         })
     }
 
-    async fn provider_call<P: Serialize, R: DeserializeOwned>(
+    pub(crate) async fn provider_call<P: Serialize, R: DeserializeOwned>(
         &self,
         provider: &str,
         method: &str,
@@ -2582,7 +2582,21 @@ impl Daemon {
         self.drop_pr(task_id);
         let task = self.task(task_id)?;
         self.emit(Event::TaskChanged(task.clone()));
+        if let Some(machine) = task.machine_id {
+            // The VM stays running and the next archive retries.
+            if let Err(e) = self.machines().hibernate_if_idle(machine).await {
+                let name = self.machine_name(machine);
+                eprintln!("asterismd: hibernating machine {name}: {e}");
+            }
+        }
         Ok(task)
+    }
+
+    fn machine_name(&self, id: i64) -> String {
+        match self.store().machine(id) {
+            Ok(Some(m)) => m.name,
+            _ => id.to_string(),
+        }
     }
 
     pub async fn archive_cleanup_loop(self: Arc<Self>) {
@@ -2726,11 +2740,20 @@ impl Daemon {
         delete_branch: bool,
     ) -> Result<TaskDeleteResult> {
         if let Some((machine, remote)) = self.remote_task(task_id)? {
+            if self.deletes_vm_with_task(machine)? {
+                // The worktree goes with the VM, so the machine is not asked.
+                self.forget_task(task_id)?;
+                let warning = self.machines().delete_vm(machine).await.err().map(|e| {
+                    let name = self.machine_name(machine);
+                    format!("task deleted, but deleting VM {name} failed: {}", e.message)
+                });
+                return Ok(TaskDeleteResult { warning });
+            }
             let params = TaskDeleteParams {
                 task_id: remote,
                 delete_branch,
             };
-            let result = match self
+            let mut result = match self
                 .machines()
                 .call(machine, method::TASK_DELETE, params)
                 .await
@@ -2740,10 +2763,31 @@ impl Daemon {
                 other => other?,
             };
             self.forget_task(task_id)?;
+            if let Err(e) = self.machines().hibernate_if_idle(machine).await {
+                let name = self.machine_name(machine);
+                let failed = format!(
+                    "task deleted, but hibernating VM {name} failed: {}",
+                    e.message
+                );
+                result.warning = Some(match result.warning {
+                    Some(w) => format!("{w}; {failed}"),
+                    None => failed,
+                });
+            }
             return Ok(result);
         }
         self.off_runtime(move |d| d.delete_local_task(task_id, delete_branch))
             .await
+    }
+
+    /// Whether the task about to be deleted is the last one on an owned VM that goes with its tasks.
+    fn deletes_vm_with_task(&self, machine: i64) -> Result<bool> {
+        let store = self.store();
+        let flagged = store
+            .machine(machine)?
+            .and_then(|m| m.provider)
+            .is_some_and(|p| p.owned && p.delete_with_tasks);
+        Ok(flagged && store.machine_task_count(machine)? == 1)
     }
 
     fn delete_local_task(&self, task_id: i64, delete_branch: bool) -> Result<TaskDeleteResult> {

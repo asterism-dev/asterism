@@ -1,5 +1,6 @@
 pub mod conn;
 pub mod install;
+mod lifecycle;
 mod link;
 pub(crate) mod peer;
 
@@ -37,6 +38,7 @@ pub struct Machines {
     role: Role,
     settings: Arc<Settings>,
     live: Mutex<HashMap<i64, Live>>,
+    lifecycle: Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl Machines {
@@ -46,6 +48,7 @@ impl Machines {
             role,
             settings: Arc::new(settings),
             live: Mutex::new(HashMap::new()),
+            lifecycle: Mutex::new(HashMap::new()),
         }
     }
 
@@ -268,8 +271,9 @@ impl Machines {
             .map_err(Into::into)
     }
 
-    pub fn retry(&self, id: i64) -> Result<()> {
+    pub async fn retry(&self, id: i64) -> Result<()> {
         self.require_node()?;
+        self.wake(id).await?;
         match lock(&self.live).get(&id) {
             Some(live) => {
                 live.shared.retry();
@@ -294,6 +298,7 @@ impl Machines {
     /// Which of the machine's running sessions an update resumes and which it ends.
     pub async fn update_preview(&self, id: i64) -> Result<MachineUpdatePreview> {
         self.require_node()?;
+        self.wake(id).await?;
         let shared = self.shared(id)?;
         let listed = match self
             .call::<_, Vec<Session>>(
@@ -351,6 +356,7 @@ impl Machines {
     /// Restarts the machine daemon on the current build; returns once the machine is ready on it.
     pub async fn update(&self, id: i64) -> Result<()> {
         self.require_node()?;
+        self.wake(id).await?;
         self.shared(id)?.request_update().await
     }
 
