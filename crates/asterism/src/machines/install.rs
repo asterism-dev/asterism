@@ -41,7 +41,7 @@ pub async fn trust_host_key(
         cmd.args(["-T", "-o", "BatchMode=yes"])
             .args(["-o", "StrictHostKeyChecking=accept-new"])
             .args(["-o", "ConnectTimeout=10"])
-            .args([destination, "true"])
+            .args(["--", destination, "true"])
             .stdin(Stdio::null())
             .kill_on_drop(true);
         let remaining = deadline.saturating_sub(started.elapsed());
@@ -79,7 +79,7 @@ pub fn default_keygen_bin() -> PathBuf {
 /// Best effort: drops the machine's key from known_hosts when it is deleted.
 pub async fn forget_host_key(ssh_bin: &Path, keygen_bin: &Path, destination: &str) {
     let resolved = tokio::process::Command::new(ssh_bin)
-        .args(["-G", destination])
+        .args(["-G", "--", destination])
         .stdin(Stdio::null())
         .kill_on_drop(true)
         .output()

@@ -13,8 +13,7 @@ use serde_json::Value;
 
 use super::{activity, Daemon};
 use crate::error::{Error, Result};
-use crate::machines::install;
-use crate::machines::PROVISION_READY_TIMEOUT;
+use crate::machines::{check_destination, install, PROVISION_READY_TIMEOUT};
 use crate::plugins::settings;
 use crate::store::StoredProvider;
 
@@ -152,6 +151,13 @@ impl Daemon {
                             format!("{provider} has no VM {vm_ref:?}"),
                         )
                     })?;
+                // Checked before resuming, so a clash does not leave the VM running.
+                if self.store().machines()?.iter().any(|m| m.name == vm.name) {
+                    return Err(Error::new(
+                        ErrorKind::InvalidParams,
+                        format!("a machine named {} already exists", vm.name),
+                    ));
+                }
                 let destination = self.start_vm(provider, &vm).await?;
                 let stored = StoredProvider {
                     provider: provider.clone(),
@@ -164,6 +170,7 @@ impl Daemon {
             }
         };
         step();
+        check_destination(&destination)?;
         install::trust_host_key(&self.options.ssh_bin, &destination, PROVISION_READY_TIMEOUT)
             .await
             .map_err(|e| Error::new(ErrorKind::MachineOffline, e.to_string()))?;
@@ -326,12 +333,15 @@ impl Daemon {
         }
         let mut deleted = true;
         if let Some((vm_ref, destination)) = undo.created {
-            install::forget_host_key(
-                &self.options.ssh_bin,
-                &self.options.keygen_bin,
-                &destination,
-            )
-            .await;
+            // A rejected destination was never trusted, so there is no host key to forget.
+            if check_destination(&destination).is_ok() {
+                install::forget_host_key(
+                    &self.options.ssh_bin,
+                    &self.options.keygen_bin,
+                    &destination,
+                )
+                .await;
+            }
             if let Err(e) = self.delete_vm(provider, &vm_ref).await {
                 eprintln!("asterismd: {provider}: deleting VM {vm_ref} after a failed provisioning failed: {e}");
                 deleted = false;

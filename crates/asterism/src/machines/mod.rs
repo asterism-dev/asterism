@@ -465,7 +465,7 @@ fn machine(stored: StoredMachine) -> Machine {
 }
 
 /// ssh would read a leading `-` as an option, e.g. `-oProxyCommand=…`.
-fn check_destination(destination: &str) -> Result<()> {
+pub(crate) fn check_destination(destination: &str) -> Result<()> {
     if destination.is_empty()
         || destination.starts_with('-')
         || destination

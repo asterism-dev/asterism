@@ -129,7 +129,13 @@ impl Machines {
                 format!("machine {} was not created by a provider", stored.name),
             )
         })?;
-        daemon.delete_vm(&p.provider, &p.vm_ref).await?;
+        if let Err(e) = daemon.delete_vm(&p.provider, &p.vm_ref).await {
+            // Not left running: the caller only warns, and no task will hibernate it later.
+            if let Err(h) = self.hibernate_locked(id).await {
+                eprintln!("asterismd: machine {id}: hibernating after a failed delete failed: {h}");
+            }
+            return Err(e);
+        }
         install::forget_host_key(
             &self.settings.ssh_bin,
             &daemon.options.keygen_bin,

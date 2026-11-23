@@ -158,25 +158,34 @@ async fn machine_provider_list_denied_to_remote_devices() {
     ws.send(Message::Text(json!({ "auth": token }).to_string().into()))
         .await
         .unwrap();
-    let request =
-        json!({"jsonrpc": "2.0", "id": 1, "method": method::MACHINE_PROVIDER_LIST, "params": {}});
-    ws.send(Message::Text(request.to_string().into()))
-        .await
-        .unwrap();
-    let reply = loop {
-        let msg = tokio::time::timeout(Duration::from_secs(5), ws.next())
+    let provider_task = json!({
+        "project_id": 1,
+        "title": "t",
+        "provider_machine": {"provider": "vmfake", "vm": {"kind": "existing", "ref": "a"}},
+    });
+    for (id, method, params) in [
+        (1, method::MACHINE_PROVIDER_LIST, json!({})),
+        (2, method::TASK_CREATE, provider_task),
+    ] {
+        let request = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+        ws.send(Message::Text(request.to_string().into()))
             .await
-            .unwrap()
-            .unwrap()
             .unwrap();
-        if let Message::Text(text) = msg {
-            let value: Value = serde_json::from_str(text.as_str()).unwrap();
-            if value["id"] == 1 {
-                break value;
+        let reply = loop {
+            let msg = tokio::time::timeout(Duration::from_secs(5), ws.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            if let Message::Text(text) = msg {
+                let value: Value = serde_json::from_str(text.as_str()).unwrap();
+                if value["id"] == id {
+                    break value;
+                }
             }
-        }
-    };
-    assert_eq!(reply["error"]["data"]["kind"], "forbidden");
+        };
+        assert_eq!(reply["error"]["data"]["kind"], "forbidden", "{method}");
+    }
 }
 
 fn provided(provider: &str, vm_ref: &str, owned: bool, hibernated: bool) -> StoredProvider {
@@ -864,6 +873,8 @@ async fn vm_delete_failure_is_a_warning() {
     assert!(warning.contains("vm-1"), "{warning}");
     assert!(p.store().task(task.id).unwrap().is_none());
     assert_eq!(p.d.machines().list().unwrap().len(), 1);
+    assert_eq!(p.count("machine_provider.hibernate"), 1);
+    assert_eq!(p.machine().status.state, MachineState::Hibernated);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -944,4 +955,93 @@ async fn slow_task_creation_keeps_machine_link() {
 
     assert_eq!(p.machine().status.state, MachineState::Ready);
     assert!(Path::new(&task.worktree_path).exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_task_on_hibernated_vm_wakes_it_first() {
+    let p = provisioning().await;
+    let agentbin = p.home.path().join("agentbin");
+    std::fs::create_dir_all(&agentbin).unwrap();
+    let claude = agentbin.join("claude");
+    std::fs::write(&claude, "#!/bin/sh\nexec sleep 300\n").unwrap();
+    std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let shell = p.home.path().join("login-shell");
+    std::fs::write(
+        &shell,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = -l ]; then\n  shift\n  PATH='{}':/usr/bin:/bin\n  export PATH\nfi\nexec /bin/sh \"$@\"\n",
+            agentbin.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p.fake.set_login_shell(&shell);
+    let task = p.create(new_vm(json!({}))).await.unwrap().task;
+    p.d.archive_task(task.id).await.unwrap();
+
+    let created =
+        p.d.create_task(TaskCreateParams {
+            project_id: p.project_id,
+            title: "Agent".into(),
+            agent: Some("claude".into()),
+            machine_id: task.machine_id,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(p.count("machine_provider.resume"), 1);
+    assert!(created.session.is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn read_only_views_do_not_wake_hibernated_vm() {
+    let p = provisioning().await;
+    let task = p.create(new_vm(json!({}))).await.unwrap().task;
+    p.d.archive_task(task.id).await.unwrap();
+
+    let err = p.d.diff_stat(task.id).await.unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::MachineOffline);
+    assert!(
+        err.message.contains("vm-1 is hibernated"),
+        "{}",
+        err.message
+    );
+    assert_eq!(p.count("machine_provider.resume"), 0);
+    assert_eq!(p.machine().status.state, MachineState::Hibernated);
+
+    p.d.delete_check(task.id).await.unwrap();
+    assert_eq!(p.count("machine_provider.resume"), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn destination_read_as_an_ssh_option_is_rejected() {
+    let p = provisioning_with(|o| {
+        o.plugin_env
+            .push(("FIXTURE_DESTINATION".into(), "-oProxyCommand=x".into()))
+    })
+    .await;
+
+    let err = p.create(new_vm(json!({}))).await.unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::InvalidParams, "{}", err.message);
+    assert_eq!(p.calls().last().unwrap(), "machine_provider.delete");
+    assert!(p.d.machines().list().unwrap().is_empty());
+    let ssh = std::fs::read_to_string(p.fake.bin().with_file_name("calls")).unwrap_or_default();
+    assert!(!ssh.contains("ProxyCommand"), "{ssh}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn existing_vm_named_like_a_machine_is_not_resumed() {
+    let p = provisioning().await;
+    p.d.machines().add("two", "u@elsewhere").unwrap();
+
+    let err = p
+        .create(ProviderVmChoice::Existing { vm_ref: "b".into() })
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
+    assert_eq!(p.count("machine_provider.resume"), 0);
 }

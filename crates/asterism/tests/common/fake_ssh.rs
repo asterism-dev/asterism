@@ -36,6 +36,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -T) shift ;;
     -o) shift 2 ;;
+    --) shift; break ;;
     *) break ;;
   esac
 done

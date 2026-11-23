@@ -45,8 +45,10 @@ const REMOTE_DENIED: &[&str] = &[
 ];
 
 /// A leaked device token must not be able to stop the daemon, rotate itself or reach other hosts.
-fn remote_denied(method_name: &str) -> bool {
+fn remote_denied(method_name: &str, params: &Value) -> bool {
     REMOTE_DENIED.contains(&method_name)
+        || (method_name == method::TASK_CREATE
+            && params.get("provider_machine").is_some_and(|p| !p.is_null()))
         || method_name.starts_with("remote.")
         || method_name.starts_with("machine.")
         || method_name.starts_with("machine_provider.")
@@ -282,7 +284,7 @@ async fn handle_line(daemon: Arc<Daemon>, conn: Arc<Conn>, line: String) {
         conn.send(&response).await;
         return;
     }
-    if matches!(conn.peer, Peer::Remote { .. }) && remote_denied(&request.method) {
+    if matches!(conn.peer, Peer::Remote { .. }) && remote_denied(&request.method, &request.params) {
         let message = format!("{} is not available remotely", request.method);
         conn.send(&Response::err(
             id,
@@ -962,7 +964,7 @@ mod tests {
             method::MACHINE_UPDATE_PREVIEW,
             method::MACHINE_PROVIDER_LIST,
         ] {
-            assert!(remote_denied(name), "{name}");
+            assert!(remote_denied(name, &Value::Null), "{name}");
         }
         for name in [
             method::HELLO,
@@ -970,7 +972,9 @@ mod tests {
             method::SESSION_SEND,
             method::TASK_CREATE,
         ] {
-            assert!(!remote_denied(name), "{name}");
+            assert!(!remote_denied(name, &Value::Null), "{name}");
         }
+        let provider_task = serde_json::json!({"provider_machine": {"provider": "p"}});
+        assert!(remote_denied(method::TASK_CREATE, &provider_task));
     }
 }
