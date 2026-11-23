@@ -17,6 +17,7 @@ import {
   machineStatusLine,
   taskMachine,
   updateConfirmText,
+  vmAgentsUnknown,
 } from './machines';
 import type {
   AgentInfo,
@@ -317,4 +318,11 @@ it('offers only available agents of built-in plugins and labels providers', () =
   ).toEqual([agent('a', 'agents')]);
   expect(providerLabel(plugins, 'obs')).toBe('Observatory');
   expect(providerLabel(plugins, 'zzz')).toBe('zzz');
+});
+
+it('vmAgentsUnknown is true for a provider choice or a hibernated machine', () => {
+  expect(vmAgentsUnknown(null, true)).toBe(true);
+  expect(vmAgentsUnknown(machine('hibernated'), false)).toBe(true);
+  expect(vmAgentsUnknown(withAgents([agent('claude')]), false)).toBe(false);
+  expect(vmAgentsUnknown(null, false)).toBe(false);
 });

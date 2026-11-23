@@ -188,6 +188,11 @@ export function vmOptionsPayload(draft: SettingsDraft): Record<string, SettingVa
   return Object.fromEntries(Object.entries(draft.values).filter(([, v]) => v !== ''));
 }
 
+/** A VM still to be provisioned or a hibernated one reports no agents until it runs. */
+export function vmAgentsUnknown(machine: Machine | null, providerChoice: boolean): boolean {
+  return providerChoice || machine?.status.state === 'hibernated';
+}
+
 export function builtinAgents(agents: AgentInfo[], plugins: PluginInfo[]): AgentInfo[] {
   const builtin = new Set(plugins.filter((p) => p.origin === 'builtin').map((p) => p.name));
   return agents.filter((a) => a.available && builtin.has(a.plugin));

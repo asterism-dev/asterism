@@ -19,6 +19,7 @@ import {
   builtinAgents,
   LOCAL_MACHINE,
   machineAgents,
+  vmAgentsUnknown,
   machineOptions as machineOptionsFor,
   parseProviderValue,
   providerGroups,
@@ -115,10 +116,16 @@ const takenNames = computed(() => [
   ...providers.value.flatMap((p) => p.vms.map((v) => v.name)),
 ]);
 const plugins = ref<PluginInfo[]>([]);
+const selectedMachine = computed(
+  () => state.machines.find((m) => m.id === machineId.value) ?? null,
+);
+const agentsUnknown = computed(() =>
+  vmAgentsUnknown(selectedMachine.value, providerChoice.value !== null),
+);
 const agents = computed(() =>
-  providerChoice.value
+  agentsUnknown.value
     ? builtinAgents(state.agents, plugins.value)
-    : machineAgents(state.machines.find((m) => m.id === machineId.value) ?? null, state.agents),
+    : machineAgents(selectedMachine.value, state.agents),
 );
 
 function readDeleteWithTasks(): boolean {
@@ -477,7 +484,7 @@ async function submit() {
             />
             <template v-if="session === 'agent'">
               <Select v-model="agent" :options="agentOptions" aria-label="Agent" />
-              <p v-if="providerChoice" class="muted">
+              <p v-if="agentsUnknown" class="muted">
                 The agent must be installed in the VM's image.
               </p>
               <Textarea
