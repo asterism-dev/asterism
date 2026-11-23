@@ -145,7 +145,7 @@ The backend gets a fixed environment, not the user's shell environment: the daem
     - `forge` if it provides a forge, `pull_requests` if any forge has `pull_requests = true`, `reviews` if any forge has `reviews = true`,
     - `agent` if any agent has `launch = "backend"`,
     - `command` if it provides a command, `task_source` if it provides a task source, `machine_provider` if it provides a machine provider.
-- **Timeouts.** Calls time out after 20 s, except `forge.clone` and `forge.create_remote`, which have no timeout.
+- **Timeouts.** Calls time out after 20 s, except `forge.clone`, `forge.create_remote`, `machine_provider.create`, `machine_provider.resume`, `machine_provider.hibernate` and `machine_provider.delete`, which have no timeout.
 - **Idle stop.** A backend with no calls for 60 s is stopped and restarted on the next call. Do not keep state in memory that you cannot rebuild; persist it in `data_dir`.
 - **Crashes.** A backend that exits unexpectedly 3 times within a minute is marked failing until the plugin is reloaded.
 - **Settings.** When the user changes a setting of a running backend, the daemon sends `settings.changed`. If that call fails, for example because the backend does not implement it, the backend is stopped and starts with the new values on its next call.
@@ -193,6 +193,8 @@ Parameter and result types are defined in `crates/asterism-plugin/src/protocol.r
 | `machine_provider.hibernate` | `machine_provider` | `provider`, `ref` | `null` |
 | `machine_provider.delete` | `machine_provider` | `provider`, `ref` | `null` |
 | `agent.prepare` | `agent` | `agent`, `mode` (`start`/`resume`), `prompt`, `agent_ref`, `settings` (`args`, `mcp_config`, `hooks`), `cwd`, optional `name` (session display name from the task) | `argv` (non-empty), optional `env` as `[name, value]` pairs |
+
+For machine providers: `create` and `resume` return only once the VM accepts SSH, and `resume` may return a different `destination` than before. `delete` of a VM the provider does not know should fail with `not_found`, which Asterism counts as deleted. A VM `state` of `other`, or any state Asterism does not know, is shown as `other`. `create_options` must not use the `secret` type. VM names are chosen by the user and are unique per provider; `list` must show a VM under its `name` while it is still being created, because Asterism deletes VMs left over from a crash by name.
 
 `visibility` is `public`, `private` or `internal`. In `forge.pull_requests`, `state` is `open`, `draft`, `merged` or `closed`; `review` is `approved`, `changes_requested`, `review_required` or `none`; `checks` is `{"state": ..., "failing": [...]}` with state `pending`, `success`, `failure` or `none`. Leave branches without a pull request out of the result. `task_source.get` may return a `branch` to use for the task; when it is `null`, Asterism derives one.
 

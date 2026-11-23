@@ -77,14 +77,14 @@ A machine provider is a plugin that manages virtual machines (see [Plugins](plug
 
 ### Pick or create a VM
 
-In **New task**, **Machine** lists, under each provider plugin's name:
+In **New task**, **Machine** also lists, prefixed with each provider plugin's name (for example "Observatory · api-test" and "Observatory · + New VM…"):
 
 - the provider's existing VMs that are not machines yet (hibernated ones are labelled), and
-- **New VM…**.
+- **+ New VM…**.
 
 Picking a VM adds it as a machine and creates the task in one step. The dialog shows the progress. Closing the dialog does not cancel it.
 
-**New VM…** asks for:
+**+ New VM…** asks for:
 
 | Field | Meaning |
 | --- | --- |
@@ -92,7 +92,7 @@ Picking a VM adds it as a machine and creates the task in one step. The dialog s
 | Plugin fields | Defined by the plugin, for example image, CPUs, RAM and disk. They are prefilled with the plugin's defaults. |
 | **Delete VM with its last task** | Delete the VM when its last task is deleted. Remembered between dialogs; on at first. |
 
-Only the agents built into Asterism are offered for provider VMs, and the agent must be installed in the VM's image.
+Only the agents built into Asterism are offered for a provider VM that is not a machine yet or is hibernated, and the agent must be installed in the VM's image.
 
 If creating the task fails, Asterism undoes what it did: a new VM is deleted again, and an existing VM is simply not added. Three exceptions: if the agent fails to start after the task was created, the task and machine stay, as for any machine task; if deleting the new VM fails, Asterism retries on the next start; and an existing VM that was woken for the attempt stays running. If Asterism quits while a VM is being created, it cleans the VM up on the next start.
 
@@ -105,12 +105,12 @@ A new VM's host key is accepted on the first connection; later connections are s
 Asterism applies these rules only to VMs it created itself (**owned** VMs).
 
 - **Archive**: when a machine has no active task left, Asterism hibernates its VM.
-- **Wake**: anything that needs the machine wakes it automatically: restoring or creating a task, deleting a task (including its unsaved-work check), **Update now**, **Retry**, the CLI, the mobile app, and opening the diff or files of an archived task. The hourly cleanup of old archived tasks wakes hibernated VMs for its check and puts them back to sleep.
+- **Wake**: anything that changes the machine wakes it automatically: restoring or creating a task, deleting a task (including its unsaved-work check), **Update now**, **Retry**, and the same actions from the CLI or the mobile app. Views of an archived task, such as its diff or files, do not wake the VM and show that the machine is hibernated; restore the task to look inside. The hourly cleanup of old archived tasks wakes hibernated VMs for its check and puts them back to sleep.
 - **Delete**: when you delete the last task of the machine, archived or not, Asterism deletes the VM if **Delete VM with its last task** is on, and hibernates it otherwise. You can change the setting per machine under **Settings → Machines**. A confirmed delete loses commits on the VM that were not pushed.
 
 VMs you picked from the provider's existing VMs are never hibernated or deleted by Asterism.
 
-A failure to hibernate or delete the VM after a task action does not block that action. After a delete, a failed VM delete or re-hibernate shows a warning; a failed hibernate after archiving is only logged. If a VM cannot be woken, the machine is unavailable and the action fails with an error naming it.
+A failure to hibernate or delete the VM after a task action does not block that action. After a delete, a failed VM delete or re-hibernate shows a warning, and a VM that could not be deleted is hibernated instead; a failed hibernate after archiving is only logged. If a VM cannot be woken, the machine is unavailable and the action fails with an error naming it.
 
 In **Settings → Machines**, a hibernated VM shows the status **Hibernated**, and the machine shows its provider. Removing or forgetting a provider machine never deletes its VM.
 
