@@ -42,6 +42,7 @@ const KIND_LABELS: Record<CapabilityKind, string> = {
   command: 'Command',
   task_source: 'Task source',
   panel: 'Panel',
+  machine_provider: 'Machine provider',
 };
 
 export function capabilityChips(plugin: PluginInfo): string[] {

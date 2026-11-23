@@ -6,7 +6,9 @@ use std::sync::Arc;
 use asterism_proto::types::{Capability, CapabilityKind, PluginOrigin};
 use serde::{Deserialize, Serialize};
 
-use super::manifest::{self, AgentDecl, CommandDecl, ForgeDecl, Manifest, TaskSourceDecl};
+use super::manifest::{
+    self, AgentDecl, CommandDecl, ForgeDecl, MachineProviderDecl, Manifest, TaskSourceDecl,
+};
 use super::ui;
 use crate::agent_settings::write_atomic;
 
@@ -210,6 +212,11 @@ impl Registry {
             .flat_map(|(p, m)| m.provides.task_source.iter().map(move |t| (p, t)))
     }
 
+    pub fn machine_providers(&self) -> impl Iterator<Item = (&Arc<Plugin>, &MachineProviderDecl)> {
+        self.ok()
+            .flat_map(|(p, m)| m.provides.machine_provider.iter().map(move |v| (p, v)))
+    }
+
     pub fn agent(&self, id: &str) -> Option<(&Arc<Plugin>, &AgentDecl)> {
         self.agents().find(|(_, a)| a.id == id)
     }
@@ -220,6 +227,10 @@ impl Registry {
 
     pub fn task_source(&self, id: &str) -> Option<(&Arc<Plugin>, &TaskSourceDecl)> {
         self.task_sources().find(|(_, t)| t.id == id)
+    }
+
+    pub fn machine_provider(&self, id: &str) -> Option<(&Arc<Plugin>, &MachineProviderDecl)> {
+        self.machine_providers().find(|(_, v)| v.id == id)
     }
 }
 
@@ -387,6 +398,23 @@ mod tests {
             "{reason}"
         );
         assert_eq!(registry.forge("github").unwrap().0.name, "other");
+    }
+
+    #[test]
+    fn machine_provider_id_claimed_once() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = |name: &str| {
+            format!("name = \"{name}\"\nversion = \"1.0.0\"\nprotocol = 1\n[backend]\ncommand = [\"x\"]\n[[provides.machine_provider]]\nid = \"vmfake\"\ndisplay_name = \"VM\"\n")
+        };
+        let first = plugin_dir(root.path(), "first", &manifest("first"));
+        let second = plugin_dir(root.path(), "second", &manifest("second"));
+        let registry = Registry::discover(&sources(&[("first", first), ("second", second)]));
+        assert!(registry.get("first").unwrap().is_ok());
+        assert!(matches!(
+            registry.get("second").unwrap().status,
+            Status::Broken(_)
+        ));
+        assert_eq!(registry.machine_provider("vmfake").unwrap().0.name, "first");
     }
 
     #[test]

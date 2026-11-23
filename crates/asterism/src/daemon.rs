@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use asterism_plugin::protocol::{
     self, BranchPr, CloneParams, CreateRemoteParams, DetectParams, Detected, GetIssueParams,
-    LaunchMode, ListReposParams, PrepareParams, PrepareResult, PullRequestsParams,
-    ResolveOwnerParams, ResolveOwnerResult, SearchIssuesParams, SearchPullRequestsParams,
-    TaskSourceCheck, TaskSourceCheckParams,
+    LaunchMode, ListReposParams, PrepareParams, PrepareResult, ProviderListResult, ProviderParams,
+    PullRequestsParams, ResolveOwnerParams, ResolveOwnerResult, SearchIssuesParams,
+    SearchPullRequestsParams, TaskSourceCheck, TaskSourceCheckParams,
 };
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
@@ -39,6 +39,7 @@ use crate::store::Store;
 use crate::{git, hibernate, lock, node_settings, repo_source, status};
 
 mod activity;
+mod provision;
 mod remote_task;
 mod review;
 mod worktree_conflict;
@@ -85,6 +86,7 @@ pub struct DaemonOptions {
     pub tailscale_bin: Option<PathBuf>,
     pub role: Role,
     pub ssh_bin: PathBuf,
+    pub keygen_bin: PathBuf,
     pub machine_bins_dir: Option<PathBuf>,
     pub machine_health_interval: Duration,
     pub machine_health_timeout: Duration,
@@ -112,6 +114,7 @@ impl Default for DaemonOptions {
             tailscale_bin: Some(crate::remote::tailscale::default_bin()),
             role: Role::default(),
             ssh_bin: crate::machines::install::default_ssh_bin(),
+            keygen_bin: crate::machines::install::default_keygen_bin(),
             machine_bins_dir: crate::machines::install::default_bins_dir(),
             machine_health_interval: Duration::from_secs(15),
             machine_health_timeout: Duration::from_secs(5),
@@ -194,7 +197,7 @@ fn unix_now() -> i64 {
 }
 
 pub struct Daemon {
-    options: DaemonOptions,
+    pub(crate) options: DaemonOptions,
     paths: Paths,
     store: Mutex<Store>,
     live: Mutex<HashMap<i64, Arc<LiveSession>>>,
@@ -1481,6 +1484,89 @@ impl Daemon {
         })
     }
 
+    pub(crate) async fn provider_call<P: Serialize, R: DeserializeOwned>(
+        &self,
+        provider: &str,
+        method: &str,
+        params: P,
+        timeout: Option<Duration>,
+    ) -> Result<R> {
+        let plugin = self
+            .plugin_set()
+            .registry
+            .machine_provider(provider)
+            .map(|(plugin, _)| plugin.name.clone())
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::NotFound,
+                    format!("no machine provider {provider:?} is installed"),
+                )
+            })?;
+        let params = serde_json::to_value(params)
+            .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+        let reply = self.plugin_call(&plugin, method, params, timeout).await?;
+        serde_json::from_value(reply).map_err(|e| {
+            Error::new(
+                ErrorKind::PluginError,
+                format!("{plugin}: unexpected {method} reply: {e}"),
+            )
+        })
+    }
+
+    pub async fn machine_providers(&self) -> Result<Vec<MachineProviderInfo>> {
+        let providers: Vec<(String, String)> = self
+            .plugin_set()
+            .registry
+            .machine_providers()
+            .map(|(_, decl)| (decl.id.clone(), decl.display_name.clone()))
+            .collect();
+        let mut infos = Vec::new();
+        for (provider, display_name) in providers {
+            let params = ProviderParams {
+                provider: provider.clone(),
+            };
+            let listed = self
+                .provider_call::<_, ProviderListResult>(
+                    &provider,
+                    protocol::method::MACHINE_PROVIDER_LIST,
+                    params,
+                    Some(self.call_timeout()),
+                )
+                .await;
+            let (mut vms, mut create_options, error) = match listed {
+                Ok(list) => (list.vms, list.create_options, None),
+                Err(e) => (Vec::new(), Vec::new(), Some(e.message)),
+            };
+            let adopted: Vec<String> = self
+                .store()
+                .machines()?
+                .into_iter()
+                .filter_map(|m| m.provider)
+                .filter(|p| p.provider == provider)
+                .map(|p| p.vm_ref)
+                .collect();
+            vms.retain(|vm| !adopted.contains(&vm.vm_ref));
+            create_options.retain(|spec| {
+                let keep = spec.kind != SettingType::Secret;
+                if !keep {
+                    eprintln!(
+                        "asterismd: {provider}: dropping secret create option {:?}",
+                        spec.key
+                    );
+                }
+                keep
+            });
+            infos.push(MachineProviderInfo {
+                provider,
+                display_name,
+                vms,
+                create_options,
+                error,
+            });
+        }
+        Ok(infos)
+    }
+
     pub async fn task_sources(&self, project_id: Option<i64>) -> Result<Vec<TaskSourceInfo>> {
         let project_path = project_id.map(|id| self.project_path(id)).transpose()?;
         let sources: Vec<(String, String, String)> = self
@@ -1885,9 +1971,34 @@ impl Daemon {
         self: &Arc<Self>,
         params: TaskCreateParams,
     ) -> Result<TaskCreateResult> {
+        if let Some(choice) = params.provider_machine.clone() {
+            if params.machine_id.is_some() {
+                return Err(Error::new(
+                    ErrorKind::InvalidParams,
+                    "machine_id cannot be combined with provider_machine",
+                ));
+            }
+            // Detached, so a dropped call cannot stop provisioning halfway and leave a VM behind.
+            let daemon = self.clone();
+            return tokio::spawn(async move { daemon.create_provider_task(choice, params).await })
+                .await
+                .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+        }
         if let Some(machine_id) = params.machine_id {
             return self.create_remote_task(machine_id, params).await;
         }
+        // Its git calls block; on a runtime worker they stall this daemon's connections, e.g. a machine's health check.
+        let daemon = self.clone();
+        let runtime = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || runtime.block_on(daemon.create_local_task(params)))
+            .await
+            .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?
+    }
+
+    async fn create_local_task(
+        self: &Arc<Self>,
+        params: TaskCreateParams,
+    ) -> Result<TaskCreateResult> {
         if let Some(name) = &params.agent {
             self.ensure_agent_available(name)?;
         }
@@ -2483,7 +2594,21 @@ impl Daemon {
         self.drop_pr(task_id);
         let task = self.task(task_id)?;
         self.emit(Event::TaskChanged(task.clone()));
+        if let Some(machine) = task.machine_id {
+            // The VM stays running and the next archive retries.
+            if let Err(e) = self.machines().hibernate_if_idle(machine).await {
+                let name = self.machine_name(machine);
+                eprintln!("asterismd: hibernating machine {name}: {e}");
+            }
+        }
         Ok(task)
+    }
+
+    fn machine_name(&self, id: i64) -> String {
+        match self.store().machine(id) {
+            Ok(Some(m)) => m.name,
+            _ => id.to_string(),
+        }
     }
 
     pub async fn archive_cleanup_loop(self: Arc<Self>) {
@@ -2502,6 +2627,10 @@ impl Daemon {
             return Ok(());
         };
         let due = self.store().archived_due(now - i64::from(hours) * 3600)?;
+        // The delete check wakes hibernated VMs, and skipped tasks leave them running.
+        let mut machines: Vec<i64> = due.iter().filter_map(|t| t.machine_id).collect();
+        machines.sort_unstable();
+        machines.dedup();
         for task in due {
             let check = match self.delete_check(task.id).await {
                 Ok(check) => check,
@@ -2529,6 +2658,12 @@ impl Daemon {
                     }
                 }
                 Err(e) => eprintln!("asterismd: archive cleanup of task {} failed: {e}", task.id),
+            }
+        }
+        for machine in machines {
+            if let Err(e) = self.machines().hibernate_if_idle(machine).await {
+                let name = self.machine_name(machine);
+                eprintln!("asterismd: hibernating machine {name}: {e}");
             }
         }
         Ok(())
@@ -2627,11 +2762,20 @@ impl Daemon {
         delete_branch: bool,
     ) -> Result<TaskDeleteResult> {
         if let Some((machine, remote)) = self.remote_task(task_id)? {
+            if self.deletes_vm_with_task(machine)? {
+                // The worktree goes with the VM, so the machine is not asked.
+                self.forget_task(task_id)?;
+                let warning = self.machines().delete_vm(machine).await.err().map(|e| {
+                    let name = self.machine_name(machine);
+                    format!("task deleted, but deleting VM {name} failed: {}", e.message)
+                });
+                return Ok(TaskDeleteResult { warning });
+            }
             let params = TaskDeleteParams {
                 task_id: remote,
                 delete_branch,
             };
-            let result = match self
+            let mut result = match self
                 .machines()
                 .call(machine, method::TASK_DELETE, params)
                 .await
@@ -2641,10 +2785,31 @@ impl Daemon {
                 other => other?,
             };
             self.forget_task(task_id)?;
+            if let Err(e) = self.machines().hibernate_if_idle(machine).await {
+                let name = self.machine_name(machine);
+                let failed = format!(
+                    "task deleted, but hibernating VM {name} failed: {}",
+                    e.message
+                );
+                result.warning = Some(match result.warning {
+                    Some(w) => format!("{w}; {failed}"),
+                    None => failed,
+                });
+            }
             return Ok(result);
         }
         self.off_runtime(move |d| d.delete_local_task(task_id, delete_branch))
             .await
+    }
+
+    /// Whether the task about to be deleted is the last one on an owned VM that goes with its tasks.
+    fn deletes_vm_with_task(&self, machine: i64) -> Result<bool> {
+        let store = self.store();
+        let flagged = store
+            .machine(machine)?
+            .and_then(|m| m.provider)
+            .is_some_and(|p| p.owned && p.delete_with_tasks);
+        Ok(flagged && store.machine_task_count(machine)? == 1)
     }
 
     fn delete_local_task(&self, task_id: i64, delete_branch: bool) -> Result<TaskDeleteResult> {

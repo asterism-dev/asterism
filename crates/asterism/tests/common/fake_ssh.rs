@@ -23,7 +23,7 @@ impl FakeSsh {
         let script = format!(
             r#"#!/bin/sh
 root={root}
-echo >> "$root/calls"
+echo "$*" >> "$root/calls"
 if [ -f "$root/hang" ]; then
   exec sleep 86400
 fi
@@ -36,6 +36,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -T) shift ;;
     -o) shift 2 ;;
+    --) shift; break ;;
     *) break ;;
   esac
 done
@@ -118,6 +119,11 @@ exec env -i $extra HOME={home} PATH="$PATH" sh -c "$*"
     pub fn invocations(&self) -> usize {
         std::fs::read_to_string(self.root.path().join("calls"))
             .map_or(0, |calls| calls.lines().count())
+    }
+
+    pub fn last_call(&self) -> String {
+        let calls = std::fs::read_to_string(self.root.path().join("calls")).unwrap_or_default();
+        calls.lines().last().unwrap_or_default().to_string()
     }
 
     pub fn machine_home(&self) -> PathBuf {

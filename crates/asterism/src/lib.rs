@@ -77,6 +77,7 @@ pub async fn run_with_options(paths: Paths, options: DaemonOptions) -> io::Resul
         tokio::spawn(daemon.clone().hibernate_loop());
         tokio::spawn(daemon.clone().archive_cleanup_loop());
         tokio::spawn(remote::server::run(daemon.clone()));
+        tokio::spawn(daemon.clone().cleanup_pending_vms());
         if let Err(e) = daemon.machines().start_stored() {
             eprintln!("asterismd: starting machine connections failed: {e}");
         }

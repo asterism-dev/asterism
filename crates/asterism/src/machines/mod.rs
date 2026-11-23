@@ -1,24 +1,31 @@
 pub mod conn;
 pub mod install;
+mod lifecycle;
 mod link;
 pub(crate) mod peer;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
+use std::time::Duration;
 
 use asterism_proto::client::Client;
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::{
-    method, Event, Machine, MachineForgetResult, MachineSessionRef, MachineStatus,
-    MachineTestResult, MachineUpdatePreview, Role, Session, SessionListParams, SessionStatus, Task,
+    method, Event, Machine, MachineForgetResult, MachineProvider, MachineSessionRef, MachineState,
+    MachineStatus, MachineTestResult, MachineUpdatePreview, Role, Session, SessionListParams,
+    SessionStatus, Task,
 };
+use tokio::sync::broadcast::error::RecvError;
 use tokio::task::JoinHandle;
 
 use crate::daemon::Daemon;
 use crate::error::{Error, Result};
 use crate::lock;
-use crate::store::StoredMachine;
+use crate::store::{StoredMachine, StoredProvider};
 use conn::{Settings, Shared};
+
+/// How long a newly provided VM may take to accept ssh and finish the machine install.
+pub const PROVISION_READY_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 struct Live {
     shared: Arc<Shared>,
@@ -31,6 +38,7 @@ pub struct Machines {
     role: Role,
     settings: Arc<Settings>,
     live: Mutex<HashMap<i64, Live>>,
+    lifecycle: Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl Machines {
@@ -40,6 +48,7 @@ impl Machines {
             role,
             settings: Arc::new(settings),
             live: Mutex::new(HashMap::new()),
+            lifecycle: Mutex::new(HashMap::new()),
         }
     }
 
@@ -73,6 +82,24 @@ impl Machines {
     }
 
     pub fn add(&self, name: &str, destination: &str) -> Result<Machine> {
+        self.insert(name, destination, None)
+    }
+
+    pub fn add_provided(
+        &self,
+        name: &str,
+        destination: &str,
+        p: StoredProvider,
+    ) -> Result<Machine> {
+        self.insert(name, destination, Some(p))
+    }
+
+    fn insert(
+        &self,
+        name: &str,
+        destination: &str,
+        provider: Option<StoredProvider>,
+    ) -> Result<Machine> {
         self.require_node()?;
         let name = name.trim();
         if name.is_empty() {
@@ -88,7 +115,10 @@ impl Machines {
                     format!("a machine named {name} already exists"),
                 ));
             }
-            store.add_machine(name, destination)?
+            match &provider {
+                Some(p) => store.add_provided_machine(name, destination, p)?,
+                None => store.add_machine(name, destination)?,
+            }
         };
         Ok(self.connect(stored))
     }
@@ -102,10 +132,44 @@ impl Machines {
         Ok(())
     }
 
+    pub fn set_delete_with_tasks(&self, id: i64, on: bool) -> Result<Machine> {
+        self.require_node()?;
+        let daemon = self.daemon()?;
+        let store = daemon.store();
+        let owned = store
+            .machine(id)?
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, format!("no machine with id {id}")))?
+            .provider
+            .is_some_and(|p| p.owned);
+        if !owned {
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                "only machines created by a provider can be deleted with their tasks",
+            ));
+        }
+        store.set_machine_delete_with_tasks(id, on)?;
+        match lock(&self.live).get(&id) {
+            Some(live) => Ok(live.shared.set_delete_with_tasks(on)),
+            None => Err(Error::new(
+                ErrorKind::NotFound,
+                format!("no connection for machine {id}"),
+            )),
+        }
+    }
+
     fn connect(&self, stored: StoredMachine) -> Machine {
-        let shared = Arc::new(Shared::new(self.settings.clone(), machine(stored)));
+        let hibernated = stored.provider.as_ref().is_some_and(|p| p.hibernated);
+        let mut initial = machine(stored);
+        if hibernated {
+            initial.status.state = MachineState::Hibernated;
+        }
+        let shared = Arc::new(Shared::new(self.settings.clone(), initial));
         shared.publish();
-        let task = tokio::spawn(conn::run(shared.clone()));
+        let task = if hibernated {
+            tokio::spawn(std::future::pending())
+        } else {
+            tokio::spawn(conn::run(shared.clone()))
+        };
         let m = shared.machine();
         if let Some(old) = lock(&self.live).insert(m.id, Live { shared, task }) {
             old.shared.close();
@@ -146,7 +210,9 @@ impl Machines {
         Ok(())
     }
 
-    pub fn remove(&self, id: i64) -> Result<()> {
+    pub async fn remove(&self, id: i64) -> Result<()> {
+        let lifecycle = self.lifecycle(id);
+        let _held = lifecycle.lock().await;
         let (active, name) = {
             let daemon = self.daemon()?;
             let store = daemon.store();
@@ -182,7 +248,12 @@ impl Machines {
             }
             store.machine_active_tasks(id)?
         };
-        self.remove_row_and_connection(id)?;
+        {
+            // Held only here: archiving below takes it again to hibernate.
+            let lifecycle = self.lifecycle(id);
+            let _held = lifecycle.lock().await;
+            self.remove_row_and_connection(id)?;
+        }
         let _ = self
             .settings
             .events
@@ -207,8 +278,9 @@ impl Machines {
             .map_err(Into::into)
     }
 
-    pub fn retry(&self, id: i64) -> Result<()> {
+    pub async fn retry(&self, id: i64) -> Result<()> {
         self.require_node()?;
+        self.wake(id).await?;
         match lock(&self.live).get(&id) {
             Some(live) => {
                 live.shared.retry();
@@ -233,6 +305,7 @@ impl Machines {
     /// Which of the machine's running sessions an update resumes and which it ends.
     pub async fn update_preview(&self, id: i64) -> Result<MachineUpdatePreview> {
         self.require_node()?;
+        self.wake(id).await?;
         let shared = self.shared(id)?;
         let listed = match self
             .call::<_, Vec<Session>>(
@@ -290,7 +363,57 @@ impl Machines {
     /// Restarts the machine daemon on the current build; returns once the machine is ready on it.
     pub async fn update(&self, id: i64) -> Result<()> {
         self.require_node()?;
+        self.wake(id).await?;
         self.shared(id)?.request_update().await
+    }
+
+    /// Returns once the machine is `Ready`; fails when it is blocked, removed or `timeout` passes.
+    pub async fn wait_ready(&self, id: i64, timeout: Duration) -> Result<()> {
+        let mut events = self.settings.events.subscribe();
+        let wait = async {
+            let mut machine = self.shared(id)?.machine();
+            loop {
+                match machine.status.state {
+                    MachineState::Ready => return Ok(()),
+                    MachineState::Blocked => {
+                        return Err(Error::new(
+                            ErrorKind::MachineOffline,
+                            machine
+                                .status
+                                .error
+                                .unwrap_or_else(|| format!("machine {} is blocked", machine.name)),
+                        ))
+                    }
+                    _ => {}
+                }
+                machine = match events.recv().await {
+                    Ok(Event::MachineChanged(m)) if m.id == id => m,
+                    Ok(Event::MachineRemoved { machine_id }) if machine_id == id => {
+                        return Err(Error::new(
+                            ErrorKind::NotFound,
+                            format!("machine {id} was removed"),
+                        ))
+                    }
+                    Ok(_) => continue,
+                    Err(RecvError::Lagged(_)) => self.shared(id)?.machine(),
+                    Err(RecvError::Closed) => {
+                        return Err(Error::new(
+                            ErrorKind::Internal,
+                            "the daemon is shutting down",
+                        ))
+                    }
+                };
+            }
+        };
+        tokio::time::timeout(timeout, wait).await.map_err(|_| {
+            Error::new(
+                ErrorKind::Timeout,
+                format!(
+                    "machine {id} did not connect within {} s",
+                    timeout.as_secs()
+                ),
+            )
+        })?
     }
 
     /// The machine's connection while it is ready.
@@ -333,11 +456,16 @@ fn machine(stored: StoredMachine) -> Machine {
         destination: stored.destination,
         created_at: stored.created_at,
         status: MachineStatus::default(),
+        provider: stored.provider.map(|p| MachineProvider {
+            provider: p.provider,
+            owned: p.owned,
+            delete_with_tasks: p.delete_with_tasks,
+        }),
     }
 }
 
 /// ssh would read a leading `-` as an option, e.g. `-oProxyCommand=…`.
-fn check_destination(destination: &str) -> Result<()> {
+pub(crate) fn check_destination(destination: &str) -> Result<()> {
     if destination.is_empty()
         || destination.starts_with('-')
         || destination

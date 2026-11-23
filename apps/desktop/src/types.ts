@@ -298,6 +298,7 @@ export type TaskCreateRequest = {
   push: boolean;
   on_conflict: ConflictChoice | null;
   machine_id?: number | null;
+  provider_machine?: ProviderMachineChoice;
   activity_token?: string;
 };
 export interface TaskFileResult {
@@ -388,7 +389,8 @@ export type PluginState =
   | { state: 'broken'; reason: string }
   | { state: 'failing'; reason: string }
   | { state: 'disabled' };
-export type CapabilityKind = 'forge' | 'agent' | 'command' | 'task_source' | 'panel';
+export type CapabilityKind =
+  'forge' | 'agent' | 'command' | 'task_source' | 'panel' | 'machine_provider';
 export interface PanelInfo {
   id: string;
   title: string;
@@ -568,7 +570,7 @@ export interface RemoteInterface {
   address: string;
   tailscale: boolean;
 }
-export type MachineState = 'connecting' | 'ready' | 'offline' | 'blocked';
+export type MachineState = 'connecting' | 'ready' | 'offline' | 'blocked' | 'hibernated';
 export interface MachineStatus {
   state: MachineState;
   platform: string | null;
@@ -595,7 +597,36 @@ export interface Machine {
   destination: string;
   created_at: number;
   status: MachineStatus;
+  provider?: MachineProviderRef | null;
 }
+export interface MachineProviderRef {
+  provider: string;
+  owned: boolean;
+  delete_with_tasks: boolean;
+}
+export type ProviderVmState = 'running' | 'stopped' | 'hibernated' | 'other';
+export interface ProviderVm {
+  ref: string;
+  name: string;
+  state: ProviderVmState;
+  destination: string;
+}
+export interface MachineProviderInfo {
+  provider: string;
+  display_name: string;
+  vms: ProviderVm[];
+  create_options: SettingSpec[];
+  error: string | null;
+}
+export type ProviderMachineChoice =
+  | { provider: string; kind: 'existing'; ref: string }
+  | {
+      provider: string;
+      kind: 'new';
+      name: string;
+      options: Record<string, SettingValue>;
+      delete_with_tasks: boolean;
+    };
 export interface RemoteDevice {
   id: number;
   name: string;

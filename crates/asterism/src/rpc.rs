@@ -45,10 +45,16 @@ const REMOTE_DENIED: &[&str] = &[
 ];
 
 /// A leaked device token must not be able to stop the daemon, rotate itself or reach other hosts.
-fn remote_denied(method_name: &str) -> bool {
+fn remote_denied(method_name: &str, params: &Value) -> bool {
     REMOTE_DENIED.contains(&method_name)
+        // Positional params could carry `provider_machine` too, so only null or an object without it pass.
+        || (method_name == method::TASK_CREATE
+            && params.as_object().map_or(!params.is_null(), |o| {
+                o.get("provider_machine").is_some_and(|p| !p.is_null())
+            }))
         || method_name.starts_with("remote.")
         || method_name.starts_with("machine.")
+        || method_name.starts_with("machine_provider.")
 }
 
 /// One client connection; background forwarders are keyed so re-attaching replaces them.
@@ -281,7 +287,7 @@ async fn handle_line(daemon: Arc<Daemon>, conn: Arc<Conn>, line: String) {
         conn.send(&response).await;
         return;
     }
-    if matches!(conn.peer, Peer::Remote { .. }) && remote_denied(&request.method) {
+    if matches!(conn.peer, Peer::Remote { .. }) && remote_denied(&request.method, &request.params) {
         let message = format!("{} is not available remotely", request.method);
         conn.send(&Response::err(
             id,
@@ -400,7 +406,8 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
         method::MACHINE_REMOVE => {
             daemon
                 .machines()
-                .remove(params::<MachineIdParams>(raw)?.machine_id)?;
+                .remove(params::<MachineIdParams>(raw)?.machine_id)
+                .await?;
             Ok(Value::Null)
         }
         method::MACHINE_FORGET => to_value(
@@ -409,6 +416,14 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
                 .forget(params::<MachineIdParams>(raw)?.machine_id)
                 .await?,
         ),
+        method::MACHINE_SET_DELETE_WITH_TASKS => {
+            let p: MachineSetDeleteWithTasksParams = params(raw)?;
+            to_value(
+                daemon
+                    .machines()
+                    .set_delete_with_tasks(p.machine_id, p.delete_with_tasks)?,
+            )
+        }
         method::MACHINE_TASKS => to_value(
             daemon
                 .machines()
@@ -417,7 +432,8 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
         method::MACHINE_RETRY => {
             daemon
                 .machines()
-                .retry(params::<MachineIdParams>(raw)?.machine_id)?;
+                .retry(params::<MachineIdParams>(raw)?.machine_id)
+                .await?;
             Ok(Value::Null)
         }
         method::UPLINK_REGISTER => {
@@ -636,6 +652,7 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
         ),
         method::TASK_SOURCE_SEARCH => to_value(daemon.task_source_search(&params(raw)?).await?),
         method::TASK_SOURCE_GET => to_value(daemon.task_source_get(&params(raw)?).await?),
+        method::MACHINE_PROVIDER_LIST => to_value(daemon.machine_providers().await?),
         method::PR_LIST => to_value(daemon.pr_list(params::<PrListParams>(raw)?.project_id)),
         method::PR_REFRESH => to_value(
             daemon
@@ -948,8 +965,9 @@ mod tests {
             method::MACHINE_TEST,
             method::MACHINE_UPDATE,
             method::MACHINE_UPDATE_PREVIEW,
+            method::MACHINE_PROVIDER_LIST,
         ] {
-            assert!(remote_denied(name), "{name}");
+            assert!(remote_denied(name, &Value::Null), "{name}");
         }
         for name in [
             method::HELLO,
@@ -957,7 +975,17 @@ mod tests {
             method::SESSION_SEND,
             method::TASK_CREATE,
         ] {
-            assert!(!remote_denied(name), "{name}");
+            assert!(!remote_denied(name, &Value::Null), "{name}");
         }
+        let provider_task = serde_json::json!({"provider_machine": {"provider": "p"}});
+        assert!(remote_denied(method::TASK_CREATE, &provider_task));
+        assert!(remote_denied(
+            method::TASK_CREATE,
+            &serde_json::json!([1, "t"])
+        ));
+        assert!(!remote_denied(
+            method::TASK_CREATE,
+            &serde_json::json!({"title": "t"})
+        ));
     }
 }

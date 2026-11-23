@@ -1628,7 +1628,7 @@ async fn machine_with_a_task_being_created_cannot_be_removed() {
         .await
     );
 
-    let err = daemon.machines().remove(m.id).unwrap_err();
+    let err = daemon.machines().remove(m.id).await.unwrap_err();
     assert_eq!(err.kind, ErrorKind::InvalidParams);
     fake.resume_link();
     create.await.unwrap().unwrap();
@@ -3679,4 +3679,62 @@ async fn task_on_machine_without_agents_gets_a_shell() {
     let on_machine = machine_sessions(&fake, remote_task_id).await;
     assert_eq!(on_machine.len(), 1);
     assert!(hub_store(&d).session_remote(session.id).unwrap().is_some());
+}
+
+#[tokio::test]
+async fn trust_host_key_uses_accept_new() {
+    let fake = FakeSsh::new();
+    install::trust_host_key(&fake.bin(), "ubuntu@vm", Duration::from_secs(5))
+        .await
+        .unwrap();
+    let call = fake.last_call();
+    assert!(call.contains("StrictHostKeyChecking=accept-new"), "{call}");
+    assert!(call.ends_with("true"), "{call}");
+}
+
+#[tokio::test]
+async fn trust_host_key_retries_until_deadline() {
+    let fake = FakeSsh::new();
+    fake.fail_with("Connection refused", 255);
+    let recover = async {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        fake.recover();
+    };
+    let bin = fake.bin();
+    let trust = install::trust_host_key(&bin, "ubuntu@vm", Duration::from_secs(10));
+    let (result, ()) = tokio::join!(trust, recover);
+    result.unwrap();
+    assert!(fake.invocations() >= 2);
+
+    fake.fail_with("Connection refused", 255);
+    let started = Instant::now();
+    let result = install::trust_host_key(&fake.bin(), "ubuntu@vm", Duration::from_secs(3)).await;
+    assert!(matches!(result, Err(InstallError::Ssh { .. })));
+    assert!(started.elapsed() < Duration::from_secs(6));
+}
+
+#[tokio::test]
+async fn trust_host_key_gives_up_on_a_hanging_ssh_within_the_deadline() {
+    let fake = FakeSsh::new();
+    fake.hang();
+    let started = Instant::now();
+    let result = install::trust_host_key(&fake.bin(), "ubuntu@vm", Duration::from_secs(2)).await;
+    assert!(matches!(result, Err(InstallError::Ssh { .. })));
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+#[tokio::test]
+async fn forget_host_key_removes_the_destination_host() {
+    let fake = FakeSsh::new();
+    let dir = TempDir::new().unwrap();
+    let keygen = dir.path().join("keygen");
+    let log = dir.path().join("log");
+    std::fs::write(
+        &keygen,
+        format!("#!/bin/sh\necho \"$*\" > '{}'\n", log.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&keygen, std::fs::Permissions::from_mode(0o755)).unwrap();
+    install::forget_host_key(&fake.bin(), &keygen, "ubuntu@10.0.0.7").await;
+    assert_eq!(std::fs::read_to_string(log).unwrap().trim(), "-R 10.0.0.7");
 }

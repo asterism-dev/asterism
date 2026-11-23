@@ -2,7 +2,9 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import {
   Button,
+  Checkbox,
   Dialog,
+  Field,
   SegmentedControl,
   Select,
   Tabs,
@@ -14,10 +16,18 @@ import { api, errorMessage, RpcError } from '../api';
 import { baseChoice } from '../baseBranch';
 import {
   defaultMachineFor,
+  builtinAgents,
   LOCAL_MACHINE,
   machineAgents,
+  vmAgentsUnknown,
   machineOptions as machineOptionsFor,
+  parseProviderValue,
+  providerGroups,
+  suggestVmName,
+  vmOptionsDraft,
+  vmOptionsPayload,
 } from '../machines';
+import type { SettingsDraft } from '../pluginsView';
 import { leaveSettings } from '../settingsGuard';
 import { matchAction } from '../shortcuts';
 import { addSession, addTask, state, toast } from '../store';
@@ -30,10 +40,20 @@ import {
   randomSuffix,
 } from '../taskForm';
 import { issueToCreate } from '../taskSources';
-import type { IssueDetails, PrHit, ProjectBranches, TaskIssue, TaskSourceInfo } from '../types';
+import type {
+  IssueDetails,
+  MachineProviderInfo,
+  PluginInfo,
+  PrHit,
+  ProjectBranches,
+  ProviderMachineChoice,
+  TaskIssue,
+  TaskSourceInfo,
+} from '../types';
 import ActivitySteps from './ActivitySteps.vue';
 import BasedOnPicker from './BasedOnPicker.vue';
 import Kbd from './Kbd.vue';
+import SettingField from './SettingField.vue';
 import WorkspaceSettings from './WorkspaceSettings.vue';
 import WorktreeConflict from './WorktreeConflict.vue';
 import {
@@ -62,11 +82,69 @@ const sessionOptions = computed(() => [
   { value: 'agent' as const, label: 'Agent', disabled: !agents.value.length },
   { value: 'shell' as const, label: 'Shell' },
 ]);
-const machineOptions = computed(() => machineOptionsFor(state.machines, true));
-const machineId = ref(LOCAL_MACHINE);
-const agents = computed(() =>
-  machineAgents(state.machines.find((m) => m.id === machineId.value) ?? null, state.agents),
+const DELETE_KEY = 'asterism.newVm.deleteWithTasks';
+const providers = ref<MachineProviderInfo[]>([]);
+const providersError = ref<string | null>(null);
+const groups = computed(() => providerGroups(providers.value));
+const machineOptions = computed(() => [
+  ...machineOptionsFor(state.machines, true),
+  ...(providersError.value
+    ? [
+        {
+          value: 'provider:unavailable',
+          label: `Providers unavailable: ${providersError.value}`,
+          disabled: true,
+        },
+      ]
+    : []),
+  ...groups.value.flatMap((g) =>
+    g.error
+      ? [{ value: `provider:${g.provider}:error`, label: `${g.label}: ${g.error}`, disabled: true }]
+      : g.options.map((o) => ({ ...o, label: `${g.label} · ${o.label}` })),
+  ),
+]);
+const machineId = ref<number | string>(LOCAL_MACHINE);
+const providerChoice = computed(() => parseProviderValue(machineId.value));
+const newVm = computed(() => (providerChoice.value?.ref === null ? providerChoice.value : null));
+const newVmInfo = computed(() => providers.value.find((p) => p.provider === newVm.value?.provider));
+const vmName = ref('');
+const vmNameTouched = ref(false);
+const vmOptions = ref<SettingsDraft>({ values: {}, secrets: {}, cleared: [] });
+const deleteWithTasks = ref(readDeleteWithTasks());
+const takenNames = computed(() => [
+  ...state.machines.map((m) => m.name),
+  ...providers.value.flatMap((p) => p.vms.map((v) => v.name)),
+]);
+const plugins = ref<PluginInfo[]>([]);
+const selectedMachine = computed(
+  () => state.machines.find((m) => m.id === machineId.value) ?? null,
 );
+const agentsUnknown = computed(() =>
+  vmAgentsUnknown(selectedMachine.value, providerChoice.value !== null),
+);
+const agents = computed(() =>
+  agentsUnknown.value
+    ? builtinAgents(state.agents, plugins.value)
+    : machineAgents(selectedMachine.value, state.agents),
+);
+
+function readDeleteWithTasks(): boolean {
+  try {
+    return localStorage.getItem(DELETE_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+function onDeleteWithTasks(value: boolean | 'indeterminate') {
+  deleteWithTasks.value = value === true;
+  try {
+    localStorage.setItem(DELETE_KEY, String(deleteWithTasks.value));
+  } catch {
+    // Remembering the choice is optional.
+  }
+}
+
 const TABS = [
   { value: 'conversation', label: 'Initial Conversation' },
   { value: 'workspace', label: 'Workspace Settings' },
@@ -80,6 +158,32 @@ watch(
   (list) => {
     if (!list.some((a) => a.name === agent.value)) agent.value = list[0]?.name ?? '';
     if (!list.length) session.value = 'shell';
+  },
+  { immediate: true },
+);
+api.plugins().then(
+  (list) => {
+    if (!closed) plugins.value = list;
+  },
+  () => {},
+);
+api.machineProviders().then(
+  (list) => {
+    if (!closed) providers.value = list;
+  },
+  (e) => {
+    if (!closed) providersError.value = errorMessage(e);
+  },
+);
+watch(newVmInfo, (info) => {
+  vmOptions.value = vmOptionsDraft(info?.create_options ?? []);
+  vmNameTouched.value = false;
+});
+watch(
+  [() => title.value, takenNames, newVm],
+  () => {
+    if (newVm.value && !vmNameTouched.value)
+      vmName.value = suggestVmName(finalSlug(title.value) || placeholder, takenNames.value);
   },
   { immediate: true },
 );
@@ -244,8 +348,25 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onKey);
 });
 
+function providerMachine(): ProviderMachineChoice | undefined {
+  const choice = providerChoice.value;
+  if (!choice) return undefined;
+  if (choice.ref !== null) return { provider: choice.provider, kind: 'existing', ref: choice.ref };
+  return {
+    provider: choice.provider,
+    kind: 'new',
+    name: vmName.value.trim(),
+    options: vmOptionsPayload(vmOptions.value),
+    delete_with_tasks: deleteWithTasks.value,
+  };
+}
+
 async function submit() {
   if (busy.value || loadingBranches.value || !canCreate.value) return;
+  if (newVm.value && !vmName.value.trim()) {
+    error.value = 'Enter a name for the new VM.';
+    return;
+  }
   if (mode.value === 'checkout' && !checkout.value) {
     error.value = 'Choose a branch to check out.';
     tab.value = 'workspace';
@@ -270,8 +391,9 @@ async function submit() {
         push: push.value,
         issue: kind.value === 'issue' ? issue.value : null,
         onConflict: sent,
-        machineId: machineId.value || null,
+        machineId: typeof machineId.value === 'number' ? machineId.value || null : null,
       }),
+      provider_machine: providerMachine(),
       activity_token: token.value,
     });
     if (closed) return;
@@ -301,7 +423,7 @@ async function submit() {
     <template #title>
       Create Task in
       <Select v-model="projectId" :options="projectOptions" class="project" aria-label="Project" />
-      <template v-if="state.machines.length">
+      <template v-if="state.machines.length || groups.length || providersError">
         on
         <Select
           v-model="machineId"
@@ -321,6 +443,25 @@ async function submit() {
         spellcheck="false"
         @input="onTitle"
       />
+
+      <div v-if="newVm" class="new-vm">
+        <Field label="VM name">
+          <TextInput
+            v-model="vmName"
+            spellcheck="false"
+            @update:model-value="vmNameTouched = true"
+          />
+        </Field>
+        <SettingField
+          v-for="spec in newVmInfo?.create_options ?? []"
+          :key="spec.key"
+          :spec="spec"
+          :draft="vmOptions"
+        />
+        <Checkbox :model-value="deleteWithTasks" @update:model-value="onDeleteWithTasks">
+          Delete VM with its last task
+        </Checkbox>
+      </div>
 
       <BasedOnPicker
         v-model:kind="kind"
@@ -343,6 +484,9 @@ async function submit() {
             />
             <template v-if="session === 'agent'">
               <Select v-model="agent" :options="agentOptions" aria-label="Agent" />
+              <p v-if="agentsUnknown" class="muted">
+                The agent must be installed in the VM's image.
+              </p>
               <Textarea
                 v-model="prompt"
                 :rows="4"
@@ -406,6 +550,11 @@ async function submit() {
   font-size: 18px;
   border: none;
   padding: 6px 4px;
+}
+.new-vm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .conversation {
   display: flex;

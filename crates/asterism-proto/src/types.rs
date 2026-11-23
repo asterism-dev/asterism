@@ -94,6 +94,7 @@ pub mod method {
     pub const PLUGIN_UNINSTALL: &str = "plugin.uninstall";
     pub const PLUGIN_SET_ENABLED: &str = "plugin.set_enabled";
     pub const TASK_SOURCE_LIST: &str = "task_source.list";
+    pub const MACHINE_PROVIDER_LIST: &str = "machine_provider.list";
     pub const REMOTE_STATUS: &str = "remote.status";
     pub const REMOTE_CONFIG_SET: &str = "remote.config_set";
     pub const REMOTE_INTERFACES: &str = "remote.interfaces";
@@ -115,6 +116,7 @@ pub mod method {
     pub const MACHINE_ADD: &str = "machine.add";
     pub const MACHINE_REMOVE: &str = "machine.remove";
     pub const MACHINE_FORGET: &str = "machine.forget";
+    pub const MACHINE_SET_DELETE_WITH_TASKS: &str = "machine.set_delete_with_tasks";
     pub const MACHINE_TASKS: &str = "machine.tasks";
     pub const MACHINE_RETRY: &str = "machine.retry";
     pub const MACHINE_TEST: &str = "machine.test";
@@ -614,6 +616,7 @@ pub enum CapabilityKind {
     Agent,
     Command,
     TaskSource,
+    MachineProvider,
     Panel,
 }
 
@@ -940,6 +943,31 @@ pub struct TaskCreateParams {
     pub activity_token: Option<String>,
     #[serde(default)]
     pub machine_id: Option<i64>,
+    /// Provision a provider VM as the task's machine; excludes `machine_id`.
+    #[serde(default)]
+    pub provider_machine: Option<ProviderMachineChoice>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderMachineChoice {
+    pub provider: String,
+    #[serde(flatten)]
+    pub vm: ProviderVmChoice,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProviderVmChoice {
+    Existing {
+        #[serde(rename = "ref")]
+        vm_ref: String,
+    },
+    New {
+        name: String,
+        #[serde(default)]
+        options: serde_json::Map<String, Value>,
+        delete_with_tasks: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1813,6 +1841,7 @@ pub enum MachineState {
     Ready,
     Offline,
     Blocked,
+    Hibernated,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1835,6 +1864,21 @@ pub struct Machine {
     pub destination: String,
     pub created_at: i64,
     pub status: MachineStatus,
+    #[serde(default)]
+    pub provider: Option<MachineProvider>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MachineProvider {
+    pub provider: String,
+    pub owned: bool,
+    pub delete_with_tasks: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MachineSetDeleteWithTasksParams {
+    pub machine_id: i64,
+    pub delete_with_tasks: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1947,6 +1991,35 @@ impl Event {
         )
         .ok()
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderVmState {
+    Running,
+    Stopped,
+    Hibernated,
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderVm {
+    #[serde(rename = "ref")]
+    pub vm_ref: String,
+    pub name: String,
+    pub state: ProviderVmState,
+    pub destination: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MachineProviderInfo {
+    pub provider: String,
+    pub display_name: String,
+    pub vms: Vec<ProviderVm>,
+    pub create_options: Vec<SettingSpec>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[cfg(test)]

@@ -215,6 +215,8 @@ impl Daemon {
         machine_id: i64,
         params: TaskCreateParams,
     ) -> Result<TaskCreateResult> {
+        // A hibernated machine lists no agents until it is awake.
+        self.machines().wake(machine_id).await?;
         if let Some(agent) = &params.agent {
             self.ensure_machine_agent(machine_id, agent)?;
         }

@@ -4,7 +4,8 @@ use std::time::Duration;
 use asterism_proto::client::{Client, ClientError};
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::{
-    method, Event, Session, SessionAttachResult, SessionIdParams, SessionListParams, SessionStatus,
+    method, Event, MachineState, Session, SessionAttachResult, SessionIdParams, SessionListParams,
+    SessionStatus,
 };
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
@@ -21,6 +22,19 @@ use crate::lock;
 
 const OUTPUT_QUEUE: usize = 1024;
 
+/// Views that fail on a hibernated machine instead of waking it, e.g. selecting an archived task.
+const READ_ONLY: &[&str] = &[
+    method::TASK_DIFF,
+    method::TASK_DIFF_STAT,
+    method::TASK_FILE,
+    method::TASK_LIST_DIR,
+    method::SESSION_READ,
+    method::SESSION_SUBAGENTS,
+    method::REVIEW_COMMITS,
+    method::REVIEW_COMMIT_DIFF,
+    method::REVIEW_FILE_CONTENTS,
+];
+
 impl Machines {
     pub(super) fn shared(&self, machine_id: i64) -> Result<Arc<Shared>> {
         lock(&self.live)
@@ -34,7 +48,7 @@ impl Machines {
             })
     }
 
-    /// Forwards one call to a ready machine, bounded by `machine_call_timeout`.
+    /// Forwards one call to a ready machine, waking it first unless the call is read-only, bounded by `machine_call_timeout`.
     pub async fn call<P: Serialize, T: DeserializeOwned>(
         &self,
         machine_id: i64,
@@ -54,9 +68,22 @@ impl Machines {
         method: &str,
         params: P,
     ) -> Result<T> {
+        if !READ_ONLY.contains(&method) {
+            self.wake(machine_id).await?;
+        }
         let shared = self.shared(machine_id)?;
-        let name = shared.machine().name;
-        let client = shared.client().ok_or_else(|| offline(&name))?;
+        let machine = shared.machine();
+        let name = machine.name;
+        let client = shared.client().ok_or_else(|| {
+            if machine.status.state == MachineState::Hibernated {
+                Error::new(
+                    ErrorKind::MachineOffline,
+                    format!("machine {name} is hibernated"),
+                )
+            } else {
+                offline(&name)
+            }
+        })?;
         call(&client, &name, timeout, method, params).await
     }
 

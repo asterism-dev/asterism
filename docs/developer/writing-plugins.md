@@ -12,9 +12,10 @@ A plugin declares what it provides under `[provides]`. One plugin may provide se
 | `agent` | A coding agent that can run in a session. | Only for `launch = "backend"` |
 | `command` | A subcommand of the `asterism` CLI. | Yes |
 | `task_source` | Issues that tasks can be created from. | Yes |
+| `machine_provider` | A source of virtual machines that tasks can run on: list, create, resume, hibernate and delete. | Yes |
 | `panel` | A web view in the desktop app's task dock. | No |
 
-Each forge id, agent id, command name and task source id can only be provided by one plugin. If two plugins claim the same one, the plugin found later is marked broken. Discovery order is: linked plugins, then installed plugins, then the built-in ones; the first plugin with a given name wins.
+Each forge id, agent id, command name, task source id and machine provider id can only be provided by one plugin. If two plugins claim the same one, the plugin found later is marked broken. Discovery order is: linked plugins, then installed plugins, then the built-in ones; the first plugin with a given name wins.
 
 ## Manifest reference
 
@@ -39,7 +40,7 @@ Each forge id, agent id, command name and task source id can only be provided by
 |---|---|---|---|
 | `command` | array of strings | yes, non-empty | Program and arguments. A program containing `/` is resolved relative to the plugin directory; a bare name is looked up on `PATH`. |
 
-A `[backend]` section is required when the plugin provides a forge, a command, a task source or an agent with `launch = "backend"`.
+A `[backend]` section is required when the plugin provides a forge, a command, a task source, a machine provider or an agent with `launch = "backend"`.
 
 ### `[[provides.forge]]`
 
@@ -90,6 +91,13 @@ Templates are expanded token by token. These tokens are replaced only when they 
 | `id` | string (slug) | yes | Task source id. |
 | `display_name` | string | yes | Name shown in the UI. |
 
+### `[[provides.machine_provider]]`
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | string (slug) | yes | Machine provider id. |
+| `display_name` | string | yes | Name shown in the UI. |
+
 ### `[[provides.panel]]`
 
 | Field | Type | Required | Meaning |
@@ -136,8 +144,8 @@ The backend gets a fixed environment, not the user's shell environment: the daem
 - **Handshake.** The first request is always `initialize`. Its reply must list exactly the capabilities the manifest implies, otherwise the plugin is marked failing until it is reloaded:
     - `forge` if it provides a forge, `pull_requests` if any forge has `pull_requests = true`, `reviews` if any forge has `reviews = true`,
     - `agent` if any agent has `launch = "backend"`,
-    - `command` if it provides a command, `task_source` if it provides a task source.
-- **Timeouts.** Calls time out after 20 s, except `forge.clone` and `forge.create_remote`, which have no timeout.
+    - `command` if it provides a command, `task_source` if it provides a task source, `machine_provider` if it provides a machine provider.
+- **Timeouts.** Calls time out after 20 s, except `forge.clone`, `forge.create_remote`, `machine_provider.create`, `machine_provider.resume`, `machine_provider.hibernate` and `machine_provider.delete`, which have no timeout.
 - **Idle stop.** A backend with no calls for 60 s is stopped and restarted on the next call. Do not keep state in memory that you cannot rebuild; persist it in `data_dir`.
 - **Crashes.** A backend that exits unexpectedly 3 times within a minute is marked failing until the plugin is reloaded.
 - **Settings.** When the user changes a setting of a running backend, the daemon sends `settings.changed`. If that call fails, for example because the backend does not implement it, the backend is stopped and starts with the new values on its next call.
@@ -179,7 +187,14 @@ Parameter and result types are defined in `crates/asterism-plugin/src/protocol.r
 | `task_source.check` | `task_source` | `source`, `project_path` | `available`, optional `reason` |
 | `task_source.search` | `task_source` | `source`, `query`, `assigned_to_me`, `project_path` | list of `key`, `title`, `url`, `state`, `assignee`, `updated_at` |
 | `task_source.get` | `task_source` | `source`, `key`, `project_path` | `key`, `title`, `url`, `description`, `branch` |
+| `machine_provider.list` | `machine_provider` | `provider` | `vms`: list of `ref`, `name`, `state` (`running`/`stopped`/`hibernated`), `destination`; optional `create_options`: list of setting specs |
+| `machine_provider.create` | `machine_provider` | `provider`, `name`, `options` | `ref`, `name`, `destination` |
+| `machine_provider.resume` | `machine_provider` | `provider`, `ref` | `destination` |
+| `machine_provider.hibernate` | `machine_provider` | `provider`, `ref` | `null` |
+| `machine_provider.delete` | `machine_provider` | `provider`, `ref` | `null` |
 | `agent.prepare` | `agent` | `agent`, `mode` (`start`/`resume`), `prompt`, `agent_ref`, `settings` (`args`, `mcp_config`, `hooks`), `cwd`, optional `name` (session display name from the task) | `argv` (non-empty), optional `env` as `[name, value]` pairs |
+
+For machine providers: `create` and `resume` return only once the VM accepts SSH, and `resume` may return a different `destination` than before. `delete` of a VM the provider does not know should fail with `not_found`, which Asterism counts as deleted. A VM `state` of `other`, or any state Asterism does not know, is shown as `other`. `create_options` must not use the `secret` type. VM names are chosen by the user and are unique per provider; `list` must show a VM under its `name` while it is still being created, because Asterism deletes VMs left over from a crash by name.
 
 `visibility` is `public`, `private` or `internal`. In `forge.pull_requests`, `state` is `open`, `draft`, `merged` or `closed`; `review` is `approved`, `changes_requested`, `review_required` or `none`; `checks` is `{"state": ..., "failing": [...]}` with state `pending`, `success`, `failure` or `none`. Leave branches without a pull request out of the result. `task_source.get` may return a `branch` to use for the task; when it is `null`, Asterism derives one.
 

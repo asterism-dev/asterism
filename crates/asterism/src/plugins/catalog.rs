@@ -214,6 +214,7 @@ pub fn capability_tag(kind: CapabilityKind) -> &'static str {
         CapabilityKind::Agent => "agent",
         CapabilityKind::Command => "command",
         CapabilityKind::TaskSource => "task_source",
+        CapabilityKind::MachineProvider => "machine_provider",
         CapabilityKind::Panel => "panel",
     }
 }

@@ -1,0 +1,11 @@
+name = "vmfake"
+version = "0.1.0"
+protocol = 1
+description = "Test fixture machine provider"
+
+[backend]
+command = ["./backend.py"]
+
+[[provides.machine_provider]]
+id = "vmfake"
+display_name = "Fake VMs"
