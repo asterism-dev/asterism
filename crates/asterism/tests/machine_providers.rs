@@ -252,3 +252,290 @@ async fn hibernated_machine_survives_restart_without_connecting() {
     assert_eq!(machines[0].status.state, MachineState::Hibernated);
     assert_eq!(fake.invocations(), 0);
 }
+
+struct Provisioning {
+    d: Arc<Daemon>,
+    home: tempfile::TempDir,
+    _fake: common::FakeSsh,
+    project_id: i64,
+}
+
+impl Provisioning {
+    fn vms(&self) -> Value {
+        serde_json::from_str(&std::fs::read_to_string(self.home.path().join("vms.json")).unwrap())
+            .unwrap()
+    }
+
+    fn calls(&self) -> Vec<String> {
+        self.vms()["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["method"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    fn store(&self) -> asterism_core::store::Store {
+        let paths = Paths {
+            home: self.home.path().join("h"),
+        };
+        asterism_core::store::Store::open(&paths.db()).unwrap()
+    }
+
+    fn break_origin(&self) {
+        let missing = format!("file://{}/missing.git", self.home.path().display());
+        common::run_git(
+            &self.home.path().join("hub/demo"),
+            &["remote", "set-url", "origin", &missing],
+        );
+    }
+
+    async fn create(&self, vm: ProviderVmChoice) -> asterism_core::error::Result<TaskCreateResult> {
+        self.d
+            .create_task(TaskCreateParams {
+                project_id: self.project_id,
+                title: "On a VM".into(),
+                provider_machine: Some(ProviderMachineChoice {
+                    provider: "vmfake".into(),
+                    vm,
+                }),
+                ..Default::default()
+            })
+            .await
+    }
+}
+
+fn fixture_vms() -> Value {
+    json!({"vms": {
+        "a": {"name": "one", "state": "running", "destination": "u@one"},
+        "b": {"name": "two", "state": "hibernated", "destination": "u@two"},
+    }, "calls": []})
+}
+
+fn provisioning_options(home: &Path, fake: &common::FakeSsh) -> DaemonOptions {
+    DaemonOptions {
+        plugin_env: vec![
+            (
+                "FIXTURE_VMS".into(),
+                home.join("vms.json").display().to_string(),
+            ),
+            ("FIXTURE_DESTINATION".into(), "u@created".into()),
+            ("FIXTURE_RESUME_DESTINATION".into(), "u@resumed".into()),
+        ],
+        ssh_bin: fake.bin(),
+        machine_bins_dir: Some(fake.bins_dir()),
+        machine_health_interval: Duration::from_millis(200),
+        machine_health_timeout: Duration::from_secs(2),
+        machine_backoff_max: Duration::from_millis(300),
+        ..common::daemon_options()
+    }
+}
+
+async fn provisioning() -> Provisioning {
+    let home = tempfile::tempdir().unwrap();
+    let fake = common::FakeSsh::new();
+    let paths = Paths {
+        home: home.path().join("h"),
+    };
+    paths.ensure_dirs().unwrap();
+    link_vmfake(&paths);
+    std::fs::write(home.path().join("vms.json"), fixture_vms().to_string()).unwrap();
+    let d = Daemon::with_options(paths, provisioning_options(home.path(), &fake)).unwrap();
+
+    let work = home.path().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    common::init_repo(&work);
+    let bare = home.path().join("demo.git");
+    common::run_git(
+        home.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            &work.display().to_string(),
+            &bare.display().to_string(),
+        ],
+    );
+    let repo = home.path().join("hub/demo");
+    std::fs::create_dir_all(repo.parent().unwrap()).unwrap();
+    common::run_git(
+        home.path(),
+        &[
+            "clone",
+            "-q",
+            &format!("file://{}", bare.display()),
+            &repo.display().to_string(),
+        ],
+    );
+    let project_id = d.add_project(&repo.display().to_string()).unwrap().id;
+    Provisioning {
+        d,
+        home,
+        _fake: fake,
+        project_id,
+    }
+}
+
+fn new_vm(options: Value) -> ProviderVmChoice {
+    ProviderVmChoice::New {
+        name: "vm-1".into(),
+        options: options.as_object().unwrap().clone(),
+        delete_with_tasks: true,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn task_on_new_vm_creates_machine_and_task() {
+    let p = provisioning().await;
+    let created = p.create(new_vm(json!({"cpus": 4}))).await.unwrap();
+
+    let vms = p.vms();
+    let create = vms["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["method"] == "machine_provider.create")
+        .unwrap();
+    assert_eq!(create["params"]["options"]["cpus"], 4);
+    let machines = p.d.machines().list().unwrap();
+    assert_eq!(machines.len(), 1);
+    let m = &machines[0];
+    assert_eq!(
+        (m.name.as_str(), m.destination.as_str()),
+        ("vm-1", "u@created")
+    );
+    let provider = m.provider.as_ref().unwrap();
+    assert!(provider.owned && provider.delete_with_tasks);
+    assert_eq!(created.task.machine_id, Some(m.id));
+    assert!(p.store().pending_vms().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn task_on_existing_vm_is_unowned() {
+    let p = provisioning().await;
+    let created = p
+        .create(ProviderVmChoice::Existing { vm_ref: "a".into() })
+        .await
+        .unwrap();
+
+    let machines = p.d.machines().list().unwrap();
+    assert_eq!(machines.len(), 1);
+    assert_eq!(machines[0].name, "one");
+    assert!(!machines[0].provider.as_ref().unwrap().owned);
+    assert_eq!(created.task.machine_id, Some(machines[0].id));
+    assert!(!p.calls().iter().any(|c| c == "machine_provider.create"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn existing_hibernated_vm_is_resumed_first() {
+    let p = provisioning().await;
+    p.create(ProviderVmChoice::Existing { vm_ref: "b".into() })
+        .await
+        .unwrap();
+
+    assert!(p.calls().iter().any(|c| c == "machine_provider.resume"));
+    // The resumed destination can only be on the machine if resume ran before it was added.
+    assert_eq!(p.d.machines().list().unwrap()[0].destination, "u@resumed");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn new_vm_name_clash_creates_nothing() {
+    let p = provisioning().await;
+    p.d.machines().add("vm-1", "u@elsewhere").unwrap();
+
+    let err = p.create(new_vm(json!({}))).await.unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
+    assert!(!p.calls().iter().any(|c| c == "machine_provider.create"));
+    assert!(p.store().pending_vms().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn invalid_create_option_is_rejected() {
+    let p = provisioning().await;
+
+    let err = p.create(new_vm(json!({"cpus": "four"}))).await.unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
+    let err = p.create(new_vm(json!({"gpus": 1}))).await.unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
+
+    assert!(!p.calls().iter().any(|c| c == "machine_provider.create"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn failed_task_creation_deletes_new_vm() {
+    let p = provisioning().await;
+    p.break_origin();
+
+    p.create(new_vm(json!({}))).await.unwrap_err();
+
+    assert_eq!(p.calls().last().unwrap(), "machine_provider.delete");
+    let vms = p.vms();
+    assert!(!vms["vms"]
+        .as_object()
+        .unwrap()
+        .values()
+        .any(|vm| vm["name"] == "vm-1"));
+    assert!(p.d.machines().list().unwrap().is_empty());
+    let store = p.store();
+    assert!(store.tasks(None, true).unwrap().is_empty());
+    assert!(store.pending_vms().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn failed_task_creation_keeps_existing_vm() {
+    let p = provisioning().await;
+    p.break_origin();
+
+    p.create(ProviderVmChoice::Existing { vm_ref: "a".into() })
+        .await
+        .unwrap_err();
+
+    assert!(p.d.machines().list().unwrap().is_empty());
+    assert!(!p.calls().iter().any(|c| c == "machine_provider.delete"));
+    assert!(p.store().tasks(None, true).unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pending_vm_is_cleaned_up_at_startup() {
+    let home = tempfile::tempdir().unwrap();
+    let fake = common::FakeSsh::new();
+    let paths = Paths {
+        home: home.path().join("h"),
+    };
+    paths.ensure_dirs().unwrap();
+    link_vmfake(&paths);
+    let mut vms = fixture_vms();
+    vms["vms"]["x"] = json!({"name": "vm-x", "state": "running", "destination": "u@x"});
+    std::fs::write(home.path().join("vms.json"), vms.to_string()).unwrap();
+    asterism_core::store::Store::open(&paths.db())
+        .unwrap()
+        .add_pending_vm("vmfake", "vm-x")
+        .unwrap();
+
+    tokio::spawn(asterism_core::run_with_options(
+        paths.clone(),
+        provisioning_options(home.path(), &fake),
+    ));
+
+    let cleaned = common::eventually_within(Duration::from_secs(20), || {
+        asterism_core::store::Store::open(&paths.db())
+            .unwrap()
+            .pending_vms()
+            .unwrap()
+            .is_empty()
+    })
+    .await;
+    assert!(cleaned);
+    let state: Value =
+        serde_json::from_str(&std::fs::read_to_string(home.path().join("vms.json")).unwrap())
+            .unwrap();
+    let deletes: Vec<&Value> = state["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["method"] == "machine_provider.delete")
+        .map(|c| &c["params"]["ref"])
+        .collect();
+    assert_eq!(deletes, [&json!("x")]);
+}

@@ -5,6 +5,7 @@ pub(crate) mod peer;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
+use std::time::Duration;
 
 use asterism_proto::client::Client;
 use asterism_proto::rpc::ErrorKind;
@@ -13,6 +14,7 @@ use asterism_proto::types::{
     MachineStatus, MachineTestResult, MachineUpdatePreview, Role, Session, SessionListParams,
     SessionStatus, Task,
 };
+use tokio::sync::broadcast::error::RecvError;
 use tokio::task::JoinHandle;
 
 use crate::daemon::Daemon;
@@ -20,6 +22,9 @@ use crate::error::{Error, Result};
 use crate::lock;
 use crate::store::{StoredMachine, StoredProvider};
 use conn::{Settings, Shared};
+
+/// How long a newly provided VM may take to accept ssh and finish the machine install.
+pub const PROVISION_READY_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 struct Live {
     shared: Arc<Shared>,
@@ -347,6 +352,55 @@ impl Machines {
     pub async fn update(&self, id: i64) -> Result<()> {
         self.require_node()?;
         self.shared(id)?.request_update().await
+    }
+
+    /// Returns once the machine is `Ready`; fails when it is blocked, removed or `timeout` passes.
+    pub async fn wait_ready(&self, id: i64, timeout: Duration) -> Result<()> {
+        let mut events = self.settings.events.subscribe();
+        let wait = async {
+            let mut machine = self.shared(id)?.machine();
+            loop {
+                match machine.status.state {
+                    MachineState::Ready => return Ok(()),
+                    MachineState::Blocked => {
+                        return Err(Error::new(
+                            ErrorKind::MachineOffline,
+                            machine
+                                .status
+                                .error
+                                .unwrap_or_else(|| format!("machine {} is blocked", machine.name)),
+                        ))
+                    }
+                    _ => {}
+                }
+                machine = match events.recv().await {
+                    Ok(Event::MachineChanged(m)) if m.id == id => m,
+                    Ok(Event::MachineRemoved { machine_id }) if machine_id == id => {
+                        return Err(Error::new(
+                            ErrorKind::NotFound,
+                            format!("machine {id} was removed"),
+                        ))
+                    }
+                    Ok(_) => continue,
+                    Err(RecvError::Lagged(_)) => self.shared(id)?.machine(),
+                    Err(RecvError::Closed) => {
+                        return Err(Error::new(
+                            ErrorKind::Internal,
+                            "the daemon is shutting down",
+                        ))
+                    }
+                };
+            }
+        };
+        tokio::time::timeout(timeout, wait).await.map_err(|_| {
+            Error::new(
+                ErrorKind::Timeout,
+                format!(
+                    "machine {id} did not connect within {} s",
+                    timeout.as_secs()
+                ),
+            )
+        })?
     }
 
     /// The machine's connection while it is ready.

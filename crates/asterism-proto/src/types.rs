@@ -943,6 +943,31 @@ pub struct TaskCreateParams {
     pub activity_token: Option<String>,
     #[serde(default)]
     pub machine_id: Option<i64>,
+    /// Provision a provider VM as the task's machine; excludes `machine_id`.
+    #[serde(default)]
+    pub provider_machine: Option<ProviderMachineChoice>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderMachineChoice {
+    pub provider: String,
+    #[serde(flatten)]
+    pub vm: ProviderVmChoice,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProviderVmChoice {
+    Existing {
+        #[serde(rename = "ref")]
+        vm_ref: String,
+    },
+    New {
+        name: String,
+        #[serde(default)]
+        options: serde_json::Map<String, Value>,
+        delete_with_tasks: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

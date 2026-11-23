@@ -39,6 +39,7 @@ use crate::store::Store;
 use crate::{git, hibernate, lock, node_settings, repo_source, status};
 
 mod activity;
+mod provision;
 mod remote_task;
 mod review;
 mod worktree_conflict;
@@ -1968,6 +1969,19 @@ impl Daemon {
         self: &Arc<Self>,
         params: TaskCreateParams,
     ) -> Result<TaskCreateResult> {
+        if let Some(choice) = params.provider_machine.clone() {
+            if params.machine_id.is_some() {
+                return Err(Error::new(
+                    ErrorKind::InvalidParams,
+                    "machine_id cannot be combined with provider_machine",
+                ));
+            }
+            // Detached, so a dropped call cannot stop provisioning halfway and leave a VM behind.
+            let daemon = self.clone();
+            return tokio::spawn(async move { daemon.create_provider_task(choice, params).await })
+                .await
+                .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+        }
         if let Some(machine_id) = params.machine_id {
             return self.create_remote_task(machine_id, params).await;
         }
