@@ -27,6 +27,65 @@ pub fn default_ssh_bin() -> PathBuf {
     std::env::var_os("ASTERISM_SSH").map_or_else(|| "ssh".into(), PathBuf::from)
 }
 
+/// Pins the key of a machine that was just created; strict checking applies everywhere else.
+pub async fn trust_host_key(
+    ssh_bin: &Path,
+    destination: &str,
+    deadline: Duration,
+) -> Result<(), InstallError> {
+    let started = tokio::time::Instant::now();
+    loop {
+        let mut cmd = tokio::process::Command::new(ssh_bin);
+        cmd.args(["-T", "-o", "BatchMode=yes"])
+            .args(["-o", "StrictHostKeyChecking=accept-new"])
+            .args(["-o", "ConnectTimeout=10"])
+            .args([destination, "true"])
+            .stdin(Stdio::null())
+            .kill_on_drop(true);
+        let err = match cmd.output().await {
+            Ok(out) if out.status.success() => return Ok(()),
+            Ok(out) => InstallError::Ssh {
+                status: out.status.code(),
+                line: String::from_utf8_lossy(&out.stderr)
+                    .lines()
+                    .rev()
+                    .find(|l| !l.trim().is_empty())
+                    .map_or_else(|| format!("ssh exited with {}", out.status), str::to_string),
+            },
+            Err(e) => InstallError::Ssh {
+                status: None,
+                line: e.to_string(),
+            },
+        };
+        if started.elapsed() + Duration::from_secs(2) > deadline {
+            return Err(err);
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
+/// Best effort: drops the machine's key from known_hosts when it is deleted.
+pub async fn forget_host_key(destination: &str) {
+    let Ok(out) = tokio::process::Command::new(default_ssh_bin())
+        .args(["-G", destination])
+        .stdin(Stdio::null())
+        .output()
+        .await
+    else {
+        return;
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let Some(host) = stdout.lines().find_map(|l| l.strip_prefix("hostname ")) else {
+        return;
+    };
+    let keygen = std::env::var_os("ASTERISM_SSH_KEYGEN").unwrap_or_else(|| "ssh-keygen".into());
+    let _ = tokio::process::Command::new(keygen)
+        .args(["-R", host.trim()])
+        .stdin(Stdio::null())
+        .output()
+        .await;
+}
+
 /// Inside `asterism.app` the per-platform machine binaries sit in `Contents/Resources/machine`.
 pub fn default_bins_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("ASTERISM_MACHINE_BINS") {
