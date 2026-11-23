@@ -1628,7 +1628,7 @@ async fn machine_with_a_task_being_created_cannot_be_removed() {
         .await
     );
 
-    let err = daemon.machines().remove(m.id).unwrap_err();
+    let err = daemon.machines().remove(m.id).await.unwrap_err();
     assert_eq!(err.kind, ErrorKind::InvalidParams);
     fake.resume_link();
     create.await.unwrap().unwrap();

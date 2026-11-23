@@ -12,7 +12,7 @@ use crate::store::{StoredMachine, StoredProvider};
 
 impl Machines {
     /// Serialises hibernating, waking and deleting one machine's VM.
-    fn lifecycle(&self, id: i64) -> Arc<tokio::sync::Mutex<()>> {
+    pub(super) fn lifecycle(&self, id: i64) -> Arc<tokio::sync::Mutex<()>> {
         lock(&self.lifecycle).entry(id).or_default().clone()
     }
 
@@ -20,6 +20,10 @@ impl Machines {
     pub async fn hibernate_if_idle(&self, id: i64) -> Result<()> {
         let lifecycle = self.lifecycle(id);
         let _held = lifecycle.lock().await;
+        self.hibernate_locked(id).await
+    }
+
+    async fn hibernate_locked(&self, id: i64) -> Result<()> {
         let daemon = self.daemon()?;
         let (stored, p) = {
             let store = daemon.store();
@@ -107,11 +111,14 @@ impl Machines {
         self.wait_ready(id, PROVISION_READY_TIMEOUT).await
     }
 
-    /// Deletes an owned VM, its `known_hosts` entry and its machine row.
+    /// Deletes an owned VM, its `known_hosts` entry and its machine row; a task created meanwhile only hibernates it.
     pub async fn delete_vm(&self, id: i64) -> Result<()> {
         let lifecycle = self.lifecycle(id);
         let _held = lifecycle.lock().await;
         let daemon = self.daemon()?;
+        if daemon.store().machine_task_count(id)? != 0 {
+            return self.hibernate_locked(id).await;
+        }
         let stored = daemon
             .store()
             .machine(id)?

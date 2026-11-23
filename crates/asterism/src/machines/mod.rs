@@ -210,7 +210,9 @@ impl Machines {
         Ok(())
     }
 
-    pub fn remove(&self, id: i64) -> Result<()> {
+    pub async fn remove(&self, id: i64) -> Result<()> {
+        let lifecycle = self.lifecycle(id);
+        let _held = lifecycle.lock().await;
         let (active, name) = {
             let daemon = self.daemon()?;
             let store = daemon.store();
@@ -246,7 +248,12 @@ impl Machines {
             }
             store.machine_active_tasks(id)?
         };
-        self.remove_row_and_connection(id)?;
+        {
+            // Held only here: archiving below takes it again to hibernate.
+            let lifecycle = self.lifecycle(id);
+            let _held = lifecycle.lock().await;
+            self.remove_row_and_connection(id)?;
+        }
         let _ = self
             .settings
             .events

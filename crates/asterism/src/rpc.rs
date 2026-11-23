@@ -401,7 +401,8 @@ async fn dispatch(daemon: &Arc<Daemon>, conn: &Conn, request: Request) -> Result
         method::MACHINE_REMOVE => {
             daemon
                 .machines()
-                .remove(params::<MachineIdParams>(raw)?.machine_id)?;
+                .remove(params::<MachineIdParams>(raw)?.machine_id)
+                .await?;
             Ok(Value::Null)
         }
         method::MACHINE_FORGET => to_value(

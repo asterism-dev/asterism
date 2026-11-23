@@ -794,6 +794,7 @@ async fn deleting_last_task_deletes_vm() {
     let p = provisioning().await;
     let task = p.create(new_vm(json!({}))).await.unwrap().task;
     let machine_id = task.machine_id.unwrap();
+    assert!(Path::new(&task.worktree_path).exists());
     let mut events = p.d.subscribe();
 
     let result = p.d.delete_task(task.id, false).await.unwrap();
@@ -803,8 +804,8 @@ async fn deleting_last_task_deletes_vm() {
     assert!(p.d.machines().list().unwrap().is_empty());
     assert!(p.store().tasks(None, true).unwrap().is_empty());
     assert_eq!(p.keygen_runs().trim(), "-R created");
-    let ssh = std::fs::read_to_string(p.fake.bin().with_file_name("calls")).unwrap();
-    assert!(!ssh.contains("task.delete"));
+    // The machine daemon would have removed the worktree on `task.delete`.
+    assert!(Path::new(&task.worktree_path).exists());
     let removed = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if let Ok(Event::MachineRemoved { machine_id: id }) = events.recv().await {
@@ -877,4 +878,45 @@ async fn concurrent_archives_hibernate_once() {
 
     assert_eq!(p.count("machine_provider.hibernate"), 1);
     assert_eq!(p.machine().status.state, MachineState::Hibernated);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn vm_with_a_task_left_is_not_deleted() {
+    let p = provisioning().await;
+    let task = p.create(new_vm(json!({}))).await.unwrap().task;
+    p.d.archive_task(task.id).await.unwrap();
+
+    p.d.machines()
+        .delete_vm(task.machine_id.unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(p.count("machine_provider.delete"), 0);
+    assert_eq!(p.machine().status.state, MachineState::Hibernated);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn archive_sweep_rehibernates_vm_it_woke() {
+    let p = provisioning().await;
+    let task = p.create(new_vm(json!({}))).await.unwrap().task;
+    std::fs::write(Path::new(&task.worktree_path).join("wip.txt"), "wip").unwrap();
+    p.d.archive_task(task.id).await.unwrap();
+    let mut config = p.d.node_config().unwrap().config;
+    config.archive = ArchiveSettings {
+        auto_delete_after_hours: Some(1),
+        delete_branch: false,
+        force: false,
+    };
+    p.d.set_node_config(&config).unwrap();
+
+    p.d.sweep_archived(i64::MAX / 2).await.unwrap();
+
+    let calls = p.calls();
+    let resumed = calls.iter().position(|c| c == "machine_provider.resume");
+    let last_hibernate = calls
+        .iter()
+        .rposition(|c| c == "machine_provider.hibernate");
+    assert!(resumed.is_some() && resumed < last_hibernate, "{calls:?}");
+    assert_eq!(p.machine().status.state, MachineState::Hibernated);
+    assert!(p.store().task(task.id).unwrap().is_some());
 }

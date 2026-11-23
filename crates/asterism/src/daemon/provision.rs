@@ -318,7 +318,7 @@ impl Daemon {
     async fn undo(&self, choice: &ProviderMachineChoice, undo: Undo) {
         let provider = &choice.provider;
         if let Some(id) = undo.machine_id {
-            if let Err(e) = self.machines().remove(id) {
+            if let Err(e) = self.machines().remove(id).await {
                 eprintln!(
                     "asterismd: removing machine {id} after a failed provisioning failed: {e}"
                 );

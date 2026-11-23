@@ -2615,6 +2615,10 @@ impl Daemon {
             return Ok(());
         };
         let due = self.store().archived_due(now - i64::from(hours) * 3600)?;
+        // The delete check wakes hibernated VMs, and skipped tasks leave them running.
+        let mut machines: Vec<i64> = due.iter().filter_map(|t| t.machine_id).collect();
+        machines.sort_unstable();
+        machines.dedup();
         for task in due {
             let check = match self.delete_check(task.id).await {
                 Ok(check) => check,
@@ -2642,6 +2646,12 @@ impl Daemon {
                     }
                 }
                 Err(e) => eprintln!("asterismd: archive cleanup of task {} failed: {e}", task.id),
+            }
+        }
+        for machine in machines {
+            if let Err(e) = self.machines().hibernate_if_idle(machine).await {
+                let name = self.machine_name(machine);
+                eprintln!("asterismd: hibernating machine {name}: {e}");
             }
         }
         Ok(())
