@@ -2,7 +2,9 @@ import { expect, it } from 'vitest';
 import {
   defaultMachineFor,
   forgetConfirmText,
+  builtinAgents,
   localTaskActions,
+  providerLabel,
   machineAgents,
   machineBlocksInput,
   machineSummary,
@@ -297,4 +299,22 @@ it('prefills VM options from defaults and drops empty ones from the payload', ()
   ]);
   expect(draft.values).toEqual({ image: 'ubuntu', cpus: 2, ssd: false, note: '' });
   expect(vmOptionsPayload(draft)).toEqual({ image: 'ubuntu', cpus: 2, ssd: false });
+});
+
+it('offers only available agents of built-in plugins and labels providers', () => {
+  const plugins = [
+    { name: 'agents', origin: 'builtin', capabilities: [] },
+    {
+      name: 'obs',
+      origin: 'linked',
+      capabilities: [{ kind: 'machine_provider', id: 'obs', description: 'Observatory' }],
+    },
+  ] as unknown as import('./types').PluginInfo[];
+  const agent = (name: string, plugin: string, available = true) =>
+    ({ name, plugin, available }) as AgentInfo;
+  expect(
+    builtinAgents([agent('a', 'agents'), agent('b', 'obs'), agent('c', 'agents', false)], plugins),
+  ).toEqual([agent('a', 'agents')]);
+  expect(providerLabel(plugins, 'obs')).toBe('Observatory');
+  expect(providerLabel(plugins, 'zzz')).toBe('zzz');
 });

@@ -4,6 +4,7 @@ import type {
   Machine,
   MachineProviderInfo,
   MachineSessionRef,
+  PluginInfo,
   MachineUpdatePreview,
   Project,
   SessionKind,
@@ -185,4 +186,16 @@ export function vmOptionsDraft(specs: SettingSpec[]): SettingsDraft {
 /** Empty fields are left out so the provider applies its own default. */
 export function vmOptionsPayload(draft: SettingsDraft): Record<string, SettingValue> {
   return Object.fromEntries(Object.entries(draft.values).filter(([, v]) => v !== ''));
+}
+
+export function builtinAgents(agents: AgentInfo[], plugins: PluginInfo[]): AgentInfo[] {
+  const builtin = new Set(plugins.filter((p) => p.origin === 'builtin').map((p) => p.name));
+  return agents.filter((a) => a.available && builtin.has(a.plugin));
+}
+
+export function providerLabel(plugins: PluginInfo[], id: string): string {
+  const cap = plugins
+    .flatMap((p) => p.capabilities)
+    .find((c) => c.kind === 'machine_provider' && c.id === id);
+  return cap?.description || id;
 }

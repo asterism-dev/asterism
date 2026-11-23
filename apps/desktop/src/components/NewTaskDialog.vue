@@ -16,6 +16,7 @@ import { api, errorMessage, RpcError } from '../api';
 import { baseChoice } from '../baseBranch';
 import {
   defaultMachineFor,
+  builtinAgents,
   LOCAL_MACHINE,
   machineAgents,
   machineOptions as machineOptionsFor,
@@ -41,6 +42,7 @@ import { issueToCreate } from '../taskSources';
 import type {
   IssueDetails,
   MachineProviderInfo,
+  PluginInfo,
   PrHit,
   ProjectBranches,
   ProviderMachineChoice,
@@ -81,9 +83,19 @@ const sessionOptions = computed(() => [
 ]);
 const DELETE_KEY = 'asterism.newVm.deleteWithTasks';
 const providers = ref<MachineProviderInfo[]>([]);
+const providersError = ref<string | null>(null);
 const groups = computed(() => providerGroups(providers.value));
 const machineOptions = computed(() => [
   ...machineOptionsFor(state.machines, true),
+  ...(providersError.value
+    ? [
+        {
+          value: 'provider:unavailable',
+          label: `Providers unavailable: ${providersError.value}`,
+          disabled: true,
+        },
+      ]
+    : []),
   ...groups.value.flatMap((g) =>
     g.error
       ? [{ value: `provider:${g.provider}:error`, label: `${g.label}: ${g.error}`, disabled: true }]
@@ -102,8 +114,11 @@ const takenNames = computed(() => [
   ...state.machines.map((m) => m.name),
   ...providers.value.flatMap((p) => p.vms.map((v) => v.name)),
 ]);
+const plugins = ref<PluginInfo[]>([]);
 const agents = computed(() =>
-  machineAgents(state.machines.find((m) => m.id === machineId.value) ?? null, state.agents),
+  providerChoice.value
+    ? builtinAgents(state.agents, plugins.value)
+    : machineAgents(state.machines.find((m) => m.id === machineId.value) ?? null, state.agents),
 );
 
 function readDeleteWithTasks(): boolean {
@@ -139,11 +154,19 @@ watch(
   },
   { immediate: true },
 );
+api.plugins().then(
+  (list) => {
+    if (!closed) plugins.value = list;
+  },
+  () => {},
+);
 api.machineProviders().then(
   (list) => {
     if (!closed) providers.value = list;
   },
-  () => {},
+  (e) => {
+    if (!closed) providersError.value = errorMessage(e);
+  },
 );
 watch(newVmInfo, (info) => {
   vmOptions.value = vmOptionsDraft(info?.create_options ?? []);
@@ -393,7 +416,7 @@ async function submit() {
     <template #title>
       Create Task in
       <Select v-model="projectId" :options="projectOptions" class="project" aria-label="Project" />
-      <template v-if="state.machines.length || groups.length">
+      <template v-if="state.machines.length || groups.length || providersError">
         on
         <Select
           v-model="machineId"
@@ -454,6 +477,9 @@ async function submit() {
             />
             <template v-if="session === 'agent'">
               <Select v-model="agent" :options="agentOptions" aria-label="Agent" />
+              <p v-if="providerChoice" class="muted">
+                The agent must be installed in the VM's image.
+              </p>
               <Textarea
                 v-model="prompt"
                 :rows="4"
