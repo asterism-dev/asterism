@@ -920,3 +920,28 @@ async fn archive_sweep_rehibernates_vm_it_woke() {
     assert_eq!(p.machine().status.state, MachineState::Hibernated);
     assert!(p.store().task(task.id).unwrap().is_some());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn slow_task_creation_keeps_machine_link() {
+    let p = provisioning().await;
+    let hooks = p.fake.home().join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    let hook = hooks.join("post-checkout");
+    // Only the task's worktree checkout is slow, beyond the 2 s health timeout.
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\ncase \"$(git rev-parse --git-dir)\" in */worktrees/*) sleep 3 ;; esac\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(
+        p.fake.home().join(".gitconfig"),
+        format!("[core]\n\thooksPath = {}\n", hooks.display()),
+    )
+    .unwrap();
+
+    let task = p.create(new_vm(json!({}))).await.unwrap().task;
+
+    assert_eq!(p.machine().status.state, MachineState::Ready);
+    assert!(Path::new(&task.worktree_path).exists());
+}

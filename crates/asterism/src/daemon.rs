@@ -1987,6 +1987,18 @@ impl Daemon {
         if let Some(machine_id) = params.machine_id {
             return self.create_remote_task(machine_id, params).await;
         }
+        // Its git calls block; on a runtime worker they stall this daemon's connections, e.g. a machine's health check.
+        let daemon = self.clone();
+        let runtime = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || runtime.block_on(daemon.create_local_task(params)))
+            .await
+            .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?
+    }
+
+    async fn create_local_task(
+        self: &Arc<Self>,
+        params: TaskCreateParams,
+    ) -> Result<TaskCreateResult> {
         if let Some(name) = &params.agent {
             self.ensure_agent_available(name)?;
         }
