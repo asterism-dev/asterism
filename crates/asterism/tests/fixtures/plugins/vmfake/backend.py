@@ -9,7 +9,10 @@ lock = threading.Lock()
 CREATE_OPTIONS = [
     {"key": "cpus", "title": "CPUs", "type": "number", "default": 2},
     {"key": "image", "title": "Image", "type": "enum", "options": ["base", "gpu"], "default": "base"},
+    {"key": "token", "title": "Token", "type": "secret"},
 ]
+if os.environ.get("FIXTURE_REQUIRED"):
+    CREATE_OPTIONS.append({"key": "region", "title": "Region", "type": "string", "required": True})
 
 
 def send(message):

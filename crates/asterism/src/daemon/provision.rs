@@ -7,7 +7,7 @@ use asterism_plugin::protocol::{
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::{
     ActivityKind, ProviderMachineChoice, ProviderVm, ProviderVmChoice, ProviderVmState,
-    TaskCreateParams, TaskCreateResult,
+    SettingType, TaskCreateParams, TaskCreateResult,
 };
 use serde_json::Value;
 
@@ -22,7 +22,8 @@ use crate::store::StoredProvider;
 #[derive(Default)]
 struct Undo {
     pending: Option<i64>,
-    created_ref: Option<String>,
+    /// Ref and destination of a VM this provisioning created.
+    created: Option<(String, String)>,
     machine_id: Option<i64>,
 }
 
@@ -108,7 +109,7 @@ impl Daemon {
                 let name = name.trim();
                 self.check_new_vm(provider, name, options).await?;
                 undo.pending = Some(self.store().add_pending_vm(provider, name)?);
-                let created: ProviderCreateResult = self
+                let created: ProviderCreateResult = match self
                     .provider_call(
                         provider,
                         plugin_method::MACHINE_PROVIDER_CREATE,
@@ -119,8 +120,16 @@ impl Daemon {
                         },
                         None,
                     )
-                    .await?;
-                undo.created_ref = Some(created.vm_ref.clone());
+                    .await
+                {
+                    Ok(created) => created,
+                    Err(e) => {
+                        // The VM may exist anyway; the startup sweep finds it by its unique name.
+                        undo.pending = None;
+                        return Err(e);
+                    }
+                };
+                undo.created = Some((created.vm_ref.clone(), created.destination.clone()));
                 let stored = StoredProvider {
                     provider: provider.clone(),
                     vm_ref: created.vm_ref,
@@ -198,7 +207,29 @@ impl Daemon {
                 format!("a machine named {name} already exists"),
             ));
         }
-        let specs = self.provider_list(provider).await?.create_options;
+        let listed = self.provider_list(provider).await?;
+        // Pending VMs are deleted by name, so the name must not match a VM Asterism did not create.
+        if listed.vms.iter().any(|vm| vm.name == name) {
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                format!("{provider} already has a VM named {name}"),
+            ));
+        }
+        let specs: Vec<_> = listed
+            .create_options
+            .into_iter()
+            .filter(|spec| spec.kind != SettingType::Secret)
+            .collect();
+        if let Some(missing) = specs.iter().find(|spec| {
+            spec.required
+                && spec.default.is_none()
+                && options.get(&spec.key).is_none_or(Value::is_null)
+        }) {
+            return Err(Error::new(
+                ErrorKind::InvalidParams,
+                format!("{} is required", missing.title),
+            ));
+        }
         for (key, value) in options {
             let spec = specs.iter().find(|s| &s.key == key).ok_or_else(|| {
                 Error::new(
@@ -250,11 +281,12 @@ impl Daemon {
 
     async fn undo_provisioned(&self, choice: &ProviderMachineChoice, machine_id: i64) {
         let stored = self.store().machine(machine_id);
-        let created_ref = match stored {
-            Ok(m) => m
-                .and_then(|m| m.provider)
-                .filter(|p| p.owned)
-                .map(|p| p.vm_ref),
+        let created = match stored {
+            Ok(m) => m.and_then(|m| {
+                m.provider
+                    .filter(|p| p.owned)
+                    .map(|p| (p.vm_ref, m.destination))
+            }),
             Err(e) => {
                 eprintln!("asterismd: machine {machine_id}: reading it for cleanup failed: {e}");
                 None
@@ -262,7 +294,7 @@ impl Daemon {
         };
         let undo = Undo {
             pending: None,
-            created_ref,
+            created,
             machine_id: Some(machine_id),
         };
         self.undo(choice, undo).await;
@@ -279,7 +311,13 @@ impl Daemon {
             }
         }
         let mut deleted = true;
-        if let Some(vm_ref) = undo.created_ref {
+        if let Some((vm_ref, destination)) = undo.created {
+            install::forget_host_key(
+                &self.options.ssh_bin,
+                &self.options.keygen_bin,
+                &destination,
+            )
+            .await;
             if let Err(e) = self.delete_vm(provider, &vm_ref).await {
                 eprintln!("asterismd: {provider}: deleting VM {vm_ref} after a failed provisioning failed: {e}");
                 deleted = false;

@@ -1,6 +1,7 @@
 mod common;
 
 use std::net::SocketAddr;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -266,6 +267,11 @@ impl Provisioning {
             .unwrap()
     }
 
+    /// Arguments of every `ssh-keygen` run, one per line.
+    fn keygen_runs(&self) -> String {
+        std::fs::read_to_string(self.home.path().join("keygen.log")).unwrap_or_default()
+    }
+
     fn calls(&self) -> Vec<String> {
         self.vms()["calls"]
             .as_array()
@@ -313,7 +319,18 @@ fn fixture_vms() -> Value {
 }
 
 fn provisioning_options(home: &Path, fake: &common::FakeSsh) -> DaemonOptions {
+    let keygen = home.join("keygen");
+    std::fs::write(
+        &keygen,
+        format!(
+            "#!/bin/sh\necho \"$*\" >> '{}'\n",
+            home.join("keygen.log").display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&keygen, std::fs::Permissions::from_mode(0o755)).unwrap();
     DaemonOptions {
+        keygen_bin: keygen,
         plugin_env: vec![
             (
                 "FIXTURE_VMS".into(),
@@ -332,6 +349,10 @@ fn provisioning_options(home: &Path, fake: &common::FakeSsh) -> DaemonOptions {
 }
 
 async fn provisioning() -> Provisioning {
+    provisioning_with(|_| {}).await
+}
+
+async fn provisioning_with(configure: impl FnOnce(&mut DaemonOptions)) -> Provisioning {
     let home = tempfile::tempdir().unwrap();
     let fake = common::FakeSsh::new();
     let paths = Paths {
@@ -340,7 +361,9 @@ async fn provisioning() -> Provisioning {
     paths.ensure_dirs().unwrap();
     link_vmfake(&paths);
     std::fs::write(home.path().join("vms.json"), fixture_vms().to_string()).unwrap();
-    let d = Daemon::with_options(paths, provisioning_options(home.path(), &fake)).unwrap();
+    let mut options = provisioning_options(home.path(), &fake);
+    configure(&mut options);
+    let d = Daemon::with_options(paths, options).unwrap();
 
     let work = home.path().join("work");
     std::fs::create_dir_all(&work).unwrap();
@@ -458,6 +481,11 @@ async fn invalid_create_option_is_rejected() {
     assert_eq!(err.kind, ErrorKind::InvalidParams);
     let err = p.create(new_vm(json!({"gpus": 1}))).await.unwrap_err();
     assert_eq!(err.kind, ErrorKind::InvalidParams);
+    let err = p
+        .create(new_vm(json!({"token": "s3cret"})))
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
 
     assert!(!p.calls().iter().any(|c| c == "machine_provider.create"));
 }
@@ -470,6 +498,7 @@ async fn failed_task_creation_deletes_new_vm() {
     p.create(new_vm(json!({}))).await.unwrap_err();
 
     assert_eq!(p.calls().last().unwrap(), "machine_provider.delete");
+    assert_eq!(p.keygen_runs().trim(), "-R created");
     let vms = p.vms();
     assert!(!vms["vms"]
         .as_object()
@@ -513,7 +542,7 @@ async fn pending_vm_is_cleaned_up_at_startup() {
         .add_pending_vm("vmfake", "vm-x")
         .unwrap();
 
-    tokio::spawn(asterism_core::run_with_options(
+    let running = tokio::spawn(asterism_core::run_with_options(
         paths.clone(),
         provisioning_options(home.path(), &fake),
     ));
@@ -538,4 +567,93 @@ async fn pending_vm_is_cleaned_up_at_startup() {
         .map(|c| &c["params"]["ref"])
         .collect();
     assert_eq!(deletes, [&json!("x")]);
+
+    let client = Client::connect_unix(&paths.socket()).await.unwrap();
+    let _: Value = client.call(method::SHUTDOWN, Value::Null).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), running)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn new_vm_named_like_a_provider_vm_creates_nothing() {
+    let p = provisioning().await;
+    let err = p
+        .create(ProviderVmChoice::New {
+            name: "one".into(),
+            options: Default::default(),
+            delete_with_tasks: true,
+        })
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
+    assert!(!p.calls().iter().any(|c| c == "machine_provider.create"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn missing_required_create_option_is_rejected() {
+    let p = provisioning_with(|o| o.plugin_env.push(("FIXTURE_REQUIRED".into(), "1".into()))).await;
+
+    let err = p.create(new_vm(json!({}))).await.unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
+    assert!(!p.calls().iter().any(|c| c == "machine_provider.create"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn machine_id_excludes_provider_machine() {
+    let p = provisioning().await;
+    let err =
+        p.d.create_task(TaskCreateParams {
+            project_id: p.project_id,
+            title: "Both".into(),
+            machine_id: Some(1),
+            provider_machine: Some(ProviderMachineChoice {
+                provider: "vmfake".into(),
+                vm: ProviderVmChoice::Existing { vm_ref: "a".into() },
+            }),
+            ..Default::default()
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidParams);
+    assert!(p.calls().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn failed_connect_deletes_new_vm() {
+    let empty_bins = tempfile::tempdir().unwrap();
+    let bins = empty_bins.path().to_path_buf();
+    let p = provisioning_with(|o| o.machine_bins_dir = Some(bins)).await;
+
+    let err = p.create(new_vm(json!({}))).await.unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::MachineOffline, "{}", err.message);
+    assert_eq!(p.calls().last().unwrap(), "machine_provider.delete");
+    assert_eq!(p.keygen_runs().trim(), "-R created");
+    assert!(p.d.machines().list().unwrap().is_empty());
+    let store = p.store();
+    assert!(store.tasks(None, true).unwrap().is_empty());
+    assert!(store.pending_vms().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn failed_create_keeps_pending_vm_for_the_sweep() {
+    let p = provisioning_with(|o| {
+        o.plugin_env
+            .push(("FIXTURE_FAIL".into(), "machine_provider.create".into()))
+    })
+    .await;
+
+    p.create(new_vm(json!({}))).await.unwrap_err();
+
+    let pending = p.store().pending_vms().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(
+        (pending[0].1.as_str(), pending[0].2.as_str()),
+        ("vmfake", "vm-1")
+    );
+    assert!(p.keygen_runs().is_empty());
 }
