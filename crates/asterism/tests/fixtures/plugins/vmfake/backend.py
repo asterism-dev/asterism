@@ -50,9 +50,12 @@ def call(method, params):
         ref = "vm-%d" % (len(vms) + 1)
         vms[ref] = {"name": params["name"], "state": "running", "destination": os.environ.get("FIXTURE_DESTINATION", "")}
         result = {"ref": ref, "name": params["name"], "destination": vms[ref]["destination"]}
+    elif method not in ("machine_provider.resume", "machine_provider.hibernate", "machine_provider.delete"):
+        save(state)
+        raise LookupError(method)
     elif ref not in vms:
         save(state)
-        raise KeyError("unknown vm " + str(ref))
+        raise RuntimeError("unknown vm " + str(ref))
     elif method == "machine_provider.resume":
         vms[ref]["state"] = "running"
         vms[ref]["destination"] = os.environ.get("FIXTURE_RESUME_DESTINATION") or vms[ref]["destination"]
@@ -60,12 +63,9 @@ def call(method, params):
     elif method == "machine_provider.hibernate":
         vms[ref]["state"] = "hibernated"
         result = None
-    elif method == "machine_provider.delete":
+    else:
         del vms[ref]
         result = None
-    else:
-        save(state)
-        raise LookupError(method)
     save(state)
     return result
 

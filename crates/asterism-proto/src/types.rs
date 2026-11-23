@@ -94,6 +94,7 @@ pub mod method {
     pub const PLUGIN_UNINSTALL: &str = "plugin.uninstall";
     pub const PLUGIN_SET_ENABLED: &str = "plugin.set_enabled";
     pub const TASK_SOURCE_LIST: &str = "task_source.list";
+    pub const MACHINE_PROVIDER_LIST: &str = "machine_provider.list";
     pub const REMOTE_STATUS: &str = "remote.status";
     pub const REMOTE_CONFIG_SET: &str = "remote.config_set";
     pub const REMOTE_INTERFACES: &str = "remote.interfaces";
@@ -1948,6 +1949,35 @@ impl Event {
         )
         .ok()
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderVmState {
+    Running,
+    Stopped,
+    Hibernated,
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderVm {
+    #[serde(rename = "ref")]
+    pub vm_ref: String,
+    pub name: String,
+    pub state: ProviderVmState,
+    pub destination: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MachineProviderInfo {
+    pub provider: String,
+    pub display_name: String,
+    pub vms: Vec<ProviderVm>,
+    pub create_options: Vec<SettingSpec>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[cfg(test)]

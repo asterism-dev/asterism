@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use asterism_plugin::protocol::{
     self, BranchPr, CloneParams, CreateRemoteParams, DetectParams, Detected, GetIssueParams,
-    LaunchMode, ListReposParams, PrepareParams, PrepareResult, PullRequestsParams,
-    ResolveOwnerParams, ResolveOwnerResult, SearchIssuesParams, SearchPullRequestsParams,
-    TaskSourceCheck, TaskSourceCheckParams,
+    LaunchMode, ListReposParams, PrepareParams, PrepareResult, ProviderListResult, ProviderParams,
+    PullRequestsParams, ResolveOwnerParams, ResolveOwnerResult, SearchIssuesParams,
+    SearchPullRequestsParams, TaskSourceCheck, TaskSourceCheckParams,
 };
 use asterism_proto::rpc::ErrorKind;
 use asterism_proto::types::*;
@@ -1479,6 +1479,80 @@ impl Daemon {
                 format!("{plugin}: unexpected {method} reply: {e}"),
             )
         })
+    }
+
+    async fn provider_call<P: Serialize, R: DeserializeOwned>(
+        &self,
+        provider: &str,
+        method: &str,
+        params: P,
+        timeout: Option<Duration>,
+    ) -> Result<R> {
+        let plugin = self
+            .plugin_set()
+            .registry
+            .machine_provider(provider)
+            .map(|(plugin, _)| plugin.name.clone())
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::NotFound,
+                    format!("no machine provider {provider:?} is installed"),
+                )
+            })?;
+        let params = serde_json::to_value(params)
+            .map_err(|e| Error::new(ErrorKind::Internal, e.to_string()))?;
+        let reply = self.plugin_call(&plugin, method, params, timeout).await?;
+        serde_json::from_value(reply).map_err(|e| {
+            Error::new(
+                ErrorKind::PluginError,
+                format!("{plugin}: unexpected {method} reply: {e}"),
+            )
+        })
+    }
+
+    pub async fn machine_providers(&self) -> Result<Vec<MachineProviderInfo>> {
+        let providers: Vec<(String, String)> = self
+            .plugin_set()
+            .registry
+            .machine_providers()
+            .map(|(_, decl)| (decl.id.clone(), decl.display_name.clone()))
+            .collect();
+        let mut infos = Vec::new();
+        for (provider, display_name) in providers {
+            let params = ProviderParams {
+                provider: provider.clone(),
+            };
+            let listed = self
+                .provider_call::<_, ProviderListResult>(
+                    &provider,
+                    protocol::method::MACHINE_PROVIDER_LIST,
+                    params,
+                    Some(self.call_timeout()),
+                )
+                .await;
+            let (vms, mut create_options, error) = match listed {
+                Ok(list) => (list.vms, list.create_options, None),
+                Err(e) => (Vec::new(), Vec::new(), Some(e.message)),
+            };
+            create_options.retain(|spec| {
+                let keep = spec.kind != SettingType::Secret;
+                if !keep {
+                    eprintln!(
+                        "asterismd: {provider}: dropping secret create option {:?}",
+                        spec.key
+                    );
+                }
+                keep
+            });
+            infos.push(MachineProviderInfo {
+                provider,
+                display_name,
+                vms,
+                create_options,
+                error,
+            });
+        }
+        Ok(infos)
     }
 
     pub async fn task_sources(&self, project_id: Option<i64>) -> Result<Vec<TaskSourceInfo>> {

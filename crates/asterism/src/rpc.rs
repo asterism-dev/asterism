@@ -49,6 +49,7 @@ fn remote_denied(method_name: &str) -> bool {
     REMOTE_DENIED.contains(&method_name)
         || method_name.starts_with("remote.")
         || method_name.starts_with("machine.")
+        || method_name.starts_with("machine_provider.")
 }
 
 /// One client connection; background forwarders are keyed so re-attaching replaces them.
@@ -636,6 +637,7 @@ pub async fn dispatch_method(daemon: &Arc<Daemon>, method_name: &str, raw: Value
         ),
         method::TASK_SOURCE_SEARCH => to_value(daemon.task_source_search(&params(raw)?).await?),
         method::TASK_SOURCE_GET => to_value(daemon.task_source_get(&params(raw)?).await?),
+        method::MACHINE_PROVIDER_LIST => to_value(daemon.machine_providers().await?),
         method::PR_LIST => to_value(daemon.pr_list(params::<PrListParams>(raw)?.project_id)),
         method::PR_REFRESH => to_value(
             daemon
@@ -948,6 +950,7 @@ mod tests {
             method::MACHINE_TEST,
             method::MACHINE_UPDATE,
             method::MACHINE_UPDATE_PREVIEW,
+            method::MACHINE_PROVIDER_LIST,
         ] {
             assert!(remote_denied(name), "{name}");
         }

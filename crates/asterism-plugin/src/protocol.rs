@@ -1,6 +1,7 @@
 use asterism_proto::types::{
     DiffSide, PrListState, PullRequest, ReviewEvent, SettingSpec, Visibility,
 };
+pub use asterism_proto::types::{ProviderVm, ProviderVmState};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -179,25 +180,6 @@ pub struct ProviderCreateParams {
     pub options: Map<String, Value>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ProviderVmState {
-    Running,
-    Stopped,
-    Hibernated,
-    #[serde(other)]
-    Other,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ProviderVm {
-    #[serde(rename = "ref")]
-    pub vm_ref: String,
-    pub name: String,
-    pub state: ProviderVmState,
-    pub destination: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProviderListResult {
     pub vms: Vec<ProviderVm>,
@@ -333,4 +315,24 @@ pub struct CheckForgeParams {
     #[serde(flatten)]
     pub pr: PrRef,
     pub check_id: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn provider_list_payload_deserializes() {
+        let list: ProviderListResult = serde_json::from_value(json!({
+            "vms": [
+                {"ref": "a", "name": "one", "state": "running", "destination": "u@h"},
+                {"ref": "b", "name": "two", "state": "migrating", "destination": ""},
+            ],
+        }))
+        .unwrap();
+        assert_eq!(list.vms[0].vm_ref, "a");
+        assert_eq!(list.vms[1].state, ProviderVmState::Other);
+        assert!(list.create_options.is_empty());
+    }
 }
