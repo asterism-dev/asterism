@@ -77,7 +77,7 @@ A machine provider is a plugin that manages virtual machines (see [Plugins](plug
 
 ### Pick or create a VM
 
-In **New task**, **Machine** shows one group per provider plugin with:
+In **New task**, **Machine** lists, under each provider plugin's name:
 
 - the provider's existing VMs that are not machines yet (hibernated ones are labelled), and
 - **New VM…**.
@@ -94,7 +94,7 @@ Picking a VM adds it as a machine and creates the task in one step. The dialog s
 
 Only the agents built into Asterism are offered for provider VMs, and the agent must be installed in the VM's image.
 
-If something fails, nothing is left behind: a new VM is deleted again, and an existing VM is simply not added. If Asterism quits while a VM is being created, it cleans the VM up on the next start.
+If creating the task fails, Asterism undoes what it did: a new VM is deleted again, and an existing VM is simply not added. Three exceptions: if the agent fails to start after the task was created, the task and machine stay, as for any machine task; if deleting the new VM fails, Asterism retries on the next start; and an existing VM that was woken for the attempt stays running. If Asterism quits while a VM is being created, it cleans the VM up on the next start.
 
 ### Host keys
 
@@ -110,7 +110,7 @@ Asterism applies these rules only to VMs it created itself (**owned** VMs).
 
 VMs you picked from the provider's existing VMs are never hibernated or deleted by Asterism.
 
-Lifecycle failures do not block the task action. A failed delete of the VM shows a warning; a failed hibernate after archiving is only logged.
+A failure to hibernate or delete the VM after a task action does not block that action. After a delete, a failed VM delete or re-hibernate shows a warning; a failed hibernate after archiving is only logged. If a VM cannot be woken, the machine is unavailable and the action fails with an error naming it.
 
 In **Settings → Machines**, a hibernated VM shows the status **Hibernated**, and the machine shows its provider. Removing or forgetting a provider machine never deletes its VM.
 
