@@ -5,6 +5,7 @@ Plugins add capabilities to Asterism:
 - **Agents** — coding agents you can run in sessions, such as Claude Code.
 - **Forges** — code hosts for cloning, creating repositories and pull request status, such as GitHub.
 - **Task sources** — issue trackers you can create tasks from, such as Linear or GitHub Issues.
+- **Machine providers** — VM hosts whose virtual machines Asterism can use as [machines](machines.md#vms-from-a-provider), such as Observatory.
 - **Commands** — extra `asterism` subcommands.
 
 Manage them in **Settings → Plugins**, which has three tabs: **Installed**, **Discover** and **Stores**.

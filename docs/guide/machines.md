@@ -71,6 +71,53 @@ Any process on the machine running as the machine's user can take over this conn
 
 A machine can be removed only when all its tasks are archived. To remove a machine that is gone for good, use **Forget** (see [Forget a machine](#forget-a-machine)).
 
+## VMs from a provider
+
+A machine provider is a plugin that manages virtual machines (see [Plugins](plugins.md)). With one installed, you can run a task on a VM without adding it as a machine first. Asterism connects to the VM over SSH like any other machine; see [Requirements](#requirements) for what the VM needs.
+
+### Pick or create a VM
+
+In **New task**, **Machine** shows one group per provider plugin with:
+
+- the provider's existing VMs that are not machines yet (hibernated ones are labelled), and
+- **New VM…**.
+
+Picking a VM adds it as a machine and creates the task in one step. The dialog shows the progress. Closing the dialog does not cancel it.
+
+**New VM…** asks for:
+
+| Field | Meaning |
+| --- | --- |
+| **VM name** | Suggested from the task title. It must not clash with any machine or any VM of the provider. |
+| Plugin fields | Defined by the plugin, for example image, CPUs, RAM and disk. They are prefilled with the plugin's defaults. |
+| **Delete VM with its last task** | Delete the VM when its last task is deleted. Remembered between dialogs; on at first. |
+
+Only the agents built into Asterism are offered for provider VMs, and the agent must be installed in the VM's image.
+
+If something fails, nothing is left behind: a new VM is deleted again, and an existing VM is simply not added. If Asterism quits while a VM is being created, it cleans the VM up on the next start.
+
+### Host keys
+
+A new VM's host key is accepted on the first connection; later connections are strict. After a VM wakes, a changed address gets its new key accepted, but a changed key on the same address is still refused. Deleting a VM removes its `known_hosts` entry.
+
+### Hibernate, wake and delete
+
+Asterism applies these rules only to VMs it created itself (**owned** VMs).
+
+- **Archive**: when a machine has no active task left, Asterism hibernates its VM.
+- **Wake**: anything that needs the machine wakes it automatically: restoring or creating a task, deleting a task (including its unsaved-work check), **Update now**, **Retry**, the CLI, the mobile app, and opening the diff or files of an archived task. The hourly cleanup of old archived tasks wakes hibernated VMs for its check and puts them back to sleep.
+- **Delete**: when you delete the last task of the machine, archived or not, Asterism deletes the VM if **Delete VM with its last task** is on, and hibernates it otherwise. You can change the setting per machine under **Settings → Machines**. A confirmed delete loses commits on the VM that were not pushed.
+
+VMs you picked from the provider's existing VMs are never hibernated or deleted by Asterism.
+
+Lifecycle failures do not block the task action. A failed delete of the VM shows a warning; a failed hibernate after archiving is only logged.
+
+In **Settings → Machines**, a hibernated VM shows the status **Hibernated**, and the machine shows its provider. Removing or forgetting a provider machine never deletes its VM.
+
+### Several installs on one account
+
+Several Asterism installs may use the same provider account. Asterism does not guard against this: another install may hibernate or delete VMs it created, even if you added them here as machines.
+
 ## Update a machine
 
 Asterism never restarts a machine daemon on its own while sessions run on it. After an Asterism update, a machine with running sessions shows "update available" and keeps working on its old daemon. Asterism also speaks the protocol of the previous release, so a machine one release behind keeps working until you update it.
@@ -96,6 +143,7 @@ Everything lives in `~/.asterism-machine` on the machine, including the clones u
 | --- | --- |
 | Connecting | Asterism is connecting or installing. |
 | Connected | The daemon is running. The platform is shown, plus "update available" when a newer build exists; click **Update now** to install it. |
+| Hibernated | The VM of a provider machine is asleep. Asterism wakes it when something needs it. |
 | Offline, retrying | The connection dropped or the host is unreachable. Asterism retries automatically with a backoff of up to 30 s. |
 | Needs attention | Retrying cannot help: authentication or host key failure, an unsupported platform, a machine that does not run the Asterism daemon, or an install error. Fix the cause, then click **Retry**. A machine daemon more than one release behind shows "incompatible version"; click **Update now**. |
 
