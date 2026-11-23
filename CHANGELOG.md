@@ -1,3 +1,9 @@
+## v0.35.0 (2026-11-23)
+
+### Feat
+
+- **machines**: create and run tasks on VMs from provider plugins (#43)
+
 ## v0.34.0 (2026-11-20)
 
 ### Feat
