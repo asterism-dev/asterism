@@ -33,6 +33,8 @@ pub async fn trust_host_key(
     destination: &str,
     deadline: Duration,
 ) -> Result<(), InstallError> {
+    const ATTEMPT_CAP: Duration = Duration::from_secs(15);
+    const RETRY_PAUSE: Duration = Duration::from_secs(2);
     let started = tokio::time::Instant::now();
     loop {
         let mut cmd = tokio::process::Command::new(ssh_bin);
@@ -42,9 +44,11 @@ pub async fn trust_host_key(
             .args([destination, "true"])
             .stdin(Stdio::null())
             .kill_on_drop(true);
-        let err = match cmd.output().await {
-            Ok(out) if out.status.success() => return Ok(()),
-            Ok(out) => InstallError::Ssh {
+        let remaining = deadline.saturating_sub(started.elapsed());
+        // ConnectTimeout does not bound a sshd that stalls after accepting the connection.
+        let err = match tokio::time::timeout(remaining.min(ATTEMPT_CAP), cmd.output()).await {
+            Ok(Ok(out)) if out.status.success() => return Ok(()),
+            Ok(Ok(out)) => InstallError::Ssh {
                 status: out.status.code(),
                 line: String::from_utf8_lossy(&out.stderr)
                     .lines()
@@ -52,36 +56,50 @@ pub async fn trust_host_key(
                     .find(|l| !l.trim().is_empty())
                     .map_or_else(|| format!("ssh exited with {}", out.status), str::to_string),
             },
-            Err(e) => InstallError::Ssh {
+            Ok(Err(e)) => InstallError::Ssh {
                 status: None,
                 line: e.to_string(),
             },
+            Err(_) => InstallError::Ssh {
+                status: None,
+                line: "the machine did not answer".into(),
+            },
         };
-        if started.elapsed() + Duration::from_secs(2) > deadline {
+        if started.elapsed() + RETRY_PAUSE >= deadline {
             return Err(err);
         }
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(RETRY_PAUSE).await;
     }
 }
 
+pub fn default_keygen_bin() -> PathBuf {
+    std::env::var_os("ASTERISM_SSH_KEYGEN").map_or_else(|| "ssh-keygen".into(), PathBuf::from)
+}
+
 /// Best effort: drops the machine's key from known_hosts when it is deleted.
-pub async fn forget_host_key(destination: &str) {
-    let Ok(out) = tokio::process::Command::new(default_ssh_bin())
+pub async fn forget_host_key(ssh_bin: &Path, keygen_bin: &Path, destination: &str) {
+    let resolved = tokio::process::Command::new(ssh_bin)
         .args(["-G", destination])
         .stdin(Stdio::null())
+        .kill_on_drop(true)
         .output()
         .await
-    else {
-        return;
-    };
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let Some(host) = stdout.lines().find_map(|l| l.strip_prefix("hostname ")) else {
-        return;
-    };
-    let keygen = std::env::var_os("ASTERISM_SSH_KEYGEN").unwrap_or_else(|| "ssh-keygen".into());
-    let _ = tokio::process::Command::new(keygen)
-        .args(["-R", host.trim()])
+        .ok()
+        .and_then(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .find_map(|l| l.strip_prefix("hostname ").map(|h| h.trim().to_string()))
+        });
+    let host = resolved.unwrap_or_else(|| {
+        destination
+            .rsplit_once('@')
+            .map_or(destination, |(_, host)| host)
+            .to_string()
+    });
+    let _ = tokio::process::Command::new(keygen_bin)
+        .args(["-R", &host])
         .stdin(Stdio::null())
+        .kill_on_drop(true)
         .output()
         .await;
 }
